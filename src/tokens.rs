@@ -1,3 +1,4 @@
+use regex::Regex;
 use std::collections::HashMap;
 
 macro_rules! define_tokens {
@@ -5,7 +6,11 @@ macro_rules! define_tokens {
     (@action_is_skip skip) => {true};
     (@action_is_skip $other:ident) => {false};
 
-    ($($token:ident : $keyword:literal $(-> $action:ident)?), *) => {
+    (@is_literal) => {false};
+    (@is_literal literal) => {true};
+    (@is_literal $other:ident) => {false};
+
+    ($($token:ident : $([$attr:ident])? $keyword:literal $(-> $action:ident)?), *) => {
         #[derive(Debug, Clone, PartialEq)]
         pub enum TokenType {
             $($token, )*
@@ -17,6 +22,19 @@ macro_rules! define_tokens {
                 map.insert($keyword.to_string(), TokenType::$token);
             )*
             map
+        }
+
+        pub fn get_all_tokens() -> Vec<(TokenType, String)> {
+            let mut v = Vec::new();
+            $(
+                let pat = if (define_tokens!(@is_literal $($attr)?)) {
+                    r"\A".to_string() + &regex::escape($keyword)
+                } else {
+                    concat!(r"\A", $keyword).to_string()
+                };
+                v.push((TokenType::$token, pat));
+            )*
+            v
         }
 
         impl TokenType {
@@ -93,68 +111,69 @@ define_tokens! {
     Yield: "yield",
 
     // Identifiers
-    Id: "[A-Za-z][A-Za-z0-9_]*|_[A-Za-z0-9_]+",
+    Id: "[A-Za-z][A-Za-z0-9_]*",
 
     // Literals
+    Character: r#"'(?:[^'\\]|\\(?:[nrt\\0'"]|x[0-7][0-9A-Fa-f]))'"#,
         // TODO
 
 
     // Punctuation
-    Plus     :"+"    ,
-    Minus    :"-"    ,
-    Star     :"*"    ,
-    Slash    :"/"    ,
-    Percent  :"%"    ,
-    Caret    :"^"    ,
-    Not      :"!"    ,
-    And      :"&"    ,
-    Or       :"|"    ,
-    AndAnd   :"&&"   ,
-    OrOr     :"||"   ,
-    Shl      :"<<"   ,
-    Shr      :">>"   ,
-    PlusEq   :"+="   ,
-    MinusEq  :"-="   ,
-    StarEq   :"*="   ,
-    SlashEq  :"/="   ,
-    PercentEq:"%="   ,
-    CaretEq  :"^="   ,
-    AndEq    :"&="   ,
-    OrEq     :"|="   ,
-    ShlEq    :"<<="  ,
-    ShrEq    :">>="  ,
-    Eq       :"="    ,
-    EqEq     :"=="   ,
-    Ne       :"!="   ,
-    Gt       :">"    ,
-    Lt       :"<"    ,
-    Ge       :">="   ,
-    Le       :"<="   ,
-    At       :"@"    ,
-    Underscor:"_"    ,
-    Dot      :"."    ,
-    DotDot   :".."   ,
-    DotDotDot:"..."  ,
-    DotDotEq :"..="  ,
-    Comma    :","    ,
-    Semi     :";"    ,
-    Colon    :":"    ,
-    PathSep  :"::"   ,
-    RArrow   :"->"   ,
-    FatArrow :"=>"   ,
-    LArrow   :"<-"   ,
-    Pound    :"#"    ,
-    Dollar   :"$"    ,
-    Question :"?"    ,
-    Tilde    :"~"    ,
+    Plus     :[literal] "+"    ,
+    Minus    :[literal] "-"    ,
+    Star     :[literal] "*"    ,
+    Slash    :[literal] "/"    ,
+    Percent  :[literal] "%"    ,
+    Caret    :[literal] "^"    ,
+    Not      :[literal] "!"    ,
+    And      :[literal] "&"    ,
+    Or       :[literal] "|"    ,
+    AndAnd   :[literal] "&&"   ,
+    OrOr     :[literal] "||"   ,
+    Shl      :[literal] "<<"   ,
+    Shr      :[literal] ">>"   ,
+    PlusEq   :[literal] "+="   ,
+    MinusEq  :[literal] "-="   ,
+    StarEq   :[literal] "*="   ,
+    SlashEq  :[literal] "/="   ,
+    PercentEq:[literal] "%="   ,
+    CaretEq  :[literal] "^="   ,
+    AndEq    :[literal] "&="   ,
+    OrEq     :[literal] "|="   ,
+    ShlEq    :[literal] "<<="  ,
+    ShrEq    :[literal] ">>="  ,
+    Eq       :[literal] "="    ,
+    EqEq     :[literal] "=="   ,
+    Ne       :[literal] "!="   ,
+    Gt       :[literal] ">"    ,
+    Lt       :[literal] "<"    ,
+    Ge       :[literal] ">="   ,
+    Le       :[literal] "<="   ,
+    At       :[literal] "@"    ,
+    Underscor:[literal] "_"    ,
+    Dot      :[literal] "."    ,
+    DotDot   :[literal] ".."   ,
+    DotDotDot:[literal] "..."  ,
+    DotDotEq :[literal] "..="  ,
+    Comma    :[literal] ","    ,
+    Semi     :[literal] ";"    ,
+    Colon    :[literal] ":"    ,
+    PathSep  :[literal] "::"   ,
+    RArrow   :[literal] "->"   ,
+    FatArrow :[literal] "=>"   ,
+    LArrow   :[literal] "<-"   ,
+    Pound    :[literal] "#"    ,
+    Dollar   :[literal] "$"    ,
+    Question :[literal] "?"    ,
+    Tilde    :[literal] "~"    ,
 
     // Delimiters
-    OpenPar: "(",
-    ClosePar: ")",
-    OpenSqu: "[",
-    CloseSqu: "]",
-    OpenCurly: "{",
-    CloseCurly: "}",
+    OpenPar   :[literal] "(",
+    ClosePar  :[literal] ")",
+    OpenSqu   :[literal] "[",
+    CloseSqu  :[literal] "]",
+    OpenCurly :[literal] "{",
+    CloseCurly:[literal] "}",
 
     // Others
     Comment: r"// [^\r\n]* \r? \n" -> skip,
