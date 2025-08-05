@@ -23,11 +23,19 @@ impl Lexer {
         let ret = self
             .token_types
             .iter()
-            .filter_map(|(t, re)| re.find(s).unwrap().map(|result| (t.clone(), result.as_str())))
+            .filter_map(|(t, re)| {
+                re.find(s)
+                    .unwrap()
+                    .map(|result| (t.clone(), result.as_str()))
+            })
             .reduce(|a, b| if a.1.len() < b.1.len() { b } else { a });
 
         if let Some(r) = &ret {
-            (s.split_at(r.1.len()).1, ret)
+            if r.0.should_skip() {
+                self.next_token(s.split_at(r.1.len()).1)
+            } else {
+                (s.split_at(r.1.len()).1, ret)
+            }
         } else {
             (s, None)
         }

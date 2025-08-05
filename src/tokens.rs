@@ -26,7 +26,7 @@ define_rules! {
     DEC_LITERAL: "{DEC_DIGIT}({DEC_DIGIT}|_)*",
     BIN_LITERAL: "0b({BIN_DIGIT}|_)*{BIN_DIGIT}({BIN_DIGIT}|_)*",
     OCT_LITERAL: "0o({OCT_DIGIT}|_)*{OCT_DIGIT}({OCT_DIGIT}|_)*",
-    HEX_LITERAL: "0b({HEX_DIGIT}|_)*{HEX_DIGIT}({HEX_DIGIT}|_)*",
+    HEX_LITERAL: "0x({HEX_DIGIT}|_)*{HEX_DIGIT}({HEX_DIGIT}|_)*",
 
 
     IDENTIFIER_OR_KEYWORD: "[A-Za-z][A-Za-z0-9_]*",
@@ -36,7 +36,7 @@ define_rules! {
 
     INTEGER_LITERAL: "({DEC_LITERAL}|{BIN_LITERAL}|{OCT_LITERAL}|{HEX_LITERAL}){SUFFIX_NO_E}?",
 
-    NUL: "\0",
+    NUL: r"\u0000",
     TAB: r"\u0009",
     LF: r"\u000A",
     CR: r"\u000D",
@@ -46,7 +46,20 @@ define_rules! {
     STRING_CONTINUE: r"\\{LF}",
     STRING_LITERAL: r#""([^"\\{CR}]|{QUOTE_ESCAPE}|{ASCII_ESCAPE}|{STRING_CONTINUE})*"{SUFFIX}?"#,
     RAW_STRING_CONTENT: r###"(?<sharp>#*)"[^{CR}]*?"\k<sharp>"###,
-    RAW_STRING_LITERAL: r"r{RAW_STRING_CONTENT}{SUFFIX}?"
+    RAW_STRING_LITERAL: r"r{RAW_STRING_CONTENT}{SUFFIX}?",
+    ASCII_FOR_CHAR: r"[^'\\{LF}{CR}{TAB}]",
+    BYTE_ESCAPE: r#"\\x{HEX_DIGIT}{HEX_DIGIT}|\\n|\\r|\\t|\\\\|\\0|\\'|\\""#,
+    BYTE_LITERAL: r"b'({ASCII_FOR_CHAR}|{BYTE_ESCAPE})'{SUFFIX}?",
+    ASCII_FOR_STRING: r#"[^"\\{CR}]"#,
+    BYTE_STRING_LITERAL: r#"b"({ASCII_FOR_STRING}|{BYTE_ESCAPE}|{STRING_CONTINUE})*"{SUFFIX}?"#,
+    ASCII_FOR_RAW: r#"[^{CR}]"#,
+    RAW_BYTE_STRING_CONTENT: r###"(?<sharp>#*)"{ASCII_FOR_RAW}*?"\k<sharp>"###,
+    RAW_BYTE_STRING_LITERAL: r"br{RAW_BYTE_STRING_CONTENT}{SUFFIX}?",
+    C_STRING_LITERAL: r#"c"[^"\\{CR}{NUL}]|BYTE_ESCAPE|STRING_CONTINUE"{SUFFIX}?"#,
+    RAW_C_STRING_CONTENT: r###"(?<sharp>#*)"[^{CR}{NUL}]*?"\k<sharp>"###,
+    RAW_C_STRING_LITERAL: r"cr{RAW_C_STRING_CONTENT}{SUFFIX}?",
+
+    FLOAT_LITERAL: r"{DEC_LITERAL}\.{DEC_LITERAL}{SUFFIX_NO_E}?|{DEC_LITERAL}\.(?![\._a-zA-Z])"
 }
 
 macro_rules! define_tokens {
@@ -87,7 +100,7 @@ macro_rules! define_tokens {
                     t
                 };
                 let pat = format!(r"\A{}", pat);
-                
+
                 v.push((TokenType::$token, pat));
             )*
             v
@@ -173,11 +186,13 @@ define_tokens! {
     Character: "{CHAR_LITERAL}",
     String: "{STRING_LITERAL}",
     RawString: "{RAW_STRING_LITERAL}",
-
-    DecInteger: r"[0-9][0-9_]*",
-    BinInteger: r"0b[01_]*[01][01_]*",
-    OctInteger: r"0o[0-7_]*[0-7][0-7_]*",
-    HexInteger: r"0x[0-9a-fA-F_]*[0-9a-fA-F][0-9a-fA-F_]*",
+    Byte: "{BYTE_LITERAL}",
+    ByteString: "{BYTE_STRING_LITERAL}",
+    RawByteString: "{RAW_BYTE_STRING_LITERAL}",
+    CString: "{C_STRING_LITERAL}",
+    RawCString: "{RAW_C_STRING_LITERAL}",
+    Integer: "{INTEGER_LITERAL}",
+    Float: "{FLOAT_LITERAL}",
         // TODO
 
     // Punctuation
@@ -238,7 +253,7 @@ define_tokens! {
     CloseCurly:[literal] "}",
 
     // Others
-    Comment: r"// [^\r\n]* \r? \n" -> skip,
-    CommentsBlock: r"/* .*? */" -> skip,
+    Comment: r"//[^\r\n]*\r?\n" -> skip,
+    CommentsBlock: r"/\*.*?\*/" -> skip,
     Whitespace: r"[ \t\r\n]" -> skip
 }
