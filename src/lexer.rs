@@ -1,4 +1,4 @@
-use regex::Regex;
+use fancy_regex::Regex;
 
 use crate::tokens::{TokenType, get_all_tokens};
 
@@ -23,7 +23,7 @@ impl Lexer {
         let ret = self
             .token_types
             .iter()
-            .filter_map(|(t, re)| re.find(s).map(|result| (t.clone(), result.as_str())))
+            .filter_map(|(t, re)| re.find(s).unwrap().map(|result| (t.clone(), result.as_str())))
             .reduce(|a, b| if a.1.len() < b.1.len() { b } else { a });
 
         if let Some(r) = &ret {

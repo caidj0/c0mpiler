@@ -1,5 +1,53 @@
-use regex::Regex;
 use std::collections::HashMap;
+
+macro_rules! define_rules {
+    ($($id:ident: $rule:literal), *) => {
+        pub fn get_lex_rules() -> Vec<(String, String)> {
+            let mut rules: Vec<(String, String)> = Vec::new();
+
+            $(
+                let mut li = $rule.to_string();
+                for prev_rule in &rules {
+                    li = li.replace(&prev_rule.0, &prev_rule.1);
+                }
+                rules.push((format!("{{{}}}", stringify!($id)), format!("({})", li)));
+            )*
+
+            rules
+        }
+    };
+}
+
+define_rules! {
+    BIN_DIGIT: "[0-1]",
+    OCT_DIGIT: "[0-7]",
+    DEC_DIGIT: "[0-9]",
+    HEX_DIGIT: "[0-9a-fA-F]",
+    DEC_LITERAL: "{DEC_DIGIT}({DEC_DIGIT}|_)*",
+    BIN_LITERAL: "0b({BIN_DIGIT}|_)*{BIN_DIGIT}({BIN_DIGIT}|_)*",
+    OCT_LITERAL: "0o({OCT_DIGIT}|_)*{OCT_DIGIT}({OCT_DIGIT}|_)*",
+    HEX_LITERAL: "0b({HEX_DIGIT}|_)*{HEX_DIGIT}({HEX_DIGIT}|_)*",
+
+
+    IDENTIFIER_OR_KEYWORD: "[A-Za-z][A-Za-z0-9_]*",
+    RAW_IDENTIFIER: "r#{IDENTIFIER_OR_KEYWORD}",
+    SUFFIX: "{IDENTIFIER_OR_KEYWORD}",
+    SUFFIX_NO_E: "(?![eE]){SUFFIX}",
+
+    INTEGER_LITERAL: "({DEC_LITERAL}|{BIN_LITERAL}|{OCT_LITERAL}|{HEX_LITERAL}){SUFFIX_NO_E}?",
+
+    NUL: "\0",
+    TAB: r"\u0009",
+    LF: r"\u000A",
+    CR: r"\u000D",
+    QUOTE_ESCAPE: r#"\\'|\\""#,
+    ASCII_ESCAPE: r"\\x{OCT_DIGIT}{HEX_DIGIT}|\\n|\\r|\\t|\\\\|\\0",
+    CHAR_LITERAL: r"'([^'\\{LF}{CR}{TAB}]|{QUOTE_ESCAPE}|{ASCII_ESCAPE})'{SUFFIX}?",
+    STRING_CONTINUE: r"\\{LF}",
+    STRING_LITERAL: r#""([^"\\{CR}]|{QUOTE_ESCAPE}|{ASCII_ESCAPE}|{STRING_CONTINUE})*"{SUFFIX}?"#,
+    RAW_STRING_CONTENT: r###"(?<sharp>#*)"[^{CR}]*?"\k<sharp>"###,
+    RAW_STRING_LITERAL: r"r{RAW_STRING_CONTENT}{SUFFIX}?"
+}
 
 macro_rules! define_tokens {
     (@action_is_skip) => {false};
@@ -25,13 +73,21 @@ macro_rules! define_tokens {
         }
 
         pub fn get_all_tokens() -> Vec<(TokenType, String)> {
+            let lex_rules = get_lex_rules();
+
             let mut v = Vec::new();
             $(
                 let pat = if (define_tokens!(@is_literal $($attr)?)) {
-                    r"\A".to_string() + &regex::escape($keyword)
+                    regex::escape($keyword)
                 } else {
-                    concat!(r"\A", $keyword).to_string()
+                    let mut t: String = $keyword.to_string();
+                    for rule in &lex_rules {
+                        t = t.replace(&rule.0, &rule.1);
+                    }
+                    t
                 };
+                let pat = format!(r"\A{}", pat);
+                
                 v.push((TokenType::$token, pat));
             )*
             v
@@ -59,64 +115,70 @@ macro_rules! define_tokens {
 
 define_tokens! {
     // Keywords
-    As: "as",
-    Break: "break",
-    Const: "const",
-    Continue: "continue",
-    Crate: "crate",
-    Else: "else",
-    Enum: "enum",
-    Extern: "extern",
-    False: "false",
-    Fn: "fn",
-    For: "for",
-    If: "if",
-    Impl: "impl",
-    In: "in",
-    Let: "let",
-    Loop: "loop",
-    Match: "match",
-    Mod: "mod",
-    Move: "move",
-    Mut: "mut",
-    Pub: "pub",
-    Ref: "ref",
-    Return: "return",
-    LSelfType: "self",
-    SelfType: "Self",
-    Static: "static",
-    Struct: "struct",
-    Super: "super",
-    Trait: "trait",
-    True: "true",
-    Type: "type",
-    Unsafe: "unsafe",
-    Use: "use",
-    Where: "where",
-    While: "while",
-    Async: "async",
-    Await: "await",
-    Dyn: "dyn",
-    Abstract: "abstract",
-    Become: "become",
-    Box: "box",
-    Do: "do",
-    Final: "final",
-    Macro: "macro",
-    Override: "override",
-    Priv: "priv",
-    Typeof: "typepf",
-    Unsized: "unsized",
-    Virtual: "virtual",
-    Yield: "yield",
+    As       :[literal] "as",
+    Break    :[literal] "break",
+    Const    :[literal] "const",
+    Continue :[literal] "continue",
+    Crate    :[literal] "crate",
+    Else     :[literal] "else",
+    Enum     :[literal] "enum",
+    Extern   :[literal] "extern",
+    False    :[literal] "false",
+    Fn       :[literal] "fn",
+    For      :[literal] "for",
+    If       :[literal] "if",
+    Impl     :[literal] "impl",
+    In       :[literal] "in",
+    Let      :[literal] "let",
+    Loop     :[literal] "loop",
+    Match    :[literal] "match",
+    Mod      :[literal] "mod",
+    Move     :[literal] "move",
+    Mut      :[literal] "mut",
+    Pub      :[literal] "pub",
+    Ref      :[literal] "ref",
+    Return   :[literal] "return",
+    LSelfType:[literal] "self",
+    SelfType :[literal] "Self",
+    Static   :[literal] "static",
+    Struct   :[literal] "struct",
+    Super    :[literal] "super",
+    Trait    :[literal] "trait",
+    True     :[literal] "true",
+    Type     :[literal] "type",
+    Unsafe   :[literal] "unsafe",
+    Use      :[literal] "use",
+    Where    :[literal] "where",
+    While    :[literal] "while",
+    Async    :[literal] "async",
+    Await    :[literal] "await",
+    Dyn      :[literal] "dyn",
+    Abstract :[literal] "abstract",
+    Become   :[literal] "become",
+    Box      :[literal] "box",
+    Do       :[literal] "do",
+    Final    :[literal] "final",
+    Macro    :[literal] "macro",
+    Override :[literal] "override",
+    Priv     :[literal] "priv",
+    Typeof   :[literal] "typepf",
+    Unsized  :[literal] "unsized",
+    Virtual  :[literal] "virtual",
+    Yield    :[literal] "yield",
 
     // Identifiers
-    Id: "[A-Za-z][A-Za-z0-9_]*",
+    Id: "{IDENTIFIER_OR_KEYWORD}",
 
     // Literals
-    Character: r#"'(?:[^'\\]|\\(?:[nrt\\0'"]|x[0-7][0-9A-Fa-f]))'"#,
-        // TODO
+    Character: "{CHAR_LITERAL}",
+    String: "{STRING_LITERAL}",
+    RawString: "{RAW_STRING_LITERAL}",
 
+    DecInteger: r"[0-9][0-9_]*",
+    BinInteger: r"0b[01_]*[01][01_]*",
+    OctInteger: r"0o[0-7_]*[0-7][0-7_]*",
+    HexInteger: r"0x[0-9a-fA-F_]*[0-9a-fA-F][0-9a-fA-F_]*",
+        // TODO
 
     // Punctuation
     Plus     :[literal] "+"    ,
