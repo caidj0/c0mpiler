@@ -1,11 +1,26 @@
+use std::fmt::Display;
+
 use fancy_regex::Regex;
 
 use crate::tokens::{TokenType, get_all_tokens};
 
-pub struct LexerResult<'a> {
-    pub line: usize,
-    pub col: usize,
-    pub token: Result<(TokenType, &'a str), String>,
+#[derive(Debug)]
+pub struct TokenPosition {
+    line: usize,
+    col: usize,
+}
+
+impl Display for TokenPosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "line {} col {}", self.line, self.col)
+    }
+}
+
+#[derive(Debug)]
+pub struct Token<'a> {
+    pub token_type: TokenType,
+    pub lexeme: &'a str,
+    pub pos: TokenPosition,
 }
 
 pub struct Lexer<'a> {
@@ -32,13 +47,20 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn next_token(&mut self) -> LexerResult<'a> {
+    pub fn get_pos(&self) -> TokenPosition {
+        TokenPosition {
+            line: self.line,
+            col: self.col,
+        }
+    }
+
+    pub fn next_token(&mut self) -> Result<Token<'a>, (String, TokenPosition)> {
         if self.codes.is_empty() {
-            return LexerResult {
-                line: self.line,
-                col: self.col,
-                token: Ok((TokenType::EOF, self.codes)),
-            };
+            return Ok(Token {
+                token_type: TokenType::EOF,
+                lexeme: self.codes,
+                pos: self.get_pos(),
+            });
         }
 
         let ret = self
@@ -51,9 +73,8 @@ impl<'a> Lexer<'a> {
             })
             .reduce(|a, b| if a.1.len() < b.1.len() { b } else { a });
 
-        let line = self.line;
-        let col = self.col;
-        if let Some(r) = &ret {
+        let pos = self.get_pos();
+        if let Some(r) = ret {
             for c in r.1.chars() {
                 if c == '\n' {
                     self.line += 1;
@@ -65,28 +86,64 @@ impl<'a> Lexer<'a> {
             self.codes = self.codes.split_at(r.1.len()).1;
 
             if r.0.should_err() {
-                return LexerResult {
-                    line,
-                    col,
-                    token: Err(format!("The token \n \t {} \n was deliberately marked as an error", r.1)),
-                };
+                return Err((
+                    format!(
+                        "The token \n \t {} \n was deliberately marked as an error",
+                        r.1
+                    ),
+                    self.get_pos(),
+                ));
             }
 
             if r.0.should_skip() {
                 self.next_token()
             } else {
-                LexerResult {
-                    line,
-                    col,
-                    token: Ok(r.clone()),
+                Ok(Token {
+                    token_type: r.0,
+                    lexeme: r.1,
+                    pos,
+                })
+            }
+        } else {
+            Err(("Can't match any tokens!".to_owned(), pos))
+        }
+    }
+}
+
+pub struct TokenStream<'a> {
+    lexer: Lexer<'a>,
+    buffer: Vec<Token<'a>>,
+    back_count: usize,
+}
+
+impl<'a> TokenStream<'a> {
+    pub fn new(lexer: Lexer<'a>) -> TokenStream<'a> {
+        TokenStream {
+            lexer: lexer,
+            buffer: Vec::new(),
+            back_count: 0,
+        }
+    }
+
+    pub fn next_token(&mut self) -> &Token<'a> {
+        if self.back_count == 0 {
+            let result = self.lexer.next_token();
+            match result {
+                Ok(token) => {
+                    self.buffer.push(token);
+                    self.buffer.last().unwrap()
+                }
+                Err(info) => {
+                    panic!("{} at {}", info.0, info.1);
                 }
             }
         } else {
-            LexerResult {
-                line,
-                col,
-                token: Err("Can't match any tokens!".to_owned()),
-            }
+            self.back_count -= 1;
+            &self.buffer[self.buffer.len() - 1 - self.back_count]
         }
+    }
+
+    pub fn go_back(&mut self) {
+        self.back_count += 1;
     }
 }
