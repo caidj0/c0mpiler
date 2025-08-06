@@ -75,6 +75,7 @@ macro_rules! define_tokens {
         #[derive(Debug, Clone, PartialEq)]
         pub enum TokenType {
             $($token, )*
+            EOF
         }
 
         pub fn create_keyword_map() -> HashMap<String, TokenType> {
@@ -112,6 +113,7 @@ macro_rules! define_tokens {
                     $(
                         TokenType::$token => Some($keyword),
                     )*
+                    TokenType::EOF => None
                 }
             }
 
@@ -120,6 +122,7 @@ macro_rules! define_tokens {
                     $(
                         TokenType::$token => define_tokens!(@action_is_skip $($action)?),
                     )*
+                    TokenType::EOF => false
                 }
             }
         }
@@ -255,5 +258,5 @@ define_tokens! {
     // Others
     Comment: r"//[^\r\n]*\r?\n" -> skip,
     CommentsBlock: r"/\*.*?\*/" -> skip,
-    Whitespace: r"[ \t\r\n]" -> skip
+    Whitespace: r"[\t\n\v\f\r ]+" -> skip
 }
