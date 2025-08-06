@@ -59,13 +59,20 @@ define_rules! {
     RAW_C_STRING_CONTENT: r###"(?<sharp>#*)"[^{CR}{NUL}]*?"\k<sharp>"###,
     RAW_C_STRING_LITERAL: r"cr{RAW_C_STRING_CONTENT}{SUFFIX}?",
 
-    FLOAT_LITERAL: r"{DEC_LITERAL}\.{DEC_LITERAL}{SUFFIX_NO_E}?|{DEC_LITERAL}\.(?![\._a-zA-Z])"
+    FLOAT_LITERAL: r"{DEC_LITERAL}\.{DEC_LITERAL}{SUFFIX_NO_E}?|{DEC_LITERAL}\.(?![\._a-zA-Z])",
+
+    RESERVED_GUARDED_STRING_LITERAL: r"#+{STRING_LITERAL}",
+    RESERVED_NUMBER: r"{BIN_LITERAL}[2-9]|{OCT_LITERAL}[8-9]|({BIN_LITERAL}|{OCT_LITERAL}|{HEX_LITERAL})\.(?![\._a-zA-Z])|0b_*(?=\z|[^{BIN_DIGIT}])|0o_*(?=\z|[^{OCT_DIGIT}])|0x_*(?=\z|[^{HEX_DIGIT}])"
 }
 
 macro_rules! define_tokens {
     (@action_is_skip) => {false};
     (@action_is_skip skip) => {true};
     (@action_is_skip $other:ident) => {false};
+
+    (@action_is_err) => {false};
+    (@action_is_err err) => {true};
+    (@action_is_err $other:ident) => {false};
 
     (@is_literal) => {false};
     (@is_literal literal) => {true};
@@ -121,6 +128,15 @@ macro_rules! define_tokens {
                 match self {
                     $(
                         TokenType::$token => define_tokens!(@action_is_skip $($action)?),
+                    )*
+                    TokenType::EOF => false
+                }
+            }
+
+            pub fn should_err(&self) -> bool {
+                match self {
+                    $(
+                        TokenType::$token => define_tokens!(@action_is_err $($action)?),
                     )*
                     TokenType::EOF => false
                 }
@@ -182,6 +198,10 @@ define_tokens! {
     Virtual  :[literal] "virtual",
     Yield    :[literal] "yield",
 
+    // Reserved
+    ReservedGuardedString  :"{RESERVED_GUARDED_STRING_LITERAL}" -> err,
+    ReservedNumber         :"{RESERVED_NUMBER}" -> err,
+
     // Identifiers
     Id: "{IDENTIFIER_OR_KEYWORD}",
 
@@ -196,7 +216,6 @@ define_tokens! {
     RawCString: "{RAW_C_STRING_LITERAL}",
     Integer: "{INTEGER_LITERAL}",
     Float: "{FLOAT_LITERAL}",
-        // TODO
 
     // Punctuation
     Plus     :[literal] "+"    ,

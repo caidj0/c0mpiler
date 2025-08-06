@@ -64,6 +64,14 @@ impl<'a> Lexer<'a> {
             }
             self.codes = self.codes.split_at(r.1.len()).1;
 
+            if r.0.should_err() {
+                return LexerResult {
+                    line,
+                    col,
+                    token: Err(format!("The token \n \t {} \n was deliberately marked as an error", r.1)),
+                };
+            }
+
             if r.0.should_skip() {
                 self.next_token()
             } else {
