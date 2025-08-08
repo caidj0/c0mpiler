@@ -3,7 +3,7 @@ use std::fmt::Display;
 use fancy_regex::Regex;
 
 use crate::{
-    ast::{Lit, LitKind},
+    ast::{Lit, LitKind, UnOp},
     tokens::{TokenType, get_all_tokens},
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -171,6 +171,19 @@ impl<'a> TryInto<Lit> for &Token<'a> {
     }
 }
 
+impl<'a> TryInto<UnOp> for &Token<'a> {
+    type Error = ();
+
+    fn try_into(self) -> Result<UnOp, Self::Error> {
+        match self.token_type {
+            TokenType::Star => Ok(UnOp::Deref),
+            TokenType::Not => Ok(UnOp::Not),
+            TokenType::Minus => Ok(UnOp::Neg),
+            _ => Err(()),
+        }
+    }
+}
+
 pub struct Lexer<'a> {
     token_types: Vec<(TokenType, Regex)>,
     codes: &'a str,
@@ -268,12 +281,10 @@ pub struct TokenIter<'a> {
     pos: usize,
 }
 
-impl<'a> TokenIter<'a> {
-    pub fn update(&mut self, new_iter: Self) {
-        self.pos = new_iter.pos;
-    }
+impl<'a> Iterator for TokenIter<'a> {
+    type Item = &'a Token<'a>;
 
-    pub fn next_token(&mut self) -> Option<&Token<'a>> {
+    fn next(&mut self) -> Option<Self::Item> {
         if self.pos >= self.buffer.len() {
             return None;
         }
@@ -281,6 +292,12 @@ impl<'a> TokenIter<'a> {
         let ret = &self.buffer[self.pos];
         self.pos += 1;
         Some(ret)
+    }
+}
+
+impl<'a> TokenIter<'a> {
+    pub fn update(&mut self, new_iter: Self) {
+        self.pos = new_iter.pos;
     }
 }
 
