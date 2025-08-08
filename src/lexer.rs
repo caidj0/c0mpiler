@@ -3,7 +3,7 @@ use std::fmt::Display;
 use fancy_regex::Regex;
 
 use crate::{
-    ast::{Lit, LitKind, UnOp},
+    ast::{BinOp, Lit, LitKind, UnOp},
     tokens::{TokenType, get_all_tokens},
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -179,6 +179,34 @@ impl<'a> TryInto<UnOp> for &Token<'a> {
             TokenType::Star => Ok(UnOp::Deref),
             TokenType::Not => Ok(UnOp::Not),
             TokenType::Minus => Ok(UnOp::Neg),
+            _ => Err(()),
+        }
+    }
+}
+
+impl<'a> TryInto<BinOp> for &Token<'a> {
+    type Error = ();
+
+    fn try_into(self) -> Result<BinOp, Self::Error> {
+        match self.token_type {
+            TokenType::Plus => Ok(BinOp::Add),
+            TokenType::Minus => Ok(BinOp::Sub),
+            TokenType::Star => Ok(BinOp::Mul),
+            TokenType::Slash => Ok(BinOp::Div),
+            TokenType::Percent => Ok(BinOp::Rem),
+            TokenType::AndAnd => Ok(BinOp::And),
+            TokenType::OrOr => Ok(BinOp::Or),
+            TokenType::Caret => Ok(BinOp::BitXor),
+            TokenType::And => Ok(BinOp::BitAnd),
+            TokenType::Or => Ok(BinOp::BitOr),
+            TokenType::Shl => Ok(BinOp::Shl),
+            TokenType::Shr => Ok(BinOp::Shr),
+            TokenType::EqEq => Ok(BinOp::Eq),
+            TokenType::Lt => Ok(BinOp::Lt),
+            TokenType::Le => Ok(BinOp::Le),
+            TokenType::Ne => Ok(BinOp::Ne),
+            TokenType::Ge => Ok(BinOp::Ge),
+            TokenType::Gt => Ok(BinOp::Gt),
             _ => Err(()),
         }
     }

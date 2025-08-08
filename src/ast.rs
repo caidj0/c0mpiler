@@ -2,7 +2,7 @@ use crate::lexer::TokenIter;
 
 pub trait Visitable: Sized {
     #[allow(unused_variables)]
-    fn visit(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
         unimplemented!()
     }
 }
@@ -19,7 +19,7 @@ pub enum ExprKind {
     // Call(P<Expr>, ThinVec<P<Expr>>),
     // MethodCall(Box<MethodCall>),
     // Tup(ThinVec<P<Expr>>),
-    // Binary(BinOp, P<Expr>, P<Expr>),
+    Binary(Binary),
     Unary(Unary),
     Lit(Lit),
     // Cast(P<Expr>, P<Ty>),
@@ -53,10 +53,18 @@ pub enum ExprKind {
 }
 
 impl Visitable for Expr {
-    fn visit(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
         let mut kind: Option<ExprKind> = None;
-        kind = kind.or(Unary::visit(iter).map(|x| ExprKind::Unary(x)));
-        kind = kind.or(Lit::visit(iter).map(|x| ExprKind::Lit(x)));
+        kind = kind.or_else(|| Unary::eat(iter).map(|x| ExprKind::Unary(x)));
+        kind = kind.or_else(|| Lit::eat(iter).map(|x| ExprKind::Lit(x)));
+
+        kind = kind.map(|expr1| {
+            if let Some(helper) = BinaryHelper::eat(iter) {
+                ExprKind::Binary(Binary(helper.0, Box::new(Expr { kind: expr1 }), helper.1))
+            } else {
+                expr1
+            }
+        });
 
         Some(Expr { kind: kind? })
     }
@@ -85,7 +93,7 @@ pub enum LitKind {
 }
 
 impl Visitable for Lit {
-    fn visit(iter: &mut TokenIter) -> Option<Lit> {
+    fn eat(iter: &mut TokenIter) -> Option<Lit> {
         let mut using_iter = iter.clone();
 
         let ret = using_iter.next()?.try_into().ok()?;
@@ -99,11 +107,11 @@ impl Visitable for Lit {
 pub struct Unary(pub UnOp, pub Box<Expr>);
 
 impl Visitable for Unary {
-    fn visit(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
         let mut using_iter = iter.clone();
 
         let unop = using_iter.next()?.try_into().ok()?;
-        let expr = Expr::visit(&mut using_iter)?;
+        let expr = Expr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
         Some(Self(unop, Box::new(expr)))
@@ -115,4 +123,44 @@ pub enum UnOp {
     Deref,
     Not,
     Neg,
+}
+
+#[derive(Debug)]
+pub struct Binary(pub BinOp, pub Box<Expr>, pub Box<Expr>);
+
+#[derive(Debug)]
+pub struct BinaryHelper(pub BinOp, pub Box<Expr>);
+
+impl Visitable for BinaryHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let binop: BinOp = using_iter.next()?.try_into().ok()?;
+        let expr2 = Expr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(binop, Box::new(expr2)))
+    }
+}
+
+#[derive(Debug)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    And,
+    Or,
+    BitXor,
+    BitAnd,
+    BitOr,
+    Shl,
+    Shr,
+    Eq,
+    Lt,
+    Le,
+    Ne,
+    Ge,
+    Gt,
 }
