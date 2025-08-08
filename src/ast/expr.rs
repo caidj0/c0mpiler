@@ -1,6 +1,7 @@
 use crate::{
-    ast::Visitable,
+    ast::{Visitable, pat::Pat},
     lexer::{Token, TokenIter},
+    match_keyword,
     tokens::TokenType,
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -17,11 +18,11 @@ pub enum ExprKind {
     // Call(P<Expr>, ThinVec<P<Expr>>),
     // MethodCall(Box<MethodCall>),
     // Tup(ThinVec<P<Expr>>),
-    Binary(Binary),
-    Unary(Unary),
-    Lit(Lit),
+    Binary(BinaryExpr),
+    Unary(UnaryExpr),
+    Lit(LitExpr),
     // Cast(P<Expr>, P<Ty>),
-    // Let(P<Pat>, P<Expr>, Span, Recovered),
+    Let(LetExpr),
     // If(P<Expr>, P<Block>, Option<P<Expr>>),
     // While(P<Expr>, P<Block>, Option<Label>),
     // ForLoop {
@@ -59,12 +60,17 @@ impl Visitable for Expr {
 impl Expr {
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> Option<Self> {
         let mut kind: Option<ExprKind> = None;
-        kind = kind.or_else(|| Unary::eat(iter).map(ExprKind::Unary));
-        kind = kind.or_else(|| Lit::eat(iter).map(ExprKind::Lit));
+        kind = kind.or_else(|| UnaryExpr::eat(iter).map(ExprKind::Unary));
+        kind = kind.or_else(|| LitExpr::eat(iter).map(ExprKind::Lit));
+        kind = kind.or_else(|| LetExpr::eat(iter).map(ExprKind::Let));
 
         kind = kind.map(|expr1| {
             if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority) {
-                ExprKind::Binary(Binary(helper.0, Box::new(Expr { kind: expr1 }), helper.1))
+                ExprKind::Binary(BinaryExpr(
+                    helper.0,
+                    Box::new(Expr { kind: expr1 }),
+                    helper.1,
+                ))
             } else {
                 expr1
             }
@@ -75,7 +81,7 @@ impl Expr {
 }
 
 #[derive(Debug)]
-pub struct Lit {
+pub struct LitExpr {
     pub kind: LitKind,
     pub symbol: String,
     pub suffix: Option<String>,
@@ -96,8 +102,8 @@ pub enum LitKind {
     CStrRaw(u8),
 }
 
-impl Visitable for Lit {
-    fn eat(iter: &mut TokenIter) -> Option<Lit> {
+impl Visitable for LitExpr {
+    fn eat(iter: &mut TokenIter) -> Option<LitExpr> {
         let mut using_iter = iter.clone();
 
         let ret = using_iter.next()?.try_into().ok()?;
@@ -107,12 +113,12 @@ impl Visitable for Lit {
     }
 }
 
-impl<'a> TryInto<Lit> for &Token<'a> {
+impl<'a> TryInto<LitExpr> for &Token<'a> {
     type Error = ();
 
-    fn try_into(self) -> Result<Lit, Self::Error> {
+    fn try_into(self) -> Result<LitExpr, Self::Error> {
         match self.token_type {
-            TokenType::True | TokenType::False => Ok(Lit {
+            TokenType::True | TokenType::False => Ok(LitExpr {
                 kind: LitKind::Bool,
                 symbol: self.lexeme.to_owned(),
                 suffix: None,
@@ -120,7 +126,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
 
             TokenType::Byte => {
                 let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or(())?;
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::Byte,
                     symbol,
                     suffix,
@@ -129,7 +135,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
 
             TokenType::Character => {
                 let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or(())?;
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::Char,
                     symbol,
                     suffix,
@@ -138,7 +144,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
 
             TokenType::Integer => {
                 let (symbol, suffix) = parse_number_literal(self.lexeme);
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::Integer,
                     symbol,
                     suffix,
@@ -154,7 +160,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
                     suffix_pos.map_or(self.lexeme.to_owned(), |pos| self.lexeme[..pos].to_owned());
                 let suffix = suffix_pos.map(|pos| self.lexeme[pos..].to_owned());
 
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::Float,
                     symbol,
                     suffix,
@@ -163,7 +169,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
 
             TokenType::String => {
                 let (symbol, suffix) = parse_quoted_content(self.lexeme, '\"').ok_or(())?;
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::Str,
                     symbol,
                     suffix,
@@ -181,7 +187,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
                     Some(suffix.to_owned())
                 };
 
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::StrRaw(sharp_num as u8),
                     symbol: symbol.to_owned(),
                     suffix,
@@ -191,7 +197,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
             TokenType::ByteString => {
                 let content = &self.lexeme[1..];
                 let (symbol, suffix) = parse_quoted_content(content, '\"').ok_or(())?;
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::ByteStr,
                     symbol,
                     suffix,
@@ -210,7 +216,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
                     Some(suffix.to_owned())
                 };
 
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::ByteStrRaw(sharp_num as u8),
                     symbol: symbol.to_owned(),
                     suffix,
@@ -220,7 +226,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
             TokenType::CString => {
                 let content = &self.lexeme[1..];
                 let (symbol, suffix) = parse_quoted_content(content, '\"').ok_or(())?;
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::CStr,
                     symbol,
                     suffix,
@@ -239,7 +245,7 @@ impl<'a> TryInto<Lit> for &Token<'a> {
                     Some(suffix.to_owned())
                 };
 
-                Ok(Lit {
+                Ok(LitExpr {
                     kind: LitKind::CStrRaw(sharp_num as u8),
                     symbol: symbol.to_owned(),
                     suffix,
@@ -252,9 +258,9 @@ impl<'a> TryInto<Lit> for &Token<'a> {
 }
 
 #[derive(Debug)]
-pub struct Unary(pub UnOp, pub Box<Expr>);
+pub struct UnaryExpr(pub UnOp, pub Box<Expr>);
 
-impl Visitable for Unary {
+impl Visitable for UnaryExpr {
     fn eat(iter: &mut TokenIter) -> Option<Self> {
         let mut using_iter = iter.clone();
 
@@ -287,7 +293,7 @@ impl<'a> TryInto<UnOp> for &Token<'a> {
 }
 
 #[derive(Debug)]
-pub struct Binary(pub BinOp, pub Box<Expr>, pub Box<Expr>);
+pub struct BinaryExpr(pub BinOp, pub Box<Expr>, pub Box<Expr>);
 
 #[derive(Debug)]
 pub struct BinaryHelper(pub BinOp, pub Box<Expr>);
@@ -372,5 +378,25 @@ impl<'a> TryInto<BinOp> for &Token<'a> {
             TokenType::Gt => Ok(BinOp::Gt),
             _ => Err(()),
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct LetExpr(pub Box<Pat>, pub Box<Expr>);
+
+impl Visitable for LetExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Let);
+
+        let pat = Pat::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::Eq);
+
+        let expr = Expr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(Box::new(pat), Box::new(expr)))
     }
 }

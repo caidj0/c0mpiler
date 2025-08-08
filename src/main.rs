@@ -4,7 +4,7 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str = r###" !1 + -1 * 1 "###;
+    let test_str = r###" let a114514 = "Hello world!" "###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);
 
