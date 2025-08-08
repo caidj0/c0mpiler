@@ -138,6 +138,13 @@ impl<'a> TokenIter<'a> {
     pub fn update(&mut self, new_iter: Self) {
         self.pos = new_iter.pos;
     }
+
+    pub fn peek(&self) -> Option<&'a Token<'a>> {
+        if self.pos >= self.buffer.len() {
+            return None;
+        }
+        Some(&self.buffer[self.pos])
+    }
 }
 
 impl<'a> TokenBuffer<'a> {

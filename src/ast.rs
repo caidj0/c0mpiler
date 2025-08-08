@@ -1,5 +1,9 @@
 pub mod expr;
+pub mod generic;
 pub mod pat;
+pub mod path;
+pub mod stmt;
+pub mod ty;
 
 use crate::{
     lexer::{Token, TokenIter},
@@ -15,8 +19,10 @@ pub trait Visitable: Sized {
 
 #[macro_export]
 macro_rules! match_keyword {
-    ($id:ident, $e:expr) => {
-        if $id.next()?.token_type != $e {
+    ($iter:ident, $e:expr) => {
+        if $iter.peek()?.token_type == $e {
+            $iter.next();
+        } else {
             return None;
         }
     };
