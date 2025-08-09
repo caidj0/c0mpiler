@@ -1,5 +1,9 @@
 use crate::{
-    ast::{Visitable, expr::AnonConst, path::Path},
+    ast::{
+        Visitable,
+        expr::AnonConst,
+        path::{Path, QSelf},
+    },
     lexer::TokenIter,
     match_keyword,
     tokens::TokenType,
@@ -57,19 +61,6 @@ impl Visitable for PathTy {
 
         iter.update(using_iter);
         Some(Self(qself.map(Box::new), path))
-    }
-}
-
-#[derive(Debug)]
-pub struct QSelf {
-    pub ty: Box<Ty>,
-    pub position: usize,
-}
-
-impl Visitable for QSelf {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
-        // TODO
-        None
     }
 }
 

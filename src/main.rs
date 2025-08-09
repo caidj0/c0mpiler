@@ -5,7 +5,8 @@ use c0mpiler::{
 
 fn main() {
     let test_str = r###"fn main() {
-    let numbers: [i32; 3] = [10, 20, 30];
+    let mut flags = [false; 5];
+    flags[2] = true;
 }"###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);

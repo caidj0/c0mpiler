@@ -1,5 +1,10 @@
 use crate::{
-    ast::{Visitable, pat::Pat, stmt::Stmt},
+    ast::{
+        Visitable,
+        pat::Pat,
+        path::{Path, QSelf},
+        stmt::Stmt,
+    },
     lexer::{Token, TokenIter},
     match_keyword,
     tokens::TokenType,
@@ -35,13 +40,13 @@ pub enum ExprKind {
     // Loop(P<Block>, Option<Label>, Span),
     // Match(P<Expr>, ThinVec<Arm>, MatchKind),
     // Block(P<Block>, Option<Label>),
-    // Assign(P<Expr>, P<Expr>, Span),
+    Assign(AssignExpr),
     // AssignOp(AssignOp, P<Expr>, P<Expr>),
     // Field(P<Expr>, Ident),
-    // Index(P<Expr>, P<Expr>, Span),
+    Index(IndexExpr),
     // Range(Option<P<Expr>>, Option<P<Expr>>, RangeLimits),
     // Underscore,
-    // Path(Option<P<QSelf>>, Path),
+    Path(PathExpr),
     // Break(Option<Label>, Option<P<Expr>>),
     // Continue(Option<Label>),
     // Ret(Option<P<Expr>>),
@@ -60,11 +65,20 @@ impl Visitable for Expr {
 impl Expr {
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> Option<Self> {
         let mut kind: Option<ExprKind> = None;
+        kind = kind.or_else(|| PathExpr::eat(iter).map(ExprKind::Path));
         kind = kind.or_else(|| ArrayExpr::eat(iter).map(ExprKind::Array));
         kind = kind.or_else(|| RepeatExpr::eat(iter).map(ExprKind::Repeat));
         kind = kind.or_else(|| UnaryExpr::eat(iter).map(ExprKind::Unary));
         kind = kind.or_else(|| LitExpr::eat(iter).map(ExprKind::Lit));
         kind = kind.or_else(|| LetExpr::eat(iter).map(ExprKind::Let));
+
+        kind = kind.map(|expr1| {
+            if let Some(helper) = IndexHelper::eat(iter) {
+                ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
+            } else {
+                expr1
+            }
+        });
 
         kind = kind.map(|expr1| {
             if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority) {
@@ -73,6 +87,14 @@ impl Expr {
                     Box::new(Expr { kind: expr1 }),
                     helper.1,
                 ))
+            } else {
+                expr1
+            }
+        });
+
+        kind = kind.map(|expr1| {
+            if let Some(helper) = AssignHelper::eat(iter) {
+                ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
             } else {
                 expr1
             }
@@ -488,5 +510,61 @@ impl Visitable for BlockExpr {
 
         iter.update(using_iter);
         Some(Self { stmts })
+    }
+}
+
+#[derive(Debug)]
+pub struct IndexExpr(pub Box<Expr>, pub Box<Expr>);
+
+#[derive(Debug)]
+pub struct IndexHelper(pub Box<Expr>);
+
+impl Visitable for IndexHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenSqu);
+
+        let expr = Expr::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::CloseSqu);
+
+        iter.update(using_iter);
+        Some(Self(Box::new(expr)))
+    }
+}
+
+#[derive(Debug)]
+pub struct PathExpr(pub Option<Box<QSelf>>, pub Path);
+
+impl Visitable for PathExpr {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let qself = QSelf::eat(&mut using_iter);
+        let path = Path::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(qself.map(Box::new), path))
+    }
+}
+
+// Rust 的赋值语句没有返回值，貌似不用关心赋值语句的结合性。
+#[derive(Debug)]
+pub struct AssignExpr(pub Box<Expr>, pub Box<Expr>);
+
+#[derive(Debug)]
+pub struct AssignHelper(pub Box<Expr>);
+
+impl Visitable for AssignHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Eq);
+
+        let expr = Expr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(Box::new(expr)))
     }
 }

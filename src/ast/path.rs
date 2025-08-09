@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Ident, Visitable, generic::GenericArgs},
+    ast::{Ident, Visitable, generic::GenericArgs, ty::Ty},
     tokens::TokenType,
 };
 
@@ -58,5 +58,18 @@ impl Visitable for PathSegment {
             ident,
             args: args.map(Box::new),
         })
+    }
+}
+
+#[derive(Debug)]
+pub struct QSelf {
+    pub ty: Box<Ty>,
+    pub position: usize,
+}
+
+impl Visitable for QSelf {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+        // TODO
+        None
     }
 }
