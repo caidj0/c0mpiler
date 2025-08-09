@@ -1,10 +1,10 @@
 use c0mpiler::{
-    ast::{expr::Expr, stmt::Stmt, Visitable},
+    ast::{Visitable, stmt::Stmt},
     lexer::{Lexer, TokenBuffer},
 };
 
 fn main() {
-    let test_str = r###" let a114514: str = "Hello world!"; "###;
+    let test_str = r###" let a114514 = [1, 2, 3]; "###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);
 

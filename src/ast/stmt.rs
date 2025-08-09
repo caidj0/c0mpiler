@@ -1,10 +1,5 @@
 use crate::{
-    ast::{
-        Visitable,
-        expr::{Expr, LetExpr},
-        pat::Pat,
-        ty::Ty,
-    },
+    ast::{Visitable, expr::Expr, pat::Pat, ty::Ty},
     match_keyword,
     tokens::TokenType,
 };

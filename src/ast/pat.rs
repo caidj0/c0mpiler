@@ -5,7 +5,7 @@ use crate::{
 
 #[derive(Debug)]
 pub struct Pat {
-    kind: PatKind,
+    pub kind: PatKind,
 }
 
 #[derive(Debug)]

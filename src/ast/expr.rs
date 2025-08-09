@@ -13,7 +13,7 @@ pub struct Expr {
 
 #[derive(Debug)]
 pub enum ExprKind {
-    // Array(ThinVec<P<Expr>>),
+    Array(ArrayExpr),
     // ConstBlock(AnonConst),
     // Call(P<Expr>, ThinVec<P<Expr>>),
     // MethodCall(Box<MethodCall>),
@@ -60,6 +60,7 @@ impl Visitable for Expr {
 impl Expr {
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> Option<Self> {
         let mut kind: Option<ExprKind> = None;
+        kind = kind.or_else(|| ArrayExpr::eat(iter).map(ExprKind::Array));
         kind = kind.or_else(|| UnaryExpr::eat(iter).map(ExprKind::Unary));
         kind = kind.or_else(|| LitExpr::eat(iter).map(ExprKind::Lit));
         kind = kind.or_else(|| LetExpr::eat(iter).map(ExprKind::Let));
@@ -381,7 +382,6 @@ impl<'a> TryInto<BinOp> for &Token<'a> {
     }
 }
 
-
 // 这个 LetExpr 仅供 if 和 while 使用
 #[derive(Debug)]
 pub struct LetExpr(pub Box<Pat>, pub Box<Expr>);
@@ -400,5 +400,32 @@ impl Visitable for LetExpr {
 
         iter.update(using_iter);
         Some(Self(Box::new(pat), Box::new(expr)))
+    }
+}
+
+#[derive(Debug)]
+pub struct ArrayExpr(pub Vec<Box<Expr>>);
+
+impl Visitable for ArrayExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+        match_keyword!(using_iter, TokenType::OpenSqu);
+
+        let mut exprs = Vec::new();
+
+        while let Some(expr) = Expr::eat(&mut using_iter) {
+            exprs.push(Box::new(expr));
+
+            if using_iter.peek()?.token_type == TokenType::Comma {
+                using_iter.next();
+            } else {
+                break;
+            }
+        }
+
+        match_keyword!(using_iter, TokenType::CloseSqu);
+
+        iter.update(using_iter);
+        Some(Self(exprs))
     }
 }
