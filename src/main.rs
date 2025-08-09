@@ -4,7 +4,7 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str = r###" let a114514 = [1, 2, 3]; "###;
+    let test_str = r###"let numbers: [i32; 3] = [10, 20, 30];"###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);
 

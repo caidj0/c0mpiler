@@ -46,7 +46,7 @@ pub enum ExprKind {
     // Continue(Option<Label>),
     // Ret(Option<P<Expr>>),
     // Struct(P<StructExpr>),
-    // Repeat(P<Expr>, AnonConst),
+    Repeat(RepeatExpr),
     // Paren(P<Expr>),
     // Become(P<Expr>),
 }
@@ -61,6 +61,7 @@ impl Expr {
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> Option<Self> {
         let mut kind: Option<ExprKind> = None;
         kind = kind.or_else(|| ArrayExpr::eat(iter).map(ExprKind::Array));
+        kind = kind.or_else(|| RepeatExpr::eat(iter).map(ExprKind::Repeat));
         kind = kind.or_else(|| UnaryExpr::eat(iter).map(ExprKind::Unary));
         kind = kind.or_else(|| LitExpr::eat(iter).map(ExprKind::Lit));
         kind = kind.or_else(|| LetExpr::eat(iter).map(ExprKind::Let));
@@ -427,5 +428,41 @@ impl Visitable for ArrayExpr {
 
         iter.update(using_iter);
         Some(Self(exprs))
+    }
+}
+
+// 要求里面的 Expr 是编译期计算的
+#[derive(Debug)]
+pub struct AnonConst {
+    pub value: Box<Expr>,
+}
+
+impl Visitable for AnonConst {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        Some(Self {
+            value: Box::new(Expr::eat(iter)?),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct RepeatExpr(pub Box<Expr>, pub AnonConst);
+
+impl Visitable for RepeatExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenSqu);
+
+        let expr = Expr::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::Semi);
+
+        let anon = AnonConst::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::CloseSqu);
+
+        iter.update(using_iter);
+        Some(Self(Box::new(expr), anon))
     }
 }

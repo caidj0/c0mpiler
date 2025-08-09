@@ -1,4 +1,9 @@
-use crate::ast::{Visitable, path::Path};
+use crate::{
+    ast::{Visitable, expr::AnonConst, path::Path},
+    lexer::TokenIter,
+    match_keyword,
+    tokens::TokenType,
+};
 
 #[derive(Debug)]
 pub struct Ty {
@@ -8,7 +13,7 @@ pub struct Ty {
 #[derive(Debug)]
 pub enum TyKind {
     // Slice(P<Ty>),
-    // Array(P<Ty>, AnonConst),
+    Array(ArrayTy),
     // Ptr(MutTy),
     // Ref(Option<Lifetime>, MutTy),
     // PinnedRef(Option<Lifetime>, MutTy),
@@ -34,6 +39,7 @@ impl Visitable for Ty {
     fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
         let mut kind = None;
         kind = kind.or_else(|| PathTy::eat(iter).map(TyKind::Path));
+        kind = kind.or_else(|| ArrayTy::eat(iter).map(TyKind::Array));
 
         Some(Ty { kind: kind? })
     }
@@ -64,5 +70,27 @@ impl Visitable for QSelf {
     fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
         // TODO
         None
+    }
+}
+
+#[derive(Debug)]
+pub struct ArrayTy(pub Box<Ty>, pub AnonConst);
+
+impl Visitable for ArrayTy {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenSqu);
+
+        let ty = Ty::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::Semi);
+
+        let anon = AnonConst::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::CloseSqu);
+
+        iter.update(using_iter);
+        Some(Self(Box::new(ty), anon))
     }
 }
