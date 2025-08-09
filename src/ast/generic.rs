@@ -13,3 +13,22 @@ impl Visitable for GenericArgs {
         None
     }
 }
+
+#[derive(Debug)]
+pub struct Generics {
+    // pub params: ThinVec<GenericParam>,
+    // pub where_clause: WhereClause,
+}
+
+impl Visitable for Generics {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+        // TODO
+        None
+    }
+}
+
+impl Default for Generics {
+    fn default() -> Self {
+        Self {}
+    }
+}

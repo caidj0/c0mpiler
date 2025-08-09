@@ -11,18 +11,20 @@ pub struct Stmt {
 
 #[derive(Debug)]
 pub enum StmtKind {
-    Let(Box<LocalStmt>),
+    Let(LocalStmt),
     // Item(P<Item>),
     // Expr(P<Expr>),
-    // Semi(P<Expr>),
-    // Empty,
+    Semi(SemiStmt),
+    Empty(EmptyStmt),
     // MacCall(P<MacCallStmt>),
 }
 
 impl Visitable for Stmt {
     fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
         let mut kind = None;
-        kind = kind.or_else(|| LocalStmt::eat(iter).map(|x| StmtKind::Let(Box::new(x))));
+        kind = kind.or_else(|| LocalStmt::eat(iter).map(StmtKind::Let));
+        kind = kind.or_else(|| SemiStmt::eat(iter).map(StmtKind::Semi));
+        kind = kind.or_else(|| EmptyStmt::eat(iter).map(StmtKind::Empty));
 
         Some(Self { kind: kind? })
     }
@@ -72,4 +74,29 @@ pub enum LocalKind {
     Decl,
     Init(Box<Expr>),
     // InitElse(Box<Expr>, Box<Block>),
+}
+
+#[derive(Debug)]
+pub struct EmptyStmt;
+
+impl Visitable for EmptyStmt {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+        match_keyword!(iter, TokenType::Semi);
+        Some(Self)
+    }
+}
+
+#[derive(Debug)]
+pub struct SemiStmt(pub Box<Expr>);
+
+impl Visitable for SemiStmt {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let expr = Expr::eat(&mut using_iter)?;
+        match_keyword!(using_iter, TokenType::Semi);
+
+        iter.update(using_iter);
+        Some(Self(Box::new(expr)))
+    }
 }

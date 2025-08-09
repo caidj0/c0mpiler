@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Visitable, pat::Pat},
+    ast::{Visitable, pat::Pat, stmt::Stmt},
     lexer::{Token, TokenIter},
     match_keyword,
     tokens::TokenType,
@@ -464,5 +464,29 @@ impl Visitable for RepeatExpr {
 
         iter.update(using_iter);
         Some(Self(Box::new(expr), anon))
+    }
+}
+
+#[derive(Debug)]
+pub struct BlockExpr {
+    pub stmts: Vec<Stmt>,
+}
+
+impl Visitable for BlockExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenCurly);
+
+        let mut stmts = Vec::new();
+
+        while let Some(stmt) = Stmt::eat(&mut using_iter) {
+            stmts.push(stmt);
+        }
+
+        match_keyword!(using_iter, TokenType::CloseCurly);
+
+        iter.update(using_iter);
+        Some(Self { stmts })
     }
 }
