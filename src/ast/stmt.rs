@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Visitable, expr::Expr, pat::Pat, ty::Ty},
+    ast::{Visitable, expr::Expr, item::Item, pat::Pat, ty::Ty},
     match_keyword,
     tokens::TokenType,
 };
@@ -12,7 +12,7 @@ pub struct Stmt {
 #[derive(Debug)]
 pub enum StmtKind {
     Let(LocalStmt),
-    // Item(P<Item>),
+    Item(Box<Item>),
     // Expr(P<Expr>),
     Semi(SemiStmt),
     Empty(EmptyStmt),
@@ -23,6 +23,7 @@ impl Visitable for Stmt {
     fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
         let mut kind = None;
         kind = kind.or_else(|| LocalStmt::eat(iter).map(StmtKind::Let));
+        kind = kind.or_else(|| Item::eat(iter).map(Box::new).map(StmtKind::Item));
         kind = kind.or_else(|| SemiStmt::eat(iter).map(StmtKind::Semi));
         kind = kind.or_else(|| EmptyStmt::eat(iter).map(StmtKind::Empty));
 

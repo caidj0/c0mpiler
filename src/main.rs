@@ -5,8 +5,10 @@ use c0mpiler::{
 
 fn main() {
     let test_str = r###"fn main() {
-    let mut flags = [false; 5];
-    flags[2] = true;
+    const MATRIX: [[u8; 3]; 2] = [
+        [1, 2, 3],
+        [4, 5, 6],
+    ];
 }"###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);

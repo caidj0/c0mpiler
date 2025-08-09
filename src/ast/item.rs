@@ -1,5 +1,11 @@
 use crate::{
-    ast::{Ident, Visitable, expr::BlockExpr, generic::Generics, pat::Pat, ty::Ty},
+    ast::{
+        Ident, Visitable,
+        expr::{BlockExpr, Expr},
+        generic::Generics,
+        pat::Pat,
+        ty::Ty,
+    },
     match_keyword,
     tokens::TokenType,
 };
@@ -14,7 +20,7 @@ pub enum ItemKind {
     // ExternCrate(Option<Symbol>, Ident),
     // Use(UseTree),
     // Static(Box<StaticItem>),
-    // Const(Box<ConstItem>),
+    Const(ConstItem),
     Fn(FnItem),
     // Mod(Safety, Ident, ModKind),
     // ForeignMod(ForeignMod),
@@ -35,6 +41,7 @@ pub enum ItemKind {
 impl Visitable for Item {
     fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
         let mut kind: Option<ItemKind> = None;
+        kind = kind.or_else(|| ConstItem::eat(iter).map(ItemKind::Const));
         kind = kind.or_else(|| FnItem::eat(iter).map(ItemKind::Fn));
 
         Some(Self { kind: kind? })
@@ -160,6 +167,44 @@ impl Visitable for Param {
         Some(Self {
             ty: Box::new(ty),
             pat: Box::new(pat),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct ConstItem {
+    pub ident: Ident,
+    pub ty: Box<Ty>,
+    pub expr: Option<Box<Expr>>,
+}
+
+impl Visitable for ConstItem {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Const);
+
+        // Spec 中说此处可以为 "_"，但是只用于编译期求值，而编译期求值不被要求
+        let ident = using_iter.next()?.try_into().ok()?;
+
+        match_keyword!(using_iter, TokenType::Colon);
+
+        let ty = Ty::eat(&mut using_iter)?;
+
+        let expr = if using_iter.peek()?.token_type == TokenType::Eq {
+            using_iter.next();
+            Some(Box::new(Expr::eat(&mut using_iter)?))
+        } else {
+            None
+        };
+
+        match_keyword!(using_iter, TokenType::Semi);
+
+        iter.update(using_iter);
+        Some(Self {
+            ident,
+            ty: Box::new(ty),
+            expr,
         })
     }
 }
