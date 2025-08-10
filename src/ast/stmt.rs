@@ -13,8 +13,8 @@ pub struct Stmt {
 pub enum StmtKind {
     Let(LocalStmt),
     Item(Box<Item>),
-    // Expr(P<Expr>),
-    Semi(SemiStmt),
+    Expr(Box<Expr>),
+    Semi(Box<Expr>),
     Empty(EmptyStmt),
     // MacCall(P<MacCallStmt>),
 }
@@ -24,7 +24,17 @@ impl Visitable for Stmt {
         let mut kind = None;
         kind = kind.or_else(|| LocalStmt::eat(iter).map(StmtKind::Let));
         kind = kind.or_else(|| Item::eat(iter).map(Box::new).map(StmtKind::Item));
-        kind = kind.or_else(|| SemiStmt::eat(iter).map(StmtKind::Semi));
+
+        kind = kind.or_else(|| {
+            let expr = Box::new(Expr::eat(iter)?);
+
+            if expr.is_block() && iter.peek()?.token_type == TokenType::Semi {
+                Some(StmtKind::Semi(expr))
+            } else {
+                Some(StmtKind::Expr(expr))
+            }
+        });
+
         kind = kind.or_else(|| EmptyStmt::eat(iter).map(StmtKind::Empty));
 
         Some(Self { kind: kind? })

@@ -4,11 +4,8 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str = r###"fn main() {
-    const MATRIX: [[u8; 3]; 2] = [
-        [1, 2, 3],
-        [4, 5, 6],
-    ];
+    let test_str = r###"fn main(){
+    if a {} else {}
 }"###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);

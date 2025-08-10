@@ -1,8 +1,8 @@
 use crate::{
     ast::{
-        Visitable,
+        Ident, Visitable,
         pat::Pat,
-        path::{Path, QSelf},
+        path::{Path, PathSegment, QSelf},
         stmt::Stmt,
     },
     lexer::{Token, TokenIter},
@@ -20,15 +20,15 @@ pub struct Expr {
 pub enum ExprKind {
     Array(ArrayExpr),
     // ConstBlock(AnonConst),
-    // Call(P<Expr>, ThinVec<P<Expr>>),
-    // MethodCall(Box<MethodCall>),
+    Call(CallExpr),
+    MethodCall(MethodCallExpr),
     // Tup(ThinVec<P<Expr>>),
     Binary(BinaryExpr),
     Unary(UnaryExpr),
     Lit(LitExpr),
     // Cast(P<Expr>, P<Ty>),
     Let(LetExpr),
-    // If(P<Expr>, P<Block>, Option<P<Expr>>),
+    If(IfExpr),
     // While(P<Expr>, P<Block>, Option<Label>),
     // ForLoop {
     //     pat: P<Pat>,
@@ -39,10 +39,10 @@ pub enum ExprKind {
     // },
     // Loop(P<Block>, Option<Label>, Span),
     // Match(P<Expr>, ThinVec<Arm>, MatchKind),
-    // Block(P<Block>, Option<Label>),
+    Block(BlockExpr), // TODO: 先忽略 label
     Assign(AssignExpr),
     // AssignOp(AssignOp, P<Expr>, P<Expr>),
-    // Field(P<Expr>, Ident),
+    Field(FieldExpr),
     Index(IndexExpr),
     // Range(Option<P<Expr>>, Option<P<Expr>>, RangeLimits),
     // Underscore,
@@ -71,36 +71,46 @@ impl Expr {
         kind = kind.or_else(|| UnaryExpr::eat(iter).map(ExprKind::Unary));
         kind = kind.or_else(|| LitExpr::eat(iter).map(ExprKind::Lit));
         kind = kind.or_else(|| LetExpr::eat(iter).map(ExprKind::Let));
+        kind = kind.or_else(|| BlockExpr::eat(iter).map(ExprKind::Block));
+        kind = kind.or_else(|| IfExpr::eat(iter).map(ExprKind::If));
 
-        kind = kind.map(|expr1| {
-            if let Some(helper) = IndexHelper::eat(iter) {
-                ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
-            } else {
-                expr1
+        kind = kind.map(|mut expr1| {
+            loop {
+                if let Some(helper) = MethodCallHelper::eat(iter) {
+                    expr1 = ExprKind::MethodCall(MethodCallExpr {
+                        seg: helper.seg,
+                        receiver: Box::new(Expr { kind: expr1 }),
+                        args: helper.args,
+                    })
+                } else if let Some(helper) = FieldHelper::eat(iter) {
+                    expr1 = ExprKind::Field(FieldExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                } else if let Some(helper) = CallHelper::eat(iter) {
+                    expr1 = ExprKind::Call(CallExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                } else if let Some(helper) = IndexHelper::eat(iter) {
+                    expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                } else if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority) {
+                    expr1 = ExprKind::Binary(BinaryExpr(
+                        helper.0,
+                        Box::new(Expr { kind: expr1 }),
+                        helper.1,
+                    ))
+                } else if let Some(helper) = AssignHelper::eat(iter) {
+                    expr1 = ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                } else {
+                    break;
+                };
             }
-        });
-
-        kind = kind.map(|expr1| {
-            if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority) {
-                ExprKind::Binary(BinaryExpr(
-                    helper.0,
-                    Box::new(Expr { kind: expr1 }),
-                    helper.1,
-                ))
-            } else {
-                expr1
-            }
-        });
-
-        kind = kind.map(|expr1| {
-            if let Some(helper) = AssignHelper::eat(iter) {
-                ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
-            } else {
-                expr1
-            }
+            expr1
         });
 
         Some(Expr { kind: kind? })
+    }
+
+    pub fn is_block(&self) -> bool {
+        match self.kind {
+            ExprKind::Block(_) | ExprKind::If(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -566,5 +576,121 @@ impl Visitable for AssignHelper {
 
         iter.update(using_iter);
         Some(Self(Box::new(expr)))
+    }
+}
+
+#[derive(Debug)]
+pub struct CallExpr(pub Box<Expr>, pub Vec<Box<Expr>>);
+
+#[derive(Debug)]
+pub struct CallHelper(pub Vec<Box<Expr>>);
+
+impl Visitable for CallHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenPar);
+
+        let mut exprs = Vec::new();
+
+        while let Some(expr) = Expr::eat(&mut using_iter) {
+            exprs.push(Box::new(expr));
+
+            if using_iter.peek()?.token_type == TokenType::Comma {
+                using_iter.next();
+            } else {
+                break;
+            }
+        }
+
+        match_keyword!(using_iter, TokenType::ClosePar);
+
+        iter.update(using_iter);
+        Some(Self(exprs))
+    }
+}
+
+#[derive(Debug)]
+pub struct FieldExpr(pub Box<Expr>, pub Ident);
+
+#[derive(Debug)]
+pub struct FieldHelper(pub Ident);
+
+impl Visitable for FieldHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Dot);
+
+        let ident = using_iter.next()?.try_into().ok()?;
+
+        iter.update(using_iter);
+        Some(Self(ident))
+    }
+}
+
+#[derive(Debug)]
+pub struct MethodCallExpr {
+    pub seg: PathSegment,
+    pub receiver: Box<Expr>,
+    pub args: Vec<Box<Expr>>,
+}
+
+#[derive(Debug)]
+pub struct MethodCallHelper {
+    pub seg: PathSegment,
+    pub args: Vec<Box<Expr>>,
+}
+
+impl Visitable for MethodCallHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Dot);
+
+        let seg = PathSegment::eat(&mut using_iter)?;
+        let call_helper = CallHelper::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self {
+            seg,
+            args: call_helper.0,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct IfExpr(pub Box<Expr>, pub Box<BlockExpr>, pub Option<Box<Expr>>);
+
+impl Visitable for IfExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::If);
+
+        let expr = Expr::eat(&mut using_iter)?;
+        let block = BlockExpr::eat(&mut using_iter)?;
+
+        let else_expr = if using_iter.peek()?.token_type == TokenType::Else {
+            let mut using_iter2 = using_iter.clone();
+
+            using_iter2.next();
+            if let Some(else_expr) = Expr::eat(&mut using_iter2) {
+                match else_expr.kind {
+                    ExprKind::Block(_) | ExprKind::If(_) => {
+                        using_iter.update(using_iter2);
+                        Some(Box::new(else_expr))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        iter.update(using_iter);
+        Some(Self(Box::new(expr), Box::new(block), else_expr))
     }
 }

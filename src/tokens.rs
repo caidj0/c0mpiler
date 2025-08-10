@@ -29,7 +29,7 @@ define_rules! {
     HEX_LITERAL: "0x({HEX_DIGIT}|_)*{HEX_DIGIT}({HEX_DIGIT}|_)*",
 
 
-    IDENTIFIER_OR_KEYWORD: "[A-Za-z][A-Za-z0-9_]*",
+    IDENTIFIER_OR_KEYWORD: "[A-Za-z_][A-Za-z0-9_]*",
     RAW_IDENTIFIER: "r#{IDENTIFIER_OR_KEYWORD}",
     SUFFIX: "{IDENTIFIER_OR_KEYWORD}",
     SUFFIX_NO_E: "(?![eE]){SUFFIX}",
