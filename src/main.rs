@@ -1,20 +1,19 @@
 use c0mpiler::{
-    ast::{Visitable, item::Item},
+    ast::{Crate, Visitable},
     lexer::{Lexer, TokenBuffer},
 };
 
 fn main() {
     let test_str = r###"fn main(){
-    let result = match operator {
-        Op::Add => compute(a, b, Op::Add),
-        Op::Sub => compute(a, b, Op::Sub),
-    };
+     for i in 0..doubled {
+        acc + i;
+    }
 }"###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);
 
     let mut iter = buffer.iter();
-    let stmt = Item::eat(&mut iter);
+    let stmt = Crate::eat(&mut iter);
     if iter.next().is_some() {
         println!("Invalid!");
     } else {

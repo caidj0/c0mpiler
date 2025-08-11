@@ -7,14 +7,15 @@ pub mod stmt;
 pub mod ty;
 
 use crate::{
+    ast::item::Item,
     lexer::{Token, TokenIter},
     tokens::TokenType,
 };
 
 pub trait Visitable: Sized {
-    #[allow(unused_variables)]
+    #[allow(unused_variables, unused_mut)]
     fn eat(iter: &mut TokenIter) -> Option<Self> {
-        let using_iter = iter.clone();
+        let mut using_iter = iter.clone();
 
         // Do something...
 
@@ -70,5 +71,24 @@ impl<'a> TryInto<String> for &Token<'a> {
         } else {
             Err(())
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct Crate {
+    pub items: Vec<Box<Item>>,
+}
+
+impl Visitable for Crate {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let mut items = Vec::new();
+        while let Some(item) = Item::eat(&mut using_iter) {
+            items.push(Box::new(item));
+        }
+
+        iter.update(using_iter);
+        Some(Self { items })
     }
 }

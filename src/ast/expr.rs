@@ -29,22 +29,16 @@ pub enum ExprKind {
     // Cast(P<Expr>, P<Ty>),
     Let(LetExpr),
     If(IfExpr),
-    // While(P<Expr>, P<Block>, Option<Label>),
-    // ForLoop {
-    //     pat: P<Pat>,
-    //     iter: P<Expr>,
-    //     body: P<Block>,
-    //     label: Option<Label>,
-    //     kind: ForLoopKind,
-    // },
-    // Loop(P<Block>, Option<Label>, Span),
+    While(WhileExpr),
+    ForLoop(ForLoopExpr),
+    Loop(LoopExpr),
     Match(MatchExpr),
     Block(BlockExpr), // TODO: 先忽略 label
     Assign(AssignExpr),
     // AssignOp(AssignOp, P<Expr>, P<Expr>),
     Field(FieldExpr),
     Index(IndexExpr),
-    // Range(Option<P<Expr>>, Option<P<Expr>>, RangeLimits),
+    Range(RangeExpr),
     // Underscore,
     Path(PathExpr),
     // Break(Option<Label>, Option<P<Expr>>),
@@ -74,6 +68,12 @@ impl Expr {
         kind = kind.or_else(|| BlockExpr::eat(iter).map(ExprKind::Block));
         kind = kind.or_else(|| IfExpr::eat(iter).map(ExprKind::If));
         kind = kind.or_else(|| MatchExpr::eat(iter).map(ExprKind::Match));
+        kind = kind.or_else(|| WhileExpr::eat(iter).map(ExprKind::While));
+        kind = kind.or_else(|| ForLoopExpr::eat(iter).map(ExprKind::ForLoop));
+        kind = kind.or_else(|| LoopExpr::eat(iter).map(ExprKind::Loop));
+
+        kind = kind
+            .or_else(|| RangeHelper::eat(iter).map(|x| ExprKind::Range(RangeExpr(None, x.0, x.1))));
 
         kind = kind.map(|mut expr1| {
             loop {
@@ -95,13 +95,18 @@ impl Expr {
                         Box::new(Expr { kind: expr1 }),
                         helper.1,
                     ))
+                } else if let Some(helper) = RangeHelper::eat(iter) {
+                    expr1 = ExprKind::Range(RangeExpr(
+                        Some(Box::new(Expr { kind: expr1 })),
+                        helper.0,
+                        helper.1,
+                    ))
                 } else if let Some(helper) = AssignHelper::eat(iter) {
                     expr1 = ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else {
-                    break;
+                    break expr1;
                 };
             }
-            expr1
         });
 
         Some(Expr { kind: kind? })
@@ -756,4 +761,94 @@ impl Visitable for Arm {
             body: Box::new(body),
         })
     }
+}
+
+#[derive(Debug)]
+pub struct ForLoopExpr {
+    pub pat: Box<Pat>,
+    pub iter: Box<Expr>,
+    pub body: Box<BlockExpr>,
+}
+
+impl Visitable for ForLoopExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::For);
+        let pat = Pat::eat(&mut using_iter)?;
+        match_keyword!(using_iter, TokenType::In);
+        let loop_iter = Expr::eat(&mut using_iter)?;
+        let block = BlockExpr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self {
+            pat: Box::new(pat),
+            iter: Box::new(loop_iter),
+            body: Box::new(block),
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct LoopExpr(pub Box<BlockExpr>);
+
+impl Visitable for LoopExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Loop);
+        let block = BlockExpr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(Box::new(block)))
+    }
+}
+
+#[derive(Debug)]
+pub struct WhileExpr(pub Box<Expr>, pub Box<BlockExpr>);
+
+impl Visitable for WhileExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::While);
+        let expr = Expr::eat(&mut using_iter)?;
+        let block = BlockExpr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(Box::new(expr), Box::new(block)))
+    }
+}
+
+#[derive(Debug)]
+pub struct RangeExpr(
+    pub Option<Box<Expr>>,
+    pub Option<Box<Expr>>,
+    pub RangeLimits,
+);
+
+#[derive(Debug)]
+pub struct RangeHelper(pub Option<Box<Expr>>, pub RangeLimits);
+
+impl Visitable for RangeHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let limits = match using_iter.next()?.token_type {
+            TokenType::DotDot => RangeLimits::HalfOpen,
+            TokenType::DotDotEq => RangeLimits::Closed,
+            _ => return None,
+        };
+
+        let expr2 = Expr::eat(&mut using_iter);
+
+        iter.update(using_iter);
+        Some(Self(expr2.map(Box::new), limits))
+    }
+}
+
+#[derive(Debug)]
+pub enum RangeLimits {
+    HalfOpen,
+    Closed,
 }
