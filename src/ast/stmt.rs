@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Visitable, expr::Expr, item::Item, pat::Pat, ty::Ty},
+    ast::{ASTResult, Visitable, expr::Expr, item::Item, pat::Pat, ty::Ty},
     match_keyword,
     tokens::TokenType,
 };
@@ -20,24 +20,42 @@ pub enum StmtKind {
 }
 
 impl Visitable for Stmt {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
-        let mut kind = None;
-        kind = kind.or_else(|| LocalStmt::eat(iter).map(StmtKind::Let));
-        kind = kind.or_else(|| Item::eat(iter).map(Box::new).map(StmtKind::Item));
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let mut kind = Err(crate::ast::ASTError::default());
+        kind = kind.or_else(|err| {
+            LocalStmt::eat(iter)
+                .map(StmtKind::Let)
+                .or_else(|err2| Err(err.select(err2)))
+        });
+        kind = kind.or_else(|err| {
+            Item::eat(iter)
+                .map(Box::new)
+                .map(StmtKind::Item)
+                .or_else(|err2| Err(err.select(err2)))
+        });
 
-        kind = kind.or_else(|| {
-            let expr = Box::new(Expr::eat(iter)?);
+        kind = kind.or_else(|err| {
+            let expr_result = Expr::eat(iter);
 
-            if expr.is_block() && iter.peek()?.token_type == TokenType::Semi {
-                Some(StmtKind::Semi(expr))
-            } else {
-                Some(StmtKind::Expr(expr))
+            match expr_result {
+                Ok(expr) => {
+                    if expr.is_block() && iter.peek()?.token_type == TokenType::Semi {
+                        Ok(StmtKind::Semi(Box::new(expr)))
+                    } else {
+                        Ok(StmtKind::Expr(Box::new(expr)))
+                    }
+                }
+                Err(err2) => Err(err.select(err2)),
             }
         });
 
-        kind = kind.or_else(|| EmptyStmt::eat(iter).map(StmtKind::Empty));
+        kind = kind.or_else(|err| {
+            EmptyStmt::eat(iter)
+                .map(StmtKind::Empty)
+                .or_else(|err2| Err(err.select(err2)))
+        });
 
-        Some(Self { kind: kind? })
+        Ok(Self { kind: kind? })
     }
 }
 
@@ -49,21 +67,21 @@ pub struct LocalStmt {
 }
 
 impl Visitable for LocalStmt {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Let);
         let pat = Pat::eat(&mut using_iter)?;
 
         let ty = if using_iter.peek()?.token_type == TokenType::Colon {
-            using_iter.next();
+            using_iter.advance();
             Some(Box::new(Ty::eat(&mut using_iter)?))
         } else {
             None
         };
 
         let kind = if using_iter.peek()?.token_type == TokenType::Eq {
-            using_iter.next();
+            using_iter.advance();
             LocalKind::Init(Box::new(Expr::eat(&mut using_iter)?))
         } else {
             LocalKind::Decl
@@ -72,7 +90,7 @@ impl Visitable for LocalStmt {
         match_keyword!(using_iter, TokenType::Semi);
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             pat: Box::new(pat),
             ty,
             kind,
@@ -91,8 +109,8 @@ pub enum LocalKind {
 pub struct EmptyStmt;
 
 impl Visitable for EmptyStmt {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::Semi);
-        Some(Self)
+        Ok(Self)
     }
 }

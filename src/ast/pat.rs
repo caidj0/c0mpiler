@@ -1,9 +1,7 @@
 use crate::{
     ast::{
-        BindingMode, Ident, Visitable,
-        path::{Path, QSelf},
-    },
-    lexer::TokenIter,
+        path::{Path, QSelf}, ASTResult, BindingMode, Ident, Visitable
+    }, kind_check, lexer::TokenIter
 };
 
 #[derive(Debug)]
@@ -36,12 +34,10 @@ pub enum PatKind {
 }
 
 impl Visitable for Pat {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
-        let mut kind: Option<PatKind> = None;
-        kind = kind.or_else(|| PathPat::eat(iter).map(PatKind::Path));
-        kind = kind.or_else(|| IdentPat::eat(iter).map(PatKind::Ident));
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let kind = kind_check!(iter, PatKind, Pat, (Path, Ident));
 
-        Some(Self { kind: kind? })
+        Ok(Self { kind: kind? })
     }
 }
 
@@ -56,15 +52,15 @@ impl Pat {
 pub struct IdentPat(pub BindingMode, pub Ident, pub Option<Box<Pat>>);
 
 impl Visitable for IdentPat {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         let bindmod = BindingMode::eat(&mut using_iter).unwrap_or_default();
-        let ident = using_iter.next()?.try_into().ok()?;
+        let ident = using_iter.next()?.try_into()?;
         let range_pat = Pat::range_eat(&mut using_iter);
 
         iter.update(using_iter);
-        Some(Self(bindmod, ident, range_pat.map(Box::new)))
+        Ok(Self(bindmod, ident, range_pat.map(Box::new)))
     }
 }
 
@@ -72,13 +68,13 @@ impl Visitable for IdentPat {
 pub struct PathPat(pub Option<Box<QSelf>>, pub Path);
 
 impl Visitable for PathPat {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let qself = QSelf::eat(&mut using_iter);
+        let qself = Option::<QSelf>::eat(&mut using_iter)?;
         let path = Path::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(qself.map(Box::new), path))
+        Ok(Self(qself.map(Box::new), path))
     }
 }

@@ -2,12 +2,15 @@ use std::fmt::Display;
 
 use fancy_regex::Regex;
 
-use crate::tokens::{TokenType, get_all_tokens};
+use crate::{
+    ast::{ASTError, ASTResult},
+    tokens::{TokenType, get_all_tokens},
+};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub struct TokenPosition {
-    line: usize,
-    col: usize,
+    pub line: usize,
+    pub col: usize,
 }
 
 impl Display for TokenPosition {
@@ -120,30 +123,42 @@ pub struct TokenIter<'a> {
     pos: usize,
 }
 
-impl<'a> Iterator for TokenIter<'a> {
-    type Item = &'a Token<'a>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.pos >= self.buffer.len() {
-            return None;
-        }
-
-        let ret = &self.buffer[self.pos];
-        self.pos += 1;
-        Some(ret)
-    }
-}
-
 impl<'a> TokenIter<'a> {
     pub fn update(&mut self, new_iter: Self) {
         self.pos = new_iter.pos;
     }
 
-    pub fn peek(&self) -> Option<&'a Token<'a>> {
+    pub fn advance(&mut self) {
+        self.pos += 1;
+    }
+
+    pub fn next(&mut self) -> ASTResult<&'a Token<'a>> {
         if self.pos >= self.buffer.len() {
-            return None;
+            return Err(ASTError {
+                kind: crate::ast::ASTErrorKind::EOF,
+                pos: self.get_last_pos(),
+            });
         }
-        Some(&self.buffer[self.pos])
+
+        let ret = &self.buffer[self.pos];
+        self.pos += 1;
+        Ok(ret)
+    }
+
+    pub fn peek(&self) -> ASTResult<&'a Token<'a>> {
+        if self.pos >= self.buffer.len() {
+            return Err(ASTError {
+                kind: crate::ast::ASTErrorKind::EOF,
+                pos: self.get_last_pos(),
+            });
+        }
+        Ok(&self.buffer[self.pos])
+    }
+
+    pub fn get_last_pos(&self) -> TokenPosition {
+        self.buffer
+            .last()
+            .map_or(TokenPosition { line: 0, col: 0 }, |x| x.pos.clone())
     }
 }
 

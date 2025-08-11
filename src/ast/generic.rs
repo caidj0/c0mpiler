@@ -1,4 +1,4 @@
-use crate::ast::Visitable;
+use crate::ast::{ASTResult, Visitable};
 
 #[derive(Debug)]
 pub enum GenericArgs {
@@ -7,28 +7,22 @@ pub enum GenericArgs {
     // ParenthesizedElided(Span),
 }
 
-impl Visitable for GenericArgs {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+impl Visitable for Option<GenericArgs> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> super::ASTResult<Self> {
         // TODO
-        None
+        Ok(None)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Generics {
     // pub params: ThinVec<GenericParam>,
     // pub where_clause: WhereClause,
 }
 
 impl Visitable for Generics {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         // TODO
-        None
-    }
-}
-
-impl Default for Generics {
-    fn default() -> Self {
-        Self {}
+        Ok(Generics::default())
     }
 }

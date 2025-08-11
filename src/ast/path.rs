@@ -1,5 +1,5 @@
 use crate::{
-    ast::{Ident, Visitable, generic::GenericArgs, ty::Ty},
+    ast::{generic::GenericArgs, ty::Ty, ASTResult, Ident, Visitable},
     tokens::TokenType,
 };
 
@@ -15,25 +15,25 @@ pub struct PathSegment {
 }
 
 impl Visitable for Path {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
         let mut segments = Vec::new();
 
         if using_iter.peek()?.token_type == TokenType::PathSep {
             // 上面的短路运算是合法的，因为这里不可能是末尾
             segments.push(PathSegment::default());
-            using_iter.next();
+            using_iter.advance();
         }
 
         segments.push(PathSegment::eat(&mut using_iter)?);
 
         while using_iter.peek()?.token_type == TokenType::PathSep {
-            using_iter.next();
+            using_iter.advance();
             segments.push(PathSegment::eat(&mut using_iter)?);
         }
 
         iter.update(using_iter);
-        Some(Self { segments })
+        Ok(Self { segments })
     }
 }
 
@@ -47,14 +47,14 @@ impl Default for PathSegment {
 }
 
 impl Visitable for PathSegment {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let ident = using_iter.next()?.try_into().ok()?;
-        let args = GenericArgs::eat(&mut using_iter);
+        let ident = using_iter.next()?.try_into()?;
+        let args = Option::<GenericArgs>::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             ident,
             args: args.map(Box::new),
         })
@@ -67,9 +67,9 @@ pub struct QSelf {
     pub position: usize,
 }
 
-impl Visitable for QSelf {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+impl Visitable for Option<QSelf> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         // TODO
-        None
+        Ok(None)
     }
 }

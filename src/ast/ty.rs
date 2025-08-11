@@ -1,9 +1,10 @@
 use crate::{
     ast::{
-        Visitable,
+        ASTResult, Visitable,
         expr::AnonConst,
         path::{Path, QSelf},
     },
+    kind_check,
     lexer::TokenIter,
     match_keyword,
     tokens::TokenType,
@@ -40,20 +41,10 @@ pub enum TyKind {
 }
 
 impl Visitable for Ty {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
-        let mut kind = None;
-        kind = kind.or_else(|| PathTy::eat(iter).map(TyKind::Path));
-        kind = kind.or_else(|| ArrayTy::eat(iter).map(TyKind::Array));
-        kind = kind.or_else(|| {
-            if iter.peek()?.token_type == TokenType::LSelfType {
-                iter.next();
-                Some(TyKind::ImplicitSelf)
-            } else {
-                None
-            }
-        });
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let kind = kind_check!(iter, TyKind, Ty, (Path, Array));
 
-        Some(Ty { kind: kind? })
+        Ok(Ty { kind: kind? })
     }
 }
 
@@ -61,14 +52,14 @@ impl Visitable for Ty {
 pub struct PathTy(pub Option<Box<QSelf>>, pub Path);
 
 impl Visitable for PathTy {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let qself = QSelf::eat(&mut using_iter);
+        let qself = Option::<QSelf>::eat(&mut using_iter)?;
         let path = Path::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(qself.map(Box::new), path))
+        Ok(Self(qself.map(Box::new), path))
     }
 }
 
@@ -76,7 +67,7 @@ impl Visitable for PathTy {
 pub struct ArrayTy(pub Box<Ty>, pub AnonConst);
 
 impl Visitable for ArrayTy {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::OpenSqu);
@@ -90,6 +81,6 @@ impl Visitable for ArrayTy {
         match_keyword!(using_iter, TokenType::CloseSqu);
 
         iter.update(using_iter);
-        Some(Self(Box::new(ty), anon))
+        Ok(Self(Box::new(ty), anon))
     }
 }

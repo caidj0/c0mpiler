@@ -1,14 +1,15 @@
 use crate::{
     ast::{
-        Ident, Visitable,
+        ASTResult, Ident, Visitable,
         expr::{AnonConst, BlockExpr, Expr},
         generic::Generics,
         pat::Pat,
         path::Path,
         ty::{Ty, TyKind},
     },
+    kind_check,
     lexer::TokenIter,
-    match_keyword,
+    loop_until, match_keyword, match_prefix, skip_keyword,
     tokens::TokenType,
 };
 
@@ -41,15 +42,10 @@ pub enum ItemKind {
 }
 
 impl Visitable for Item {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
-        let mut kind: Option<ItemKind> = None;
-        kind = kind.or_else(|| ConstItem::eat(iter).map(ItemKind::Const));
-        kind = kind.or_else(|| FnItem::eat(iter).map(ItemKind::Fn));
-        kind = kind.or_else(|| EnumItem::eat(iter).map(ItemKind::Enum));
-        kind = kind.or_else(|| StructItem::eat(iter).map(ItemKind::Struct));
-        kind = kind.or_else(|| ImplItem::eat(iter).map(ItemKind::Impl));
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let kind = kind_check!(iter, ItemKind, Item, (Const, Fn, Enum, Struct, Impl));
 
-        Some(Self { kind: kind? })
+        Ok(Self { kind: kind? })
     }
 }
 
@@ -62,18 +58,18 @@ pub struct FnItem {
 }
 
 impl Visitable for FnItem {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Fn);
 
-        let ident = using_iter.next()?.try_into().ok()?;
-        let generics = Generics::eat(&mut using_iter).unwrap_or_default();
+        let ident = using_iter.next()?.try_into()?;
+        let generics = Generics::eat(&mut using_iter)?;
         let sig = FnSig::eat(&mut using_iter)?;
-        let body = BlockExpr::eat(&mut using_iter);
+        let body = Option::<BlockExpr>::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             ident,
             generics,
             sig,
@@ -88,8 +84,8 @@ pub struct FnSig {
 }
 
 impl Visitable for FnSig {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
-        Some(Self {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        Ok(Self {
             decl: Box::new(FnDecl::eat(iter)?),
         })
     }
@@ -102,29 +98,22 @@ pub struct FnDecl {
 }
 
 impl Visitable for FnDecl {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::OpenPar);
 
         let mut inputs = Vec::new();
 
-        while let Some(param) = Param::eat(&mut using_iter) {
-            inputs.push(param);
+        loop_until!(using_iter, TokenType::ClosePar, {
+            inputs.push(Param::eat(&mut using_iter)?);
+            skip_keyword!(using_iter, TokenType::Comma);
+        });
 
-            if using_iter.peek()?.token_type == TokenType::Comma {
-                using_iter.next();
-            } else {
-                break;
-            }
-        }
-
-        match_keyword!(using_iter, TokenType::ClosePar);
-
-        let output = FnRetTy::eat(&mut using_iter).unwrap_or_default();
+        let output = Option::<FnRetTy>::eat(&mut using_iter)?.unwrap_or_default();
 
         iter.update(using_iter);
-        Some(Self { inputs, output })
+        Ok(Self { inputs, output })
     }
 }
 
@@ -140,16 +129,16 @@ impl Default for FnRetTy {
     }
 }
 
-impl Visitable for FnRetTy {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+impl Visitable for Option<FnRetTy> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        match_keyword!(using_iter, TokenType::RArrow);
+        match_prefix!(using_iter, TokenType::RArrow);
 
         let ty = Ty::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self::Ty(Box::new(ty)))
+        Ok(Some(FnRetTy::Ty(Box::new(ty))))
     }
 }
 
@@ -160,7 +149,7 @@ pub struct Param {
 }
 
 impl Visitable for Param {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         let pat = Pat::eat(&mut using_iter)?;
@@ -169,7 +158,7 @@ impl Visitable for Param {
         let ty = Ty::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             ty: Box::new(ty),
             pat: Box::new(pat),
         })
@@ -184,20 +173,20 @@ pub struct ConstItem {
 }
 
 impl Visitable for ConstItem {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Const);
 
         // Spec 中说此处可以为 "_"，但是只用于编译期求值，而编译期求值不被要求
-        let ident = using_iter.next()?.try_into().ok()?;
+        let ident = using_iter.next()?.try_into()?;
 
         match_keyword!(using_iter, TokenType::Colon);
 
         let ty = Ty::eat(&mut using_iter)?;
 
         let expr = if using_iter.peek()?.token_type == TokenType::Eq {
-            using_iter.next();
+            using_iter.advance();
             Some(Box::new(Expr::eat(&mut using_iter)?))
         } else {
             None
@@ -206,7 +195,7 @@ impl Visitable for ConstItem {
         match_keyword!(using_iter, TokenType::Semi);
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             ident,
             ty: Box::new(ty),
             expr,
@@ -218,28 +207,23 @@ impl Visitable for ConstItem {
 pub struct EnumItem(pub Ident, pub Generics, pub Vec<Variant>);
 
 impl Visitable for EnumItem {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Enum);
-        let ident = using_iter.next()?.try_into().ok()?;
-        let generics = Generics::eat(&mut using_iter).unwrap_or_default();
+        let ident = using_iter.next()?.try_into()?;
+        let generics = Generics::eat(&mut using_iter)?;
 
         match_keyword!(using_iter, TokenType::OpenCurly);
         let mut variants = Vec::new();
-        while let Some(variant) = Variant::eat(&mut using_iter) {
-            variants.push(variant);
 
-            if using_iter.peek()?.token_type == TokenType::Comma {
-                using_iter.next();
-            } else {
-                break;
-            }
-        }
-        match_keyword!(using_iter, TokenType::CloseCurly);
+        loop_until!(using_iter, TokenType::CloseCurly, {
+            variants.push(Variant::eat(&mut using_iter)?);
+            skip_keyword!(using_iter, TokenType::Comma);
+        });
 
         iter.update(using_iter);
-        Some(Self(ident, generics, variants))
+        Ok(Self(ident, generics, variants))
     }
 }
 
@@ -251,14 +235,14 @@ pub struct Variant {
 }
 
 impl Visitable for Variant {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let ident = using_iter.next()?.try_into().ok()?;
+        let ident = using_iter.next()?.try_into()?;
         let data = VariantData::eat(&mut using_iter)?;
 
         let disr_expr = if using_iter.peek()?.token_type == TokenType::Eq {
-            using_iter.next();
+            using_iter.advance();
 
             Some(AnonConst::eat(&mut using_iter)?)
         } else {
@@ -266,7 +250,7 @@ impl Visitable for Variant {
         };
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             ident,
             data,
             disr_expr,
@@ -282,45 +266,31 @@ pub enum VariantData {
 }
 
 impl Visitable for VariantData {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         let ret = match using_iter.peek()?.token_type {
             TokenType::OpenCurly => {
-                using_iter.next();
+                using_iter.next().unwrap();
 
                 let mut fields = Vec::new();
 
-                while let Some(def) = FieldDef::eat_with_ident(&mut using_iter, true) {
-                    fields.push(def);
-
-                    if using_iter.peek()?.token_type == TokenType::Comma {
-                        using_iter.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                match_keyword!(using_iter, TokenType::CloseCurly);
+                loop_until!(using_iter, TokenType::CloseCurly, {
+                    fields.push(FieldDef::eat_with_ident(&mut using_iter, true)?);
+                    skip_keyword!(using_iter, TokenType::Comma);
+                });
 
                 Self::Struct { fields }
             }
             TokenType::OpenPar => {
-                using_iter.next();
+                using_iter.next().unwrap();
 
                 let mut fields = Vec::new();
 
-                while let Some(def) = FieldDef::eat_with_ident(&mut using_iter, false) {
-                    fields.push(def);
-
-                    if using_iter.peek()?.token_type == TokenType::Comma {
-                        using_iter.next();
-                    } else {
-                        break;
-                    }
-                }
-
-                match_keyword!(using_iter, TokenType::ClosePar);
+                loop_until!(using_iter, TokenType::ClosePar, {
+                    fields.push(FieldDef::eat_with_ident(&mut using_iter, false)?);
+                    skip_keyword!(using_iter, TokenType::Comma);
+                });
 
                 Self::Tuple(fields)
             }
@@ -328,7 +298,7 @@ impl Visitable for VariantData {
         };
 
         iter.update(using_iter);
-        Some(ret)
+        Ok(ret)
     }
 }
 
@@ -339,17 +309,17 @@ pub struct FieldDef {
 }
 
 impl Visitable for FieldDef {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         Self::eat_with_ident(iter, true)
     }
 }
 
 impl FieldDef {
-    fn eat_with_ident(iter: &mut TokenIter, has_ident: bool) -> Option<Self> {
+    fn eat_with_ident(iter: &mut TokenIter, has_ident: bool) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         let ident = if has_ident {
-            let t = Some(using_iter.next()?.try_into().ok()?);
+            let t = Some(using_iter.next()?.try_into()?);
             match_keyword!(using_iter, TokenType::Colon);
             t
         } else {
@@ -359,7 +329,7 @@ impl FieldDef {
         let ty = Ty::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             ident,
             ty: Box::new(ty),
         })
@@ -370,16 +340,16 @@ impl FieldDef {
 pub struct StructItem(pub Ident, pub Generics, pub VariantData);
 
 impl Visitable for StructItem {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Struct);
-        let ident = using_iter.next()?.try_into().ok()?;
-        let generics = Generics::eat(&mut using_iter).unwrap_or_default();
+        let ident = using_iter.next()?.try_into()?;
+        let generics = Generics::eat(&mut using_iter)?;
         let variant_data = VariantData::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(ident, generics, variant_data))
+        Ok(Self(ident, generics, variant_data))
     }
 }
 
@@ -392,22 +362,30 @@ pub struct ImplItem {
 }
 
 impl Visitable for ImplItem {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Impl);
-        let generics = Generics::eat(&mut using_iter).unwrap_or_default();
+        let generics = Generics::eat(&mut using_iter)?;
+
+        let self_ty_token = using_iter.peek()?;
         let self_ty = Ty::eat(&mut using_iter)?;
 
         let (of_trait, self_ty) = if using_iter.peek()?.token_type == TokenType::For {
-            using_iter.next();
+            using_iter.advance();
             if let TyKind::Path(path_ty) = self_ty.kind {
                 (
                     Some(TraitRef { path: path_ty.1 }),
                     Ty::eat(&mut using_iter)?,
                 )
             } else {
-                return None;
+                return Err(crate::ast::ASTError {
+                    kind: crate::ast::ASTErrorKind::MisMatch {
+                        expected: "Path type".to_owned(),
+                        actual: format!("{:?}", self_ty),
+                    },
+                    pos: self_ty_token.pos.clone(),
+                });
             }
         } else {
             (None, self_ty)
@@ -416,14 +394,13 @@ impl Visitable for ImplItem {
         match_keyword!(using_iter, TokenType::OpenCurly);
 
         let mut items = Vec::new();
-        while let Some(item) = AssocItem::eat(&mut using_iter) {
-            items.push(Box::new(item));
-        }
 
-        match_keyword!(using_iter, TokenType::CloseCurly);
+        loop_until!(using_iter, TokenType::CloseCurly, {
+            items.push(Box::new(AssocItem::eat(&mut using_iter)?));
+        });
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             generics,
             of_trait,
             self_ty: Box::new(self_ty),
@@ -453,11 +430,9 @@ pub enum AssocItemKind {
 }
 
 impl Visitable for AssocItem {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
-        let mut kind: Option<AssocItemKind> = None;
-        kind = kind.or_else(|| ConstItem::eat(iter).map(AssocItemKind::Const));
-        kind = kind.or_else(|| FnItem::eat(iter).map(AssocItemKind::Fn));
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let kind = kind_check!(iter, AssocItemKind, Item, (Const, Fn));
 
-        Some(Self { kind: kind? })
+        Ok(Self { kind: kind? })
     }
 }

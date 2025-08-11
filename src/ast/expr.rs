@@ -1,12 +1,13 @@
 use crate::{
     ast::{
-        Ident, Visitable,
+        ASTError, ASTResult, Ident, Visitable,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::Stmt,
     },
+    kind_check,
     lexer::{Token, TokenIter},
-    match_keyword,
+    loop_until, match_keyword, skip_keyword,
     tokens::TokenType,
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -51,71 +52,71 @@ pub enum ExprKind {
 }
 
 impl Visitable for Expr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         Self::eat_with_priority(iter, 0)
     }
 }
 
 impl Expr {
-    pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> Option<Self> {
-        let mut kind: Option<ExprKind> = None;
-        kind = kind.or_else(|| PathExpr::eat(iter).map(ExprKind::Path));
-        kind = kind.or_else(|| ArrayExpr::eat(iter).map(ExprKind::Array));
-        kind = kind.or_else(|| RepeatExpr::eat(iter).map(ExprKind::Repeat));
-        kind = kind.or_else(|| UnaryExpr::eat(iter).map(ExprKind::Unary));
-        kind = kind.or_else(|| LitExpr::eat(iter).map(ExprKind::Lit));
-        kind = kind.or_else(|| LetExpr::eat(iter).map(ExprKind::Let));
-        kind = kind.or_else(|| BlockExpr::eat(iter).map(ExprKind::Block));
-        kind = kind.or_else(|| IfExpr::eat(iter).map(ExprKind::If));
-        kind = kind.or_else(|| MatchExpr::eat(iter).map(ExprKind::Match));
-        kind = kind.or_else(|| WhileExpr::eat(iter).map(ExprKind::While));
-        kind = kind.or_else(|| ForLoopExpr::eat(iter).map(ExprKind::ForLoop));
-        kind = kind.or_else(|| LoopExpr::eat(iter).map(ExprKind::Loop));
+    pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Self> {
+        let mut kind = kind_check!(
+            iter,
+            ExprKind,
+            Expr,
+            (
+                Path, Array, Repeat, Unary, Lit, Let, Block, If, Match, While, ForLoop, Loop
+            )
+        );
 
-        kind = kind
-            .or_else(|| RangeHelper::eat(iter).map(|x| ExprKind::Range(RangeExpr(None, x.0, x.1))));
+        kind = kind.or_else(|err| match Option::<RangeHelper>::eat(iter) {
+            Ok(Some(helper)) => Ok(ExprKind::Range(RangeExpr(None, helper.0, helper.1))),
+            Ok(None) => Err(err),
+            Err(err2) => Err(err.select(err2))
+        });
 
-        kind = kind.map(|mut expr1| {
+        let kind = if let Ok(mut expr1 ) = kind {
             loop {
-                if let Some(helper) = MethodCallHelper::eat(iter) {
+                if let Some(helper) = MethodCallHelper::eat(iter).ok() {
                     expr1 = ExprKind::MethodCall(MethodCallExpr {
                         seg: helper.seg,
                         receiver: Box::new(Expr { kind: expr1 }),
                         args: helper.args,
                     })
-                } else if let Some(helper) = FieldHelper::eat(iter) {
+                } else if let Some(helper) = FieldHelper::eat(iter).ok() {
                     expr1 = ExprKind::Field(FieldExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = CallHelper::eat(iter) {
+                } else if let Some(helper) = CallHelper::eat(iter).ok() {
                     expr1 = ExprKind::Call(CallExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = IndexHelper::eat(iter) {
+                } else if let Some(helper) = IndexHelper::eat(iter).ok() {
                     expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority) {
+                } else if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Binary(BinaryExpr(
                         helper.0,
                         Box::new(Expr { kind: expr1 }),
                         helper.1,
                     ))
-                } else if let Some(helper) = RangeHelper::eat(iter) {
+                } else if let Some(helper) = Option::<RangeHelper>::eat(iter)? {
                     expr1 = ExprKind::Range(RangeExpr(
                         Some(Box::new(Expr { kind: expr1 })),
                         helper.0,
                         helper.1,
                     ))
-                } else if let Some(helper) = AssignHelper::eat(iter) {
+                } else if let Some(helper) = Option::<AssignHelper>::eat(iter)? {
                     expr1 = ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = AssignOpHelper::eat(iter) {
+                } else if let Some(helper) = Option::<AssignOpHelper>::eat(iter)? {
                     expr1 = ExprKind::AssignOp(AssignOpExpr(
                         helper.0,
                         Box::new(Expr { kind: expr1 }),
                         helper.1,
                     ))
                 } else {
-                    break expr1;
+                    break Ok(expr1);
                 };
             }
-        });
+        } else {
+            kind
+        };
 
-        Some(Expr { kind: kind? })
+        Ok(Expr { kind: kind? })
     }
 
     pub fn is_block(&self) -> bool {
@@ -149,20 +150,25 @@ pub enum LitKind {
 }
 
 impl Visitable for LitExpr {
-    fn eat(iter: &mut TokenIter) -> Option<LitExpr> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let ret = using_iter.next()?.try_into().ok()?;
+        let ret = using_iter.next()?.try_into()?;
 
         iter.update(using_iter);
-        Some(ret)
+        Ok(ret)
     }
 }
 
 impl<'a> TryInto<LitExpr> for &Token<'a> {
-    type Error = ();
+    type Error = ASTError;
 
     fn try_into(self) -> Result<LitExpr, Self::Error> {
+        let err = || ASTError {
+            kind: crate::ast::ASTErrorKind::LiteralError,
+            pos: self.pos.clone(),
+        };
+
         match self.token_type {
             TokenType::True | TokenType::False => Ok(LitExpr {
                 kind: LitKind::Bool,
@@ -171,7 +177,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
             }),
 
             TokenType::Byte => {
-                let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or(())?;
+                let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or_else(err)?;
                 Ok(LitExpr {
                     kind: LitKind::Byte,
                     symbol,
@@ -180,7 +186,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
             }
 
             TokenType::Character => {
-                let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or(())?;
+                let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or_else(err)?;
                 Ok(LitExpr {
                     kind: LitKind::Char,
                     symbol,
@@ -214,7 +220,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
             }
 
             TokenType::String => {
-                let (symbol, suffix) = parse_quoted_content(self.lexeme, '\"').ok_or(())?;
+                let (symbol, suffix) = parse_quoted_content(self.lexeme, '\"').ok_or_else(err)?;
                 Ok(LitExpr {
                     kind: LitKind::Str,
                     symbol,
@@ -223,8 +229,8 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
             }
 
             TokenType::RawString => {
-                let (sharps, other) = self.lexeme.split_once('\"').ok_or(())?;
-                let (symbol, suffix_with_sharps) = other.rsplit_once('\"').ok_or(())?;
+                let (sharps, other) = self.lexeme.split_once('\"').ok_or_else(err)?;
+                let (symbol, suffix_with_sharps) = other.rsplit_once('\"').ok_or_else(err)?;
                 let sharp_num = sharps.len() - 1;
                 let suffix = &suffix_with_sharps[sharp_num..];
                 let suffix = if suffix.is_empty() {
@@ -242,7 +248,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 
             TokenType::ByteString => {
                 let content = &self.lexeme[1..];
-                let (symbol, suffix) = parse_quoted_content(content, '\"').ok_or(())?;
+                let (symbol, suffix) = parse_quoted_content(content, '\"').ok_or_else(err)?;
                 Ok(LitExpr {
                     kind: LitKind::ByteStr,
                     symbol,
@@ -252,8 +258,8 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 
             TokenType::RawByteString => {
                 let without_b = &self.lexeme[1..];
-                let (sharps, other) = without_b.split_once('\"').ok_or(())?;
-                let (symbol, suffix_with_sharps) = other.rsplit_once('\"').ok_or(())?;
+                let (sharps, other) = without_b.split_once('\"').ok_or_else(err)?;
+                let (symbol, suffix_with_sharps) = other.rsplit_once('\"').ok_or_else(err)?;
                 let sharp_num = sharps.len() - 1;
                 let suffix = &suffix_with_sharps[sharp_num..];
                 let suffix = if suffix.is_empty() {
@@ -271,7 +277,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 
             TokenType::CString => {
                 let content = &self.lexeme[1..];
-                let (symbol, suffix) = parse_quoted_content(content, '\"').ok_or(())?;
+                let (symbol, suffix) = parse_quoted_content(content, '\"').ok_or_else(err)?;
                 Ok(LitExpr {
                     kind: LitKind::CStr,
                     symbol,
@@ -281,8 +287,8 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 
             TokenType::RawCString => {
                 let without_c = &self.lexeme[1..];
-                let (sharps, other) = without_c.split_once('\"').ok_or(())?;
-                let (symbol, suffix_with_sharps) = other.rsplit_once('\"').ok_or(())?;
+                let (sharps, other) = without_c.split_once('\"').ok_or_else(err)?;
+                let (symbol, suffix_with_sharps) = other.rsplit_once('\"').ok_or_else(err)?;
                 let sharp_num = sharps.len() - 1;
                 let suffix = &suffix_with_sharps[sharp_num..];
                 let suffix = if suffix.is_empty() {
@@ -298,7 +304,13 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
                 })
             }
 
-            _ => Err(()),
+            _ => Err(ASTError {
+                kind: super::ASTErrorKind::MisMatch {
+                    expected: "Literal Kind".to_owned(),
+                    actual: format!("{:?}", self.token_type.clone()),
+                },
+                pos: self.pos.clone(),
+            }),
         }
     }
 }
@@ -307,14 +319,14 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 pub struct UnaryExpr(pub UnOp, pub Box<Expr>);
 
 impl Visitable for UnaryExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let unop = using_iter.next()?.try_into().ok()?;
+        let unop = using_iter.next()?.try_into()?;
         let expr = Expr::eat_with_priority(&mut using_iter, 1000000)?;
 
         iter.update(using_iter);
-        Some(Self(unop, Box::new(expr)))
+        Ok(Self(unop, Box::new(expr)))
     }
 }
 
@@ -326,14 +338,20 @@ pub enum UnOp {
 }
 
 impl<'a> TryInto<UnOp> for &Token<'a> {
-    type Error = ();
+    type Error = ASTError;
 
     fn try_into(self) -> Result<UnOp, Self::Error> {
         match self.token_type {
             TokenType::Star => Ok(UnOp::Deref),
             TokenType::Not => Ok(UnOp::Not),
             TokenType::Minus => Ok(UnOp::Neg),
-            _ => Err(()),
+            _ => Err(ASTError {
+                kind: super::ASTErrorKind::MisMatch {
+                    expected: "Unary Operation".to_owned(),
+                    actual: format!("{:?}", self.token_type.clone()),
+                },
+                pos: self.pos.clone(),
+            }),
         }
     }
 }
@@ -345,19 +363,23 @@ pub struct BinaryExpr(pub BinOp, pub Box<Expr>, pub Box<Expr>);
 pub struct BinaryHelper(pub BinOp, pub Box<Expr>);
 
 impl BinaryHelper {
-    fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> Option<Self> {
+    fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
-        let op: BinOp = using_iter.next()?.try_into().ok()?;
-
-        if op.get_priority() < min_priority {
-            return None;
-        }
+        let op_result: Result<BinOp, _> = using_iter.next()?.try_into();
+        let op: BinOp = if let Ok(ok) = op_result {
+            if ok.get_priority() < min_priority {
+                return Ok(None);
+            }
+            ok
+        } else {
+            return Ok(None);
+        };
 
         let expr2 = Expr::eat_with_priority(&mut using_iter, op.get_priority() + 1)?;
 
         iter.update(using_iter);
-        Some(BinaryHelper(op, Box::new(expr2)))
+        Ok(Some(BinaryHelper(op, Box::new(expr2))))
     }
 }
 
@@ -432,7 +454,7 @@ impl<'a> TryInto<BinOp> for &Token<'a> {
 pub struct LetExpr(pub Box<Pat>, pub Box<Expr>);
 
 impl Visitable for LetExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Let);
@@ -444,7 +466,7 @@ impl Visitable for LetExpr {
         let expr = Expr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(Box::new(pat), Box::new(expr)))
+        Ok(Self(Box::new(pat), Box::new(expr)))
     }
 }
 
@@ -452,26 +474,19 @@ impl Visitable for LetExpr {
 pub struct ArrayExpr(pub Vec<Box<Expr>>);
 
 impl Visitable for ArrayExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
         match_keyword!(using_iter, TokenType::OpenSqu);
 
         let mut exprs = Vec::new();
 
-        while let Some(expr) = Expr::eat(&mut using_iter) {
-            exprs.push(Box::new(expr));
-
-            if using_iter.peek()?.token_type == TokenType::Comma {
-                using_iter.next();
-            } else {
-                break;
-            }
-        }
-
-        match_keyword!(using_iter, TokenType::CloseSqu);
+        loop_until!(using_iter, TokenType::CloseSqu, {
+            exprs.push(Box::new(Expr::eat(&mut using_iter)?));
+            skip_keyword!(using_iter, TokenType::Comma);
+        });
 
         iter.update(using_iter);
-        Some(Self(exprs))
+        Ok(Self(exprs))
     }
 }
 
@@ -482,8 +497,8 @@ pub struct AnonConst {
 }
 
 impl Visitable for AnonConst {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
-        Some(Self {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        Ok(Self {
             value: Box::new(Expr::eat(iter)?),
         })
     }
@@ -493,7 +508,7 @@ impl Visitable for AnonConst {
 pub struct RepeatExpr(pub Box<Expr>, pub AnonConst);
 
 impl Visitable for RepeatExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::OpenSqu);
@@ -507,7 +522,7 @@ impl Visitable for RepeatExpr {
         match_keyword!(using_iter, TokenType::CloseSqu);
 
         iter.update(using_iter);
-        Some(Self(Box::new(expr), anon))
+        Ok(Self(Box::new(expr), anon))
     }
 }
 
@@ -517,21 +532,29 @@ pub struct BlockExpr {
 }
 
 impl Visitable for BlockExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::OpenCurly);
 
         let mut stmts = Vec::new();
 
-        while let Some(stmt) = Stmt::eat(&mut using_iter) {
-            stmts.push(stmt);
-        }
-
-        match_keyword!(using_iter, TokenType::CloseCurly);
+        loop_until!(using_iter, TokenType::CloseCurly, {
+            stmts.push(Stmt::eat(&mut using_iter)?);
+        });
 
         iter.update(using_iter);
-        Some(Self { stmts })
+        Ok(Self { stmts })
+    }
+}
+
+impl Visitable for Option<BlockExpr> {
+    fn eat(iter: &mut TokenIter) -> super::ASTResult<Self> {
+        if iter.peek()?.token_type == TokenType::OpenCurly {
+            BlockExpr::eat(iter).map(Some)
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -542,7 +565,7 @@ pub struct IndexExpr(pub Box<Expr>, pub Box<Expr>);
 pub struct IndexHelper(pub Box<Expr>);
 
 impl Visitable for IndexHelper {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::OpenSqu);
@@ -552,7 +575,7 @@ impl Visitable for IndexHelper {
         match_keyword!(using_iter, TokenType::CloseSqu);
 
         iter.update(using_iter);
-        Some(Self(Box::new(expr)))
+        Ok(Self(Box::new(expr)))
     }
 }
 
@@ -560,14 +583,14 @@ impl Visitable for IndexHelper {
 pub struct PathExpr(pub Option<Box<QSelf>>, pub Path);
 
 impl Visitable for PathExpr {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let qself = QSelf::eat(&mut using_iter);
+        let qself = Option::<QSelf>::eat(&mut using_iter)?;
         let path = Path::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(qself.map(Box::new), path))
+        Ok(Self(qself.map(Box::new), path))
     }
 }
 
@@ -578,16 +601,17 @@ pub struct AssignExpr(pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignHelper(pub Box<Expr>);
 
-impl Visitable for AssignHelper {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+impl Visitable for Option<AssignHelper> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        match_keyword!(using_iter, TokenType::Eq);
-
-        let expr = Expr::eat(&mut using_iter)?;
+        if using_iter.next()?.token_type != TokenType::Eq {
+            return Ok(None);
+        }
+        let expr2 = Expr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(Box::new(expr)))
+        Ok(Some(AssignHelper(Box::new(expr2))))
     }
 }
 
@@ -598,27 +622,19 @@ pub struct CallExpr(pub Box<Expr>, pub Vec<Box<Expr>>);
 pub struct CallHelper(pub Vec<Box<Expr>>);
 
 impl Visitable for CallHelper {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::OpenPar);
 
         let mut exprs = Vec::new();
 
-        while let Some(expr) = Expr::eat(&mut using_iter) {
-            exprs.push(Box::new(expr));
-
-            if using_iter.peek()?.token_type == TokenType::Comma {
-                using_iter.next();
-            } else {
-                break;
-            }
-        }
-
-        match_keyword!(using_iter, TokenType::ClosePar);
+        loop_until!(using_iter, TokenType::ClosePar, {
+            exprs.push(Box::new(Expr::eat(&mut using_iter)?));
+        });
 
         iter.update(using_iter);
-        Some(Self(exprs))
+        Ok(Self(exprs))
     }
 }
 
@@ -629,15 +645,15 @@ pub struct FieldExpr(pub Box<Expr>, pub Ident);
 pub struct FieldHelper(pub Ident);
 
 impl Visitable for FieldHelper {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Dot);
 
-        let ident = using_iter.next()?.try_into().ok()?;
+        let ident = using_iter.next()?.try_into()?;
 
         iter.update(using_iter);
-        Some(Self(ident))
+        Ok(Self(ident))
     }
 }
 
@@ -655,7 +671,7 @@ pub struct MethodCallHelper {
 }
 
 impl Visitable for MethodCallHelper {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Dot);
@@ -664,7 +680,7 @@ impl Visitable for MethodCallHelper {
         let call_helper = CallHelper::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             seg,
             args: call_helper.0,
         })
@@ -675,7 +691,7 @@ impl Visitable for MethodCallHelper {
 pub struct IfExpr(pub Box<Expr>, pub Box<BlockExpr>, pub Option<Box<Expr>>);
 
 impl Visitable for IfExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::If);
@@ -684,26 +700,32 @@ impl Visitable for IfExpr {
         let block = BlockExpr::eat(&mut using_iter)?;
 
         let else_expr = if using_iter.peek()?.token_type == TokenType::Else {
-            let mut using_iter2 = using_iter.clone();
+            using_iter.advance();
 
-            using_iter2.next();
-            if let Some(else_expr) = Expr::eat(&mut using_iter2) {
-                match else_expr.kind {
-                    ExprKind::Block(_) | ExprKind::If(_) => {
-                        using_iter.update(using_iter2);
-                        Some(Box::new(else_expr))
-                    }
-                    _ => None,
+            let t = using_iter.peek()?;
+
+            let else_expr = Expr::eat(&mut using_iter)?;
+
+            match else_expr.kind {
+                ExprKind::Block(_) | ExprKind::If(_) => {
+                    Some(Box::new(else_expr))
                 }
-            } else {
-                None
+                _ => {
+                    return Err(ASTError {
+                        kind: crate::ast::ASTErrorKind::MisMatch {
+                            expected: "Block or If".to_owned(),
+                            actual: format!("{:?}", t),
+                        },
+                        pos: t.pos.clone(),
+                    });
+                }
             }
         } else {
             None
         };
 
         iter.update(using_iter);
-        Some(Self(Box::new(expr), Box::new(block), else_expr))
+        Ok(Self(Box::new(expr), Box::new(block), else_expr))
     }
 }
 
@@ -711,7 +733,7 @@ impl Visitable for IfExpr {
 pub struct MatchExpr(pub Box<Expr>, pub Vec<Arm>);
 
 impl Visitable for MatchExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Match);
@@ -719,23 +741,30 @@ impl Visitable for MatchExpr {
         match_keyword!(using_iter, TokenType::OpenCurly);
 
         let mut arms = Vec::new();
-        while let Some(arm) = Arm::eat(&mut using_iter) {
+
+        loop_until!(using_iter, TokenType::CloseCurly, {
+            let arm = Arm::eat(&mut using_iter)?;
             let is_block = arm.body.is_block();
             arms.push(arm);
 
             if using_iter.peek()?.token_type == TokenType::Comma {
-                using_iter.next();
-            } else {
-                if !is_block {
-                    break;
+                using_iter.advance();
+            } else if !is_block {
+                let t = using_iter.peek()?;
+                if t.token_type != TokenType::CloseCurly {
+                    return Err(ASTError {
+                        kind: crate::ast::ASTErrorKind::MisMatch {
+                            expected: "Comma".to_owned(),
+                            actual: format!("{:?}", t.token_type.clone()),
+                        },
+                        pos: t.pos.clone(),
+                    });
                 }
             }
-        }
-
-        match_keyword!(using_iter, TokenType::CloseCurly);
+        });
 
         iter.update(using_iter);
-        Some(Self(Box::new(expr), arms))
+        Ok(Self(Box::new(expr), arms))
     }
 }
 
@@ -747,12 +776,12 @@ pub struct Arm {
 }
 
 impl Visitable for Arm {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         let pat = Pat::eat(&mut using_iter)?;
         let guard = if using_iter.peek()?.token_type == TokenType::If {
-            using_iter.next();
+            using_iter.advance();
             Some(Expr::eat(&mut using_iter)?)
         } else {
             None
@@ -761,7 +790,7 @@ impl Visitable for Arm {
         let body = Expr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             pat: Box::new(pat),
             guard: guard.map(Box::new),
             body: Box::new(body),
@@ -777,7 +806,7 @@ pub struct ForLoopExpr {
 }
 
 impl Visitable for ForLoopExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::For);
@@ -787,7 +816,7 @@ impl Visitable for ForLoopExpr {
         let block = BlockExpr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self {
+        Ok(Self {
             pat: Box::new(pat),
             iter: Box::new(loop_iter),
             body: Box::new(block),
@@ -799,14 +828,14 @@ impl Visitable for ForLoopExpr {
 pub struct LoopExpr(pub Box<BlockExpr>);
 
 impl Visitable for LoopExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Loop);
         let block = BlockExpr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(Box::new(block)))
+        Ok(Self(Box::new(block)))
     }
 }
 
@@ -814,7 +843,7 @@ impl Visitable for LoopExpr {
 pub struct WhileExpr(pub Box<Expr>, pub Box<BlockExpr>);
 
 impl Visitable for WhileExpr {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::While);
@@ -822,7 +851,7 @@ impl Visitable for WhileExpr {
         let block = BlockExpr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(Box::new(expr), Box::new(block)))
+        Ok(Self(Box::new(expr), Box::new(block)))
     }
 }
 
@@ -836,20 +865,20 @@ pub struct RangeExpr(
 #[derive(Debug)]
 pub struct RangeHelper(pub Option<Box<Expr>>, pub RangeLimits);
 
-impl Visitable for RangeHelper {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+impl Visitable for Option<RangeHelper> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
         let limits = match using_iter.next()?.token_type {
             TokenType::DotDot => RangeLimits::HalfOpen,
             TokenType::DotDotEq => RangeLimits::Closed,
-            _ => return None,
+            _ => return Ok(None),
         };
 
-        let expr2 = Expr::eat(&mut using_iter);
+        let expr2 = Expr::eat(&mut using_iter).ok();
 
         iter.update(using_iter);
-        Some(Self(expr2.map(Box::new), limits))
+        Ok(Some(RangeHelper(expr2.map(Box::new), limits)))
     }
 }
 
@@ -865,15 +894,19 @@ pub struct AssignOpExpr(pub AssignOp, pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignOpHelper(pub AssignOp, pub Box<Expr>);
 
-impl Visitable for AssignOpHelper {
-    fn eat(iter: &mut TokenIter) -> Option<Self> {
+impl Visitable for Option<AssignOpHelper> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let assign_op = using_iter.next()?.try_into().ok()?;
+        let assign_op_result: Result<AssignOp, _> = using_iter.next()?.try_into();
+        let assign_op = match assign_op_result {
+            Ok(o) => o,
+            Err(_) => return Ok(None),
+        };
         let expr2 = Expr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
-        Some(Self(assign_op, Box::new(expr2)))
+        Ok(Some(AssignOpHelper(assign_op, Box::new(expr2))))
     }
 }
 
