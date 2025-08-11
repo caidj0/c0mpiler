@@ -4,21 +4,12 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str = r###"fn main() {
-    let a = 10;
-    let b = 20;
-    let operator = pick_operator(a);
-    let result = match operator {
-        Op::Add => compute(a, b, Op::Add),
-        Op::Sub => compute(a, b, Op::Sub),
-    };
-    let doubled = result * 2;
-    let mut acc = 0;
-    for i in 0..doubled {
-        acc += i;
+    let test_str = r###"impl Dummy {
+    fn new() -> Self {
+        1 + 1
     }
-    let _final_score = acc / 3;
-}"###;
+}
+"###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);
 

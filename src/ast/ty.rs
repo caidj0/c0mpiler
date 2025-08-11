@@ -31,7 +31,7 @@ pub enum TyKind {
     // Paren(P<Ty>),
     // Typeof(AnonConst),
     // Infer,
-    // ImplicitSelf,
+    ImplicitSelf,
     // MacCall(P<MacCall>),
     // CVarArgs,
     // Pat(P<Ty>, P<TyPat>),
@@ -44,6 +44,14 @@ impl Visitable for Ty {
         let mut kind = None;
         kind = kind.or_else(|| PathTy::eat(iter).map(TyKind::Path));
         kind = kind.or_else(|| ArrayTy::eat(iter).map(TyKind::Array));
+        kind = kind.or_else(|| {
+            if iter.peek()?.token_type == TokenType::LSelfType {
+                iter.next();
+                Some(TyKind::ImplicitSelf)
+            } else {
+                None
+            }
+        });
 
         Some(Ty { kind: kind? })
     }

@@ -60,16 +60,29 @@ pub enum Mutability {
     Mut,
 }
 
-pub type Ident = String;
+#[derive(Debug)]
+pub enum Ident {
+    Empty,
+    String(String),
+    PathSegment(TokenType),
+}
 
-impl<'a> TryInto<String> for &Token<'a> {
+impl Default for Ident {
+    fn default() -> Self {
+        Ident::Empty
+    }
+}
+
+impl<'a> TryInto<Ident> for &Token<'a> {
     type Error = ();
 
-    fn try_into(self) -> Result<String, Self::Error> {
-        if self.token_type == TokenType::Id {
-            Ok(self.lexeme.to_owned())
-        } else {
-            Err(())
+    fn try_into(self) -> Result<Ident, Self::Error> {
+        match self.token_type {
+            TokenType::Id => Ok(Ident::String(self.lexeme.to_owned())),
+            TokenType::LSelfType | TokenType::SelfType | TokenType::Crate | TokenType::Super => {
+                Ok(Ident::PathSegment(self.token_type.clone()))
+            }
+            _ => Err(()),
         }
     }
 }
