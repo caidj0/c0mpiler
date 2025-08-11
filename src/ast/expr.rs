@@ -33,9 +33,9 @@ pub enum ExprKind {
     ForLoop(ForLoopExpr),
     Loop(LoopExpr),
     Match(MatchExpr),
-    Block(BlockExpr), // TODO: 先忽略 label
+    Block(BlockExpr),
     Assign(AssignExpr),
-    // AssignOp(AssignOp, P<Expr>, P<Expr>),
+    AssignOp(AssignOpExpr),
     Field(FieldExpr),
     Index(IndexExpr),
     Range(RangeExpr),
@@ -103,6 +103,12 @@ impl Expr {
                     ))
                 } else if let Some(helper) = AssignHelper::eat(iter) {
                     expr1 = ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                } else if let Some(helper) = AssignOpHelper::eat(iter) {
+                    expr1 = ExprKind::AssignOp(AssignOpExpr(
+                        helper.0,
+                        Box::new(Expr { kind: expr1 }),
+                        helper.1,
+                    ))
                 } else {
                     break expr1;
                 };
@@ -851,4 +857,56 @@ impl Visitable for RangeHelper {
 pub enum RangeLimits {
     HalfOpen,
     Closed,
+}
+
+#[derive(Debug)]
+pub struct AssignOpExpr(pub AssignOp, pub Box<Expr>, pub Box<Expr>);
+
+#[derive(Debug)]
+pub struct AssignOpHelper(pub AssignOp, pub Box<Expr>);
+
+impl Visitable for AssignOpHelper {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let assign_op = using_iter.next()?.try_into().ok()?;
+        let expr2 = Expr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(assign_op, Box::new(expr2)))
+    }
+}
+
+#[derive(Debug)]
+pub enum AssignOp {
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    RemAssign,
+    BitXorAssign,
+    BitAndAssign,
+    BitOrAssign,
+    ShlAssign,
+    ShrAssign,
+}
+
+impl<'a> TryInto<AssignOp> for &Token<'a> {
+    type Error = ();
+
+    fn try_into(self) -> Result<AssignOp, Self::Error> {
+        match self.token_type {
+            TokenType::PlusEq => Ok(AssignOp::AddAssign),
+            TokenType::MinusEq => Ok(AssignOp::SubAssign),
+            TokenType::StarEq => Ok(AssignOp::MulAssign),
+            TokenType::SlashEq => Ok(AssignOp::DivAssign),
+            TokenType::PercentEq => Ok(AssignOp::RemAssign),
+            TokenType::CaretEq => Ok(AssignOp::BitXorAssign),
+            TokenType::AndEq => Ok(AssignOp::BitAndAssign),
+            TokenType::OrEq => Ok(AssignOp::BitOrAssign),
+            TokenType::ShlEq => Ok(AssignOp::ShlAssign),
+            TokenType::ShrEq => Ok(AssignOp::ShrAssign),
+            _ => Err(()),
+        }
+    }
 }
