@@ -96,18 +96,3 @@ impl Visitable for EmptyStmt {
         Some(Self)
     }
 }
-
-#[derive(Debug)]
-pub struct SemiStmt(pub Box<Expr>);
-
-impl Visitable for SemiStmt {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
-        let mut using_iter = iter.clone();
-
-        let expr = Expr::eat(&mut using_iter)?;
-        match_keyword!(using_iter, TokenType::Semi);
-
-        iter.update(using_iter);
-        Some(Self(Box::new(expr)))
-    }
-}

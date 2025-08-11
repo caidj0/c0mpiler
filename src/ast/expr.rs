@@ -38,7 +38,7 @@ pub enum ExprKind {
     //     kind: ForLoopKind,
     // },
     // Loop(P<Block>, Option<Label>, Span),
-    // Match(P<Expr>, ThinVec<Arm>, MatchKind),
+    Match(MatchExpr),
     Block(BlockExpr), // TODO: 先忽略 label
     Assign(AssignExpr),
     // AssignOp(AssignOp, P<Expr>, P<Expr>),
@@ -73,6 +73,7 @@ impl Expr {
         kind = kind.or_else(|| LetExpr::eat(iter).map(ExprKind::Let));
         kind = kind.or_else(|| BlockExpr::eat(iter).map(ExprKind::Block));
         kind = kind.or_else(|| IfExpr::eat(iter).map(ExprKind::If));
+        kind = kind.or_else(|| MatchExpr::eat(iter).map(ExprKind::Match));
 
         kind = kind.map(|mut expr1| {
             loop {
@@ -108,7 +109,7 @@ impl Expr {
 
     pub fn is_block(&self) -> bool {
         match self.kind {
-            ExprKind::Block(_) | ExprKind::If(_) => true,
+            ExprKind::Block(_) | ExprKind::If(_) | ExprKind::Match(_) => true,
             _ => false,
         }
     }
@@ -692,5 +693,67 @@ impl Visitable for IfExpr {
 
         iter.update(using_iter);
         Some(Self(Box::new(expr), Box::new(block), else_expr))
+    }
+}
+
+#[derive(Debug)]
+pub struct MatchExpr(pub Box<Expr>, pub Vec<Arm>);
+
+impl Visitable for MatchExpr {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Match);
+        let expr = Expr::eat(&mut using_iter)?;
+        match_keyword!(using_iter, TokenType::OpenCurly);
+
+        let mut arms = Vec::new();
+        while let Some(arm) = Arm::eat(&mut using_iter) {
+            let is_block = arm.body.is_block();
+            arms.push(arm);
+
+            if using_iter.peek()?.token_type == TokenType::Comma {
+                using_iter.next();
+            } else {
+                if !is_block {
+                    break;
+                }
+            }
+        }
+
+        match_keyword!(using_iter, TokenType::CloseCurly);
+
+        iter.update(using_iter);
+        Some(Self(Box::new(expr), arms))
+    }
+}
+
+#[derive(Debug)]
+pub struct Arm {
+    pub pat: Box<Pat>,
+    pub guard: Option<Box<Expr>>,
+    pub body: Box<Expr>,
+}
+
+impl Visitable for Arm {
+    fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let pat = Pat::eat(&mut using_iter)?;
+        let guard = if using_iter.peek()?.token_type == TokenType::If {
+            using_iter.next();
+            Some(Expr::eat(&mut using_iter)?)
+        } else {
+            None
+        };
+        match_keyword!(using_iter, TokenType::FatArrow);
+        let body = Expr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self {
+            pat: Box::new(pat),
+            guard: guard.map(Box::new),
+            body: Box::new(body),
+        })
     }
 }

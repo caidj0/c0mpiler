@@ -1,5 +1,8 @@
 use crate::{
-    ast::{BindingMode, Ident, Visitable},
+    ast::{
+        BindingMode, Ident, Visitable,
+        path::{Path, QSelf},
+    },
     lexer::TokenIter,
 };
 
@@ -16,7 +19,7 @@ pub enum PatKind {
     // Struct(Option<P<QSelf>>, Path, ThinVec<PatField>, PatFieldsRest),
     // TupleStruct(Option<P<QSelf>>, Path, ThinVec<P<Pat>>),
     // Or(ThinVec<P<Pat>>),
-    // Path(Option<P<QSelf>>, Path),
+    Path(PathPat),
     // Tuple(ThinVec<P<Pat>>),
     // Box(P<Pat>),
     // Deref(P<Pat>),
@@ -35,6 +38,7 @@ pub enum PatKind {
 impl Visitable for Pat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
         let mut kind: Option<PatKind> = None;
+        kind = kind.or_else(|| PathPat::eat(iter).map(PatKind::Path));
         kind = kind.or_else(|| IdentPat::eat(iter).map(PatKind::Ident));
 
         Some(Self { kind: kind? })
@@ -61,5 +65,20 @@ impl Visitable for IdentPat {
 
         iter.update(using_iter);
         Some(Self(bindmod, ident, range_pat.map(Box::new)))
+    }
+}
+
+#[derive(Debug)]
+pub struct PathPat(pub Option<Box<QSelf>>, pub Path);
+
+impl Visitable for PathPat {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> Option<Self> {
+        let mut using_iter = iter.clone();
+
+        let qself = QSelf::eat(&mut using_iter);
+        let path = Path::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Some(Self(qself.map(Box::new), path))
     }
 }

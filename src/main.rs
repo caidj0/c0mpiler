@@ -5,7 +5,10 @@ use c0mpiler::{
 
 fn main() {
     let test_str = r###"fn main(){
-    if a {} else {}
+    let result = match operator {
+        Op::Add => compute(a, b, Op::Add),
+        Op::Sub => compute(a, b, Op::Sub),
+    };
 }"###;
     let lexer = Lexer::new(test_str);
     let buffer = TokenBuffer::new(lexer);

@@ -14,6 +14,11 @@ use crate::{
 pub trait Visitable: Sized {
     #[allow(unused_variables)]
     fn eat(iter: &mut TokenIter) -> Option<Self> {
+        let using_iter = iter.clone();
+
+        // Do something...
+
+        iter.update(using_iter);
         unimplemented!()
     }
 }
