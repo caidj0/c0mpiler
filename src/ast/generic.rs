@@ -8,7 +8,7 @@ pub enum GenericArgs {
 }
 
 impl Visitable for Option<GenericArgs> {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> super::ASTResult<Self> {
+    fn eat(_iter: &mut crate::lexer::TokenIter) -> super::ASTResult<Self> {
         // TODO
         Ok(None)
     }
@@ -21,7 +21,7 @@ pub struct Generics {
 }
 
 impl Visitable for Generics {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+    fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         // TODO
         Ok(Generics::default())
     }

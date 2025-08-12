@@ -4,14 +4,12 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str = r###"impl Dummy {
-    fn new() -> Self {
-        1 + 1
-    }
-}
-
+    let test_str = r###"
 fn main() {
-    print("Hello world!");
+    Dummy {
+            field_one: 0,
+            field_two: false,
+        }
 }
 "###;
     let lexer = Lexer::new(test_str);
@@ -19,5 +17,11 @@ fn main() {
 
     let mut iter = buffer.iter();
     let cra = Crate::eat(&mut iter);
-    println!("{:#?}", cra);
+    match cra {
+        Ok(ast) => println!("{ast:#?}"),
+        Err(err) => {
+            println!("{err:#?}");
+            println!("{:#?}", test_str.lines().nth(err.pos.line).unwrap());
+        }
+    }
 }

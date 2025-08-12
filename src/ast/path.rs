@@ -1,5 +1,5 @@
 use crate::{
-    ast::{generic::GenericArgs, ty::Ty, ASTResult, Ident, Visitable},
+    ast::{ASTResult, Ident, Visitable, generic::GenericArgs, ty::Ty},
     tokens::TokenType,
 };
 
@@ -8,7 +8,7 @@ pub struct Path {
     pub segments: Vec<PathSegment>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PathSegment {
     pub ident: Ident,
     pub args: Option<Box<GenericArgs>>,
@@ -37,15 +37,6 @@ impl Visitable for Path {
     }
 }
 
-impl Default for PathSegment {
-    fn default() -> Self {
-        Self {
-            ident: Default::default(),
-            args: Default::default(),
-        }
-    }
-}
-
 impl Visitable for PathSegment {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
@@ -68,7 +59,7 @@ pub struct QSelf {
 }
 
 impl Visitable for Option<QSelf> {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+    fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         // TODO
         Ok(None)
     }

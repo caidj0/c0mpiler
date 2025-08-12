@@ -382,7 +382,7 @@ impl Visitable for ImplItem {
                 return Err(crate::ast::ASTError {
                     kind: crate::ast::ASTErrorKind::MisMatch {
                         expected: "Path type".to_owned(),
-                        actual: format!("{:?}", self_ty),
+                        actual: format!("{self_ty:?}"),
                     },
                     pos: self_ty_token.pos.clone(),
                 });

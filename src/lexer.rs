@@ -132,6 +132,7 @@ impl<'a> TokenIter<'a> {
         self.pos += 1;
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> ASTResult<&'a Token<'a>> {
         if self.pos >= self.buffer.len() {
             return Err(ASTError {

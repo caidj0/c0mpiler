@@ -1,7 +1,10 @@
 use crate::{
     ast::{
-        path::{Path, QSelf}, ASTResult, BindingMode, Ident, Visitable
-    }, kind_check, lexer::TokenIter
+        ASTResult, BindingMode, Ident, Visitable,
+        path::{Path, QSelf},
+    },
+    kind_check,
+    lexer::TokenIter,
 };
 
 #[derive(Debug)]
@@ -42,7 +45,7 @@ impl Visitable for Pat {
 }
 
 impl Pat {
-    fn range_eat(iter: &mut TokenIter) -> Option<Self> {
+    fn range_eat(_iter: &mut TokenIter) -> Option<Self> {
         // TODO
         None
     }

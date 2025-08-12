@@ -7,7 +7,11 @@ pub mod stmt;
 pub mod ty;
 
 use crate::{
-    ast::item::Item,
+    ast::{
+        expr::{Expr, PathExpr},
+        item::Item,
+        path::{Path, PathSegment},
+    },
     lexer::{Token, TokenIter, TokenPosition},
     tokens::TokenType,
 };
@@ -32,7 +36,9 @@ pub struct ASTError {
 
 impl ASTError {
     pub fn select(self, right: ASTError) -> ASTError {
-        if (matches!(self.kind, ASTErrorKind::Empty) || self.pos < right.pos) && !matches!(right.kind, ASTErrorKind::Empty) {
+        if (matches!(self.kind, ASTErrorKind::Empty) || self.pos < right.pos)
+            && !matches!(right.kind, ASTErrorKind::Empty)
+        {
             right
         } else {
             self
@@ -42,7 +48,10 @@ impl ASTError {
 
 impl Default for ASTError {
     fn default() -> Self {
-        Self { kind: ASTErrorKind::Empty, pos: TokenPosition{ line: 0, col: 0 }}
+        Self {
+            kind: ASTErrorKind::Empty,
+            pos: TokenPosition { line: 0, col: 0 },
+        }
     }
 }
 
@@ -64,8 +73,8 @@ macro_rules! match_keyword {
         if token.token_type == $e {
             $iter.advance();
         } else {
-            return Err(crate::ast::ASTError {
-                kind: crate::ast::ASTErrorKind::MisMatch {
+            return Err($crate::ast::ASTError {
+                kind: $crate::ast::ASTErrorKind::MisMatch {
                     expected: stringify!($e).to_owned(),
                     actual: format!("{:?}", token),
                 },
@@ -109,19 +118,19 @@ macro_rules! loop_until {
 macro_rules! kind_check {
     ($iter:ident, $enum_name:ident, $suffix:ident, ($($member:ident),*)) => {
         {
-            let mut kind = Err(crate::ast::ASTError::default());
-        
+            let mut kind = Err($crate::ast::ASTError::default());
+
             paste::paste!{
                 $(
                     kind = kind.or_else(|err| {
-                        [<$member $suffix>]::eat($iter).map($enum_name::$member).or_else(|err2| Err(err.select(err2)))
+                        [<$member $suffix>]::eat($iter).map($enum_name::$member).map_err(|err2| err.select(err2))
                     });
                 )*
             }
 
             kind
         }
-        
+
     };
 }
 
@@ -150,18 +159,34 @@ pub enum Mutability {
     Mut,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum Ident {
+    #[default]
     Empty,
     String(String),
     PathSegment(TokenType),
 }
 
-impl Default for Ident {
-    fn default() -> Self {
-        Ident::Empty
+impl From<Ident> for Path {
+    fn from(val: Ident) -> Self {
+        Path {
+            segments: vec![PathSegment {
+                ident: val,
+                args: None,
+            }],
+        }
     }
 }
+
+impl From<Ident> for Expr {
+    fn from(val: Ident) -> Self {
+        Expr {
+            kind: expr::ExprKind::Path(PathExpr(None, val.into())),
+        }
+    }
+}
+
 
 impl<'a> TryInto<Ident> for &Token<'a> {
     type Error = ASTError;
@@ -175,7 +200,7 @@ impl<'a> TryInto<Ident> for &Token<'a> {
             _ => Err(ASTError {
                 kind: ASTErrorKind::MisMatch {
                     expected: r#"Identifier, "self", "Self", "crate" or "super""#.to_owned(),
-                    actual: format!("{:?}", self),
+                    actual: format!("{self:?}"),
                 },
                 pos: self.pos.clone(),
             }),
