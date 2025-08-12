@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTErrorKind, ASTResult, Ident, Visitable,
+        ASTError, ASTErrorKind, ASTResult, Ident, TryVisitable, Visitable,
         expr::{AnonConst, BlockExpr, Expr},
         generic::{GenericBounds, Generics},
         pat::Pat,
@@ -121,7 +121,7 @@ impl Visitable for FnDecl {
             skip_keyword!(using_iter, TokenType::Comma);
         });
 
-        let output = Option::<FnRetTy>::eat(&mut using_iter)?.unwrap_or_default();
+        let output = FnRetTy::try_eat(&mut using_iter)?.unwrap_or_default();
 
         iter.update(using_iter);
         Ok(Self { inputs, output })
@@ -140,8 +140,8 @@ impl Default for FnRetTy {
     }
 }
 
-impl Visitable for Option<FnRetTy> {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+impl TryVisitable for FnRetTy {
+    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
         match_prefix!(using_iter, TokenType::RArrow);

@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ASTResult, Ident, Visitable, generic::GenericArgs, ty::Ty},
+    ast::{ASTResult, Ident, TryVisitable, Visitable, generic::GenericArgs, ty::Ty},
     tokens::TokenType,
 };
 
@@ -42,7 +42,7 @@ impl Visitable for PathSegment {
         let mut using_iter = iter.clone();
 
         let ident = using_iter.next()?.try_into()?;
-        let args = Option::<GenericArgs>::eat(&mut using_iter)?;
+        let args = GenericArgs::try_eat(&mut using_iter)?;
 
         iter.update(using_iter);
         Ok(Self {
@@ -58,8 +58,8 @@ pub struct QSelf {
     pub position: usize,
 }
 
-impl Visitable for Option<QSelf> {
-    fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+impl TryVisitable for QSelf {
+    fn try_eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
         // TODO
         Ok(None)
     }

@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTResult, Ident, Mutability, Visitable,
+        ASTError, ASTResult, Ident, Mutability, TryVisitable, Visitable,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::Stmt,
@@ -8,7 +8,7 @@ use crate::{
     },
     kind_check,
     lexer::{Token, TokenIter},
-    loop_until, match_keyword, skip_keyword,
+    loop_until, match_keyword, match_prefix, skip_keyword,
     tokens::TokenType,
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -85,9 +85,9 @@ impl Expr {
                     })
                 } else if let Ok(helper) = FieldHelper::eat(iter) {
                     expr1 = ExprKind::Field(FieldExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = Option::<CallHelper>::eat(iter)? {
+                } else if let Some(helper) = CallHelper::try_eat(iter)? {
                     expr1 = ExprKind::Call(CallExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = Option::<IndexHelper>::eat(iter)? {
+                } else if let Some(helper) = IndexHelper::try_eat(iter)? {
                     expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else if let Some(helper) = CastHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Cast(CastExpr(Box::new(Expr { kind: expr1 }), helper.0))
@@ -103,9 +103,9 @@ impl Expr {
                         helper.0,
                         helper.1,
                     ))
-                } else if let Some(helper) = Option::<AssignHelper>::eat(iter)? {
+                } else if let Some(helper) = AssignHelper::try_eat(iter)? {
                     expr1 = ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = Option::<AssignOpHelper>::eat(iter)? {
+                } else if let Some(helper) = AssignOpHelper::try_eat(iter)? {
                     expr1 = ExprKind::AssignOp(AssignOpExpr(
                         helper.0,
                         Box::new(Expr { kind: expr1 }),
@@ -551,8 +551,8 @@ impl Visitable for BlockExpr {
     }
 }
 
-impl Visitable for Option<BlockExpr> {
-    fn eat(iter: &mut TokenIter) -> super::ASTResult<Self> {
+impl TryVisitable for BlockExpr {
+    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         if iter.peek()?.token_type == TokenType::OpenCurly {
             BlockExpr::eat(iter).map(Some)
         } else {
@@ -567,13 +567,11 @@ pub struct IndexExpr(pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct IndexHelper(pub Box<Expr>);
 
-impl Visitable for Option<IndexHelper> {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+impl TryVisitable for IndexHelper {
+    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
-        if using_iter.next()?.token_type != TokenType::OpenSqu {
-            return Ok(None);
-        }
+        match_prefix!(using_iter, TokenType::OpenSqu);
 
         let expr = Expr::eat(&mut using_iter)?;
 
@@ -591,7 +589,7 @@ impl Visitable for PathExpr {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let qself = Option::<QSelf>::eat(&mut using_iter)?;
+        let qself = QSelf::try_eat(&mut using_iter)?;
         let path = Path::eat(&mut using_iter)?;
 
         iter.update(using_iter);
@@ -606,13 +604,11 @@ pub struct AssignExpr(pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignHelper(pub Box<Expr>);
 
-impl Visitable for Option<AssignHelper> {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+impl TryVisitable for AssignHelper {
+    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
-        if using_iter.next()?.token_type != TokenType::Eq {
-            return Ok(None);
-        }
+        match_prefix!(using_iter, TokenType::Eq);
         let expr2 = Expr::eat(&mut using_iter)?;
 
         iter.update(using_iter);
@@ -627,13 +623,11 @@ pub struct CallExpr(pub Box<Expr>, pub Vec<Box<Expr>>);
 pub struct TupExpr(pub Vec<Box<Expr>>);
 pub type CallHelper = TupExpr;
 
-impl Visitable for Option<CallHelper> {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+impl TryVisitable for CallHelper {
+    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
-        if using_iter.next()?.token_type != TokenType::OpenPar {
-            return Ok(None);
-        }
+        match_prefix!(using_iter, TokenType::OpenPar);
 
         let mut exprs = Vec::new();
 
@@ -706,7 +700,7 @@ impl Visitable for MethodCallHelper {
         match_keyword!(using_iter, TokenType::Dot);
 
         let seg = PathSegment::eat(&mut using_iter)?;
-        let call_helper = Option::<CallHelper>::eat(&mut using_iter)?.ok_or(ASTError {
+        let call_helper = CallHelper::try_eat(&mut using_iter)?.ok_or(ASTError {
             kind: crate::ast::ASTErrorKind::MisMatch {
                 expected: "(".to_string(),
                 actual: format!("{:?}", using_iter.peek()?.token_type.clone()),
@@ -933,8 +927,8 @@ pub struct AssignOpExpr(pub AssignOp, pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignOpHelper(pub AssignOp, pub Box<Expr>);
 
-impl Visitable for Option<AssignOpHelper> {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+impl TryVisitable for AssignOpHelper {
+    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
         let assign_op_result: Result<AssignOp, _> = using_iter.next()?.try_into();
@@ -995,7 +989,7 @@ impl Visitable for StructExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let qself = Option::<QSelf>::eat(&mut using_iter)?;
+        let qself = QSelf::try_eat(&mut using_iter)?;
         let path = Path::eat(&mut using_iter)?;
 
         match_keyword!(using_iter, TokenType::OpenCurly);

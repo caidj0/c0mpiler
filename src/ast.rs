@@ -28,6 +28,18 @@ pub trait Visitable: Sized {
     }
 }
 
+pub trait TryVisitable: Sized {
+    #[allow(unused_variables, unused_mut)]
+    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
+        let mut using_iter = iter.clone();
+
+        // Do something...
+
+        iter.update(using_iter);
+        unimplemented!()
+    }
+}
+
 #[derive(Debug)]
 pub struct ASTError {
     pub kind: ASTErrorKind,

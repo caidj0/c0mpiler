@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTResult, BindingMode, Ident, Mutability, Visitable,
+        ASTResult, BindingMode, Ident, Mutability, TryVisitable, Visitable,
         path::{Path, PathSegment, QSelf},
     },
     kind_check,
@@ -90,7 +90,7 @@ impl Visitable for PathPat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let qself = Option::<QSelf>::eat(&mut using_iter)?;
+        let qself = QSelf::try_eat(&mut using_iter)?;
         let path = Path::eat(&mut using_iter)?;
 
         iter.update(using_iter);
