@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTResult, Visitable,
+        ASTResult, Mutability, Visitable,
         expr::AnonConst,
         path::{Path, QSelf},
     },
@@ -17,10 +17,10 @@ pub struct Ty {
 
 #[derive(Debug)]
 pub enum TyKind {
-    // Slice(P<Ty>),
+    Slice(SliceTy),
     Array(ArrayTy),
     // Ptr(MutTy),
-    // Ref(Option<Lifetime>, MutTy),
+    Ref(RefTy),
     // PinnedRef(Option<Lifetime>, MutTy),
     // FnPtr(P<FnPtrTy>),
     // UnsafeBinder(P<UnsafeBinderTy>),
@@ -42,7 +42,7 @@ pub enum TyKind {
 
 impl Visitable for Ty {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let kind = kind_check!(iter, TyKind, Ty, (Path, Array));
+        let kind = kind_check!(iter, TyKind, Ty, (Path, Array, Slice, Ref));
 
         Ok(Ty { kind: kind? })
     }
@@ -82,5 +82,59 @@ impl Visitable for ArrayTy {
 
         iter.update(using_iter);
         Ok(Self(Box::new(ty), anon))
+    }
+}
+
+#[derive(Debug)]
+pub struct MutTy {
+    pub ty: Box<Ty>,
+    pub mutbl: Mutability,
+}
+
+impl Visitable for MutTy {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let mutbl = Mutability::eat(&mut using_iter)?;
+        let ty = Ty::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self {
+            ty: Box::new(ty),
+            mutbl,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct RefTy(pub MutTy);
+
+impl Visitable for RefTy {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::And);
+        let ty = MutTy::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self(ty))
+    }
+}
+
+#[derive(Debug)]
+pub struct SliceTy(pub Box<Ty>);
+
+impl Visitable for SliceTy {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenSqu);
+
+        let ty = Ty::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::CloseSqu);
+
+        iter.update(using_iter);
+        Ok(Self(Box::new(ty)))
     }
 }

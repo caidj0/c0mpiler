@@ -24,12 +24,14 @@ impl Visitable for Stmt {
         let mut kind = Err(crate::ast::ASTError::default());
         kind = kind.or_else(|err| {
             LocalStmt::eat(iter)
-                .map(StmtKind::Let).map_err(|err2| err.select(err2))
+                .map(StmtKind::Let)
+                .map_err(|err2| err.select(err2))
         });
         kind = kind.or_else(|err| {
             Item::eat(iter)
                 .map(Box::new)
-                .map(StmtKind::Item).map_err(|err2| err.select(err2))
+                .map(StmtKind::Item)
+                .map_err(|err2| err.select(err2))
         });
 
         kind = kind.or_else(|err| {
@@ -49,7 +51,8 @@ impl Visitable for Stmt {
 
         kind = kind.or_else(|err| {
             EmptyStmt::eat(iter)
-                .map(StmtKind::Empty).map_err(|err2| err.select(err2))
+                .map(StmtKind::Empty)
+                .map_err(|err2| err.select(err2))
         });
 
         Ok(Self { kind: kind? })

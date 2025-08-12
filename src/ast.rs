@@ -159,8 +159,18 @@ pub enum Mutability {
     Mut,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Default)]
+impl Visitable for Mutability {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        if iter.peek()?.token_type == TokenType::Mut {
+            iter.advance();
+            Ok(Mutability::Mut)
+        } else {
+            Ok(Mutability::Not)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub enum Ident {
     #[default]
     Empty,
@@ -186,7 +196,6 @@ impl From<Ident> for Expr {
         }
     }
 }
-
 
 impl<'a> TryInto<Ident> for &Token<'a> {
     type Error = ASTError;

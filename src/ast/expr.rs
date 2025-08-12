@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTResult, Ident, Visitable,
+        ASTError, ASTResult, Ident, Mutability, Visitable,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::Stmt,
@@ -23,7 +23,7 @@ pub enum ExprKind {
     // ConstBlock(AnonConst),
     Call(CallExpr),
     MethodCall(MethodCallExpr),
-    // Tup(ThinVec<P<Expr>>),
+    Tup(TupExpr),
     Binary(BinaryExpr),
     Unary(UnaryExpr),
     Lit(LitExpr),
@@ -42,8 +42,9 @@ pub enum ExprKind {
     Range(RangeExpr),
     // Underscore,
     Path(PathExpr),
-    // Break(Option<Label>, Option<P<Expr>>),
-    // Continue(Option<Label>),
+    AddrOf(AddrOfExpr),
+    Break(BreakExpr),
+    Continue(ContinueExpr),
     // Ret(Option<P<Expr>>),
     Struct(StructExpr),
     Repeat(RepeatExpr),
@@ -65,7 +66,7 @@ impl Expr {
             Expr,
             (
                 Struct, Path, Array, Repeat, Unary, Lit, Let, Block, If, Match, While, ForLoop,
-                Loop
+                Loop, Break, Continue, AddrOf, Tup
             )
         );
 
@@ -622,7 +623,8 @@ impl Visitable for Option<AssignHelper> {
 pub struct CallExpr(pub Box<Expr>, pub Vec<Box<Expr>>);
 
 #[derive(Debug)]
-pub struct CallHelper(pub Vec<Box<Expr>>);
+pub struct TupExpr(pub Vec<Box<Expr>>);
+pub type CallHelper = TupExpr;
 
 impl Visitable for Option<CallHelper> {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
@@ -641,7 +643,26 @@ impl Visitable for Option<CallHelper> {
         });
 
         iter.update(using_iter);
-        Ok(Some(CallHelper(exprs)))
+        Ok(Some(TupExpr(exprs)))
+    }
+}
+
+impl Visitable for TupExpr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenPar);
+
+        let mut exprs = Vec::new();
+
+        loop_until!(using_iter, TokenType::ClosePar, {
+            exprs.push(Box::new(Expr::eat(&mut using_iter)?));
+
+            skip_keyword!(using_iter, TokenType::Comma);
+        });
+
+        iter.update(using_iter);
+        Ok(Self(exprs))
     }
 }
 
@@ -1040,4 +1061,54 @@ pub enum StructRest {
     Base(Box<Expr>),
     Rest,
     None,
+}
+
+#[derive(Debug)]
+pub struct BreakExpr(pub Option<Box<Expr>>);
+
+impl Visitable for BreakExpr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Break);
+
+        let expr = Expr::eat(&mut using_iter).ok();
+
+        iter.update(using_iter);
+        Ok(Self(expr.map(Box::new)))
+    }
+}
+
+#[derive(Debug)]
+pub struct ContinueExpr;
+
+impl Visitable for ContinueExpr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Continue);
+
+        iter.update(using_iter);
+        Ok(Self)
+    }
+}
+
+#[derive(Debug)]
+pub struct AddrOfExpr(pub Mutability, pub Box<Expr>);
+
+impl Visitable for AddrOfExpr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::And);
+        let mutability = if using_iter.peek()?.token_type == TokenType::Mut {
+            Mutability::Mut
+        } else {
+            Mutability::Not
+        };
+        let expr = Expr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self(mutability, Box::new(expr)))
+    }
 }
