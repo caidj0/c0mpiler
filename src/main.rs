@@ -6,10 +6,7 @@ use c0mpiler::{
 fn main() {
     let test_str = r###"
 fn main() {
-    Dummy {
-            field_one: 0,
-            field_two: false,
-        }
+    !..b 
 }
 "###;
     let lexer = Lexer::new(test_str);

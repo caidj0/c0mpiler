@@ -26,3 +26,20 @@ impl Visitable for Generics {
         Ok(Generics::default())
     }
 }
+
+#[derive(Debug)]
+pub struct GenericBounds(pub Vec<GenericBound>);
+
+impl Visitable for GenericBounds {
+    fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        // TODO
+        Ok(GenericBounds(vec![]))
+    }
+}
+
+#[derive(Debug)]
+pub enum GenericBound {
+    // Trait(PolyTraitRef),
+    // Outlives(Lifetime),
+    // Use(ThinVec<PreciseCapturingArg>, Span),
+}

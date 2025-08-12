@@ -2,13 +2,13 @@ use crate::{
     ast::{
         ASTError, ASTErrorKind, ASTResult, Ident, Visitable,
         expr::{AnonConst, BlockExpr, Expr},
-        generic::Generics,
+        generic::{GenericBounds, Generics},
         pat::Pat,
         path::Path,
         ty::{Ty, TyKind},
     },
     kind_check,
-    lexer::TokenIter,
+    lexer::{Token, TokenIter},
     loop_until, match_keyword, match_prefix, skip_keyword,
     tokens::TokenType,
 };
@@ -25,14 +25,14 @@ pub enum ItemKind {
     // Static(Box<StaticItem>),
     Const(ConstItem),
     Fn(FnItem),
-    // Mod(Safety, Ident, ModKind),
+    Mod(ModItem),
     // ForeignMod(ForeignMod),
     // GlobalAsm(Box<InlineAsm>),
     // TyAlias(Box<TyAlias>),
     Enum(EnumItem),
     Struct(StructItem),
     // Union(Ident, Generics, VariantData),
-    // Trait(Box<Trait>),
+    Trait(TraitItem),
     // TraitAlias(Ident, Generics, GenericBounds),
     Impl(ImplItem),
     // MacCall(P<MacCall>),
@@ -43,7 +43,12 @@ pub enum ItemKind {
 
 impl Visitable for Item {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let kind = kind_check!(iter, ItemKind, Item, (Const, Fn, Enum, Struct, Impl));
+        let kind = kind_check!(
+            iter,
+            ItemKind,
+            Item,
+            (Const, Fn, Enum, Struct, Impl, Mod, Trait)
+        );
 
         Ok(Self { kind: kind? })
     }
@@ -66,7 +71,13 @@ impl Visitable for FnItem {
         let ident = using_iter.next()?.try_into()?;
         let generics = Generics::eat(&mut using_iter)?;
         let sig = FnSig::eat(&mut using_iter)?;
-        let body = Option::<BlockExpr>::eat(&mut using_iter)?;
+        let body = match using_iter.peek()?.token_type {
+            TokenType::Semi => {
+                using_iter.advance();
+                None
+            }
+            _ => Some(BlockExpr::eat(&mut using_iter)?),
+        };
 
         iter.update(using_iter);
         Ok(Self {
@@ -450,5 +461,96 @@ impl Visitable for AssocItem {
         let kind = kind_check!(iter, AssocItemKind, Item, (Const, Fn));
 
         Ok(Self { kind: kind? })
+    }
+}
+
+#[derive(Debug)]
+pub struct ModItem(pub Ident, pub ModKind);
+
+impl Visitable for ModItem {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Mod);
+        let ident = using_iter.next()?.try_into()?;
+        let kind = match using_iter.next()? {
+            Token {
+                token_type: TokenType::OpenCurly,
+                lexeme: _,
+                pos: _,
+            } => {
+                let mut items = Vec::new();
+                loop_until!(using_iter, TokenType::CloseCurly, {
+                    items.push(Box::new(Item::eat(&mut using_iter)?));
+                });
+                ModKind::Loaded(items, Inline::Yes)
+            }
+            Token {
+                token_type: TokenType::Semi,
+                lexeme: _,
+                pos: _,
+            } => ModKind::Unloaded,
+            Token {
+                token_type,
+                lexeme: _,
+                pos,
+            } => {
+                return Err(ASTError {
+                    kind: ASTErrorKind::MisMatch {
+                        expected: "{ or ;".to_owned(),
+                        actual: format!("{:?}", token_type.clone()),
+                    },
+                    pos: pos.clone(),
+                });
+            }
+        };
+
+        iter.update(using_iter);
+        Ok(Self(ident, kind))
+    }
+}
+
+#[derive(Debug)]
+pub enum ModKind {
+    Loaded(Vec<Box<Item>>, Inline),
+    Unloaded,
+}
+
+#[derive(Debug)]
+pub enum Inline {
+    Yes,
+    No,
+}
+
+#[derive(Debug)]
+pub struct TraitItem {
+    pub ident: Ident,
+    pub generics: Generics,
+    pub bounds: GenericBounds,
+    pub items: Vec<Box<AssocItem>>,
+}
+
+impl Visitable for TraitItem {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Trait);
+        let ident = using_iter.next()?.try_into()?;
+        let generics = Generics::eat(&mut using_iter)?;
+        let bounds = GenericBounds::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::OpenCurly);
+        let mut items = Vec::new();
+        loop_until!(using_iter, TokenType::CloseCurly, {
+            items.push(Box::new(AssocItem::eat(&mut using_iter)?));
+        });
+
+        iter.update(using_iter);
+        Ok(Self {
+            ident,
+            generics,
+            bounds,
+            items,
+        })
     }
 }

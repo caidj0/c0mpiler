@@ -21,7 +21,7 @@ pub struct Expr {
 #[derive(Debug)]
 pub enum ExprKind {
     Array(ArrayExpr),
-    // ConstBlock(AnonConst),
+    ConstBlock(ConstBlockExpr),
     Call(CallExpr),
     MethodCall(MethodCallExpr),
     Tup(TupExpr),
@@ -41,16 +41,14 @@ pub enum ExprKind {
     Field(FieldExpr),
     Index(IndexExpr),
     Range(RangeExpr),
-    // Underscore,
+    Underscore(UnderscoreExpr),
     Path(PathExpr),
     AddrOf(AddrOfExpr),
     Break(BreakExpr),
     Continue(ContinueExpr),
-    // Ret(Option<P<Expr>>),
+    Ret(RetExpr),
     Struct(StructExpr),
     Repeat(RepeatExpr),
-    // Paren(P<Expr>),
-    // Become(P<Expr>),
 }
 
 impl Visitable for Expr {
@@ -67,11 +65,11 @@ impl Expr {
             Expr,
             (
                 Struct, Path, Array, Repeat, Unary, Lit, Let, Block, If, Match, While, ForLoop,
-                Loop, Break, Continue, AddrOf, Tup
+                Loop, Break, Continue, AddrOf, Tup, ConstBlock, Underscore, Ret
             )
         );
 
-        kind = kind.or_else(|err| match Option::<RangeHelper>::eat(iter) {
+        kind = kind.or_else(|err| match RangeHelper::eat_with_priority(iter, 0) {
             Ok(Some(helper)) => Ok(ExprKind::Range(RangeExpr(None, helper.0, helper.1))),
             Ok(None) => Err(err),
             Err(err2) => Err(err.select(err2)),
@@ -91,7 +89,7 @@ impl Expr {
                     expr1 = ExprKind::Call(CallExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else if let Some(helper) = Option::<IndexHelper>::eat(iter)? {
                     expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = Option::<CastHelper>::eat(iter)? {
+                } else if let Some(helper) = CastHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Cast(CastExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Binary(BinaryExpr(
@@ -99,7 +97,7 @@ impl Expr {
                         Box::new(Expr { kind: expr1 }),
                         helper.1,
                     ))
-                } else if let Some(helper) = Option::<RangeHelper>::eat(iter)? {
+                } else if let Some(helper) = RangeHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Range(RangeExpr(
                         Some(Box::new(Expr { kind: expr1 })),
                         helper.0,
@@ -900,9 +898,15 @@ pub struct RangeExpr(
 #[derive(Debug)]
 pub struct RangeHelper(pub Option<Box<Expr>>, pub RangeLimits);
 
-impl Visitable for Option<RangeHelper> {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+impl RangeHelper {
+    const RANGE_PRIORITY: usize = 5;
+
+    pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
+
+        if Self::RANGE_PRIORITY < min_priority {
+            return Ok(None);
+        }
 
         let limits = match using_iter.next()?.token_type {
             TokenType::DotDot => RangeLimits::HalfOpen,
@@ -910,7 +914,7 @@ impl Visitable for Option<RangeHelper> {
             _ => return Ok(None),
         };
 
-        let expr2 = Expr::eat(&mut using_iter).ok();
+        let expr2 = Expr::eat_with_priority(&mut using_iter, Self::RANGE_PRIORITY + 1).ok();
 
         iter.update(using_iter);
         Ok(Some(RangeHelper(expr2.map(Box::new), limits)))
@@ -1121,11 +1125,13 @@ pub struct CastExpr(pub Box<Expr>, pub Box<Ty>);
 
 pub struct CastHelper(pub Box<Ty>);
 
-impl Visitable for Option<CastHelper> {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+impl CastHelper {
+    const CAST_PRIOTIRY: usize = 500;
+
+    pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
-        if using_iter.peek()?.token_type != TokenType::As {
+        if using_iter.peek()?.token_type != TokenType::As || Self::CAST_PRIOTIRY < min_priority {
             return Ok(None);
         }
         using_iter.advance();
@@ -1134,5 +1140,50 @@ impl Visitable for Option<CastHelper> {
 
         iter.update(using_iter);
         Ok(Some(CastHelper(Box::new(ty))))
+    }
+}
+
+#[derive(Debug)]
+pub struct ConstBlockExpr(pub AnonConst);
+
+impl Visitable for ConstBlockExpr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Const);
+        let block = BlockExpr::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self(AnonConst {
+            value: Box::new(Expr {
+                kind: ExprKind::Block(block),
+            }),
+        }))
+    }
+}
+
+#[derive(Debug)]
+pub struct UnderscoreExpr;
+
+impl Visitable for UnderscoreExpr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Underscor);
+        Ok(Self)
+    }
+}
+
+#[derive(Debug)]
+pub struct RetExpr(pub Option<Box<Expr>>);
+
+impl Visitable for RetExpr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Return);
+        // 暂时这样做
+        let expr = Expr::eat(&mut using_iter).ok();
+
+        iter.update(using_iter);
+        Ok(Self(expr.map(Box::new)))
     }
 }
