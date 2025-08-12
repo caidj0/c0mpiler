@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTResult, Ident, Visitable,
+        ASTError, ASTErrorKind, ASTResult, Ident, Visitable,
         expr::{AnonConst, BlockExpr, Expr},
         generic::Generics,
         pat::Pat,
@@ -154,8 +154,24 @@ impl Visitable for Param {
 
         let pat = Pat::eat(&mut using_iter)?;
 
-        match_keyword!(using_iter, TokenType::Colon);
-        let ty = Ty::eat(&mut using_iter)?;
+        let ty = if using_iter.peek()?.token_type != TokenType::Colon {
+            if pat.is_self() {
+                Ty {
+                    kind: TyKind::ImplicitSelf,
+                }
+            } else {
+                return Err(ASTError {
+                    kind: ASTErrorKind::MisMatch {
+                        expected: stringify!($e).to_owned(),
+                        actual: format!("{:?}", using_iter.peek()?.token_type),
+                    },
+                    pos: using_iter.peek()?.pos.clone(),
+                });
+            }
+        } else {
+            using_iter.advance();
+            Ty::eat(&mut using_iter)?
+        };
 
         iter.update(using_iter);
         Ok(Self {

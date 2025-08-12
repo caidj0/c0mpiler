@@ -1,15 +1,34 @@
 use crate::{
     ast::{
-        ASTResult, BindingMode, Ident, Visitable,
-        path::{Path, QSelf},
+        ASTResult, BindingMode, Ident, Mutability, Visitable,
+        path::{Path, PathSegment, QSelf},
     },
     kind_check,
     lexer::TokenIter,
+    match_keyword,
+    tokens::TokenType,
 };
 
 #[derive(Debug)]
 pub struct Pat {
     pub kind: PatKind,
+}
+
+impl Pat {
+    pub fn is_self(&self) -> bool {
+        match &self.kind {
+            PatKind::Path(PathPat(_, Path { segments })) => matches!(
+                &segments[..],
+                [PathSegment {
+                    ident: Ident::PathSegment(TokenType::LSelfType),
+                    args: _
+                }]
+            ),
+            PatKind::Ref(ref_pat) => ref_pat.0.is_self(),
+            PatKind::Ident(IdentPat(_, Ident::PathSegment(TokenType::LSelfType), _)) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -24,7 +43,7 @@ pub enum PatKind {
     // Tuple(ThinVec<P<Pat>>),
     // Box(P<Pat>),
     // Deref(P<Pat>),
-    // Ref(P<Pat>, Mutability),
+    Ref(RefPat),
     // Expr(P<Expr>),
     // Range(Option<P<Expr>>, Option<P<Expr>>, Spanned<RangeEnd>),
     // Slice(ThinVec<P<Pat>>),
@@ -38,16 +57,9 @@ pub enum PatKind {
 
 impl Visitable for Pat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let kind = kind_check!(iter, PatKind, Pat, (Path, Ident));
+        let kind = kind_check!(iter, PatKind, Pat, (Path, Ident, Ref));
 
         Ok(Self { kind: kind? })
-    }
-}
-
-impl Pat {
-    fn range_eat(_iter: &mut TokenIter) -> Option<Self> {
-        // TODO
-        None
     }
 }
 
@@ -58,12 +70,16 @@ impl Visitable for IdentPat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let bindmod = BindingMode::eat(&mut using_iter).unwrap_or_default();
+        let bindmod = BindingMode::eat(&mut using_iter)?;
         let ident = using_iter.next()?.try_into()?;
-        let range_pat = Pat::range_eat(&mut using_iter);
+        let pat = if using_iter.peek()?.token_type == TokenType::At {
+            Some(Pat::eat(&mut using_iter)?)
+        } else {
+            None
+        };
 
         iter.update(using_iter);
-        Ok(Self(bindmod, ident, range_pat.map(Box::new)))
+        Ok(Self(bindmod, ident, pat.map(Box::new)))
     }
 }
 
@@ -79,5 +95,21 @@ impl Visitable for PathPat {
 
         iter.update(using_iter);
         Ok(Self(qself.map(Box::new), path))
+    }
+}
+
+#[derive(Debug)]
+pub struct RefPat(pub Box<Pat>, pub Mutability);
+
+impl Visitable for RefPat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::And);
+        let m = Mutability::eat(&mut using_iter)?;
+        let pat = Pat::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self(Box::new(pat), m))
     }
 }

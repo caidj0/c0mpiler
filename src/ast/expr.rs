@@ -4,6 +4,7 @@ use crate::{
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::Stmt,
+        ty::Ty,
     },
     kind_check,
     lexer::{Token, TokenIter},
@@ -27,7 +28,7 @@ pub enum ExprKind {
     Binary(BinaryExpr),
     Unary(UnaryExpr),
     Lit(LitExpr),
-    // Cast(P<Expr>, P<Ty>),
+    Cast(CastExpr),
     Let(LetExpr),
     If(IfExpr),
     While(WhileExpr),
@@ -90,6 +91,8 @@ impl Expr {
                     expr1 = ExprKind::Call(CallExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else if let Some(helper) = Option::<IndexHelper>::eat(iter)? {
                     expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                } else if let Some(helper) = Option::<CastHelper>::eat(iter)? {
+                    expr1 = ExprKind::Cast(CastExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Binary(BinaryExpr(
                         helper.0,
@@ -1110,5 +1113,26 @@ impl Visitable for AddrOfExpr {
 
         iter.update(using_iter);
         Ok(Self(mutability, Box::new(expr)))
+    }
+}
+
+#[derive(Debug)]
+pub struct CastExpr(pub Box<Expr>, pub Box<Ty>);
+
+pub struct CastHelper(pub Box<Ty>);
+
+impl Visitable for Option<CastHelper> {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        if using_iter.peek()?.token_type != TokenType::As {
+            return Ok(None);
+        }
+        using_iter.advance();
+
+        let ty = Ty::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Some(CastHelper(Box::new(ty))))
     }
 }

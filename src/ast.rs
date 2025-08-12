@@ -135,21 +135,38 @@ macro_rules! kind_check {
 }
 
 #[derive(Debug)]
-pub struct BindingMode(pub Mutability); // 没有实现引用
+pub struct BindingMode(pub ByRef, pub Mutability);
 
 impl Visitable for BindingMode {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
-        match_keyword!(using_iter, TokenType::Mut);
+
+        let r = ByRef::eat(&mut using_iter)?;
+        let m = if matches!(r, ByRef::No) {
+            Mutability::eat(&mut using_iter)?
+        } else {
+            Mutability::Not
+        };
 
         iter.update(using_iter);
-        Ok(BindingMode(Mutability::Mut))
+        Ok(Self(r, m))
     }
 }
 
-impl Default for BindingMode {
-    fn default() -> Self {
-        Self(Mutability::Not)
+#[derive(Debug)]
+pub enum ByRef {
+    Yes(Mutability),
+    No,
+}
+
+impl Visitable for ByRef {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        if iter.peek()?.token_type == TokenType::Ref {
+            iter.advance();
+            Ok(Self::Yes(Mutability::eat(iter)?))
+        } else {
+            Ok(Self::No)
+        }
     }
 }
 
