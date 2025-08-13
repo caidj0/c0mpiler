@@ -1,11 +1,12 @@
 use crate::{
     ast::{
         ASTError, ASTResult, BindingMode, Eatable, Ident, Mutability, OptionEatable,
+        expr::{Expr, ExprKind, LitExpr, PathExpr, UnaryExpr},
         path::{Path, PathSegment, QSelf},
     },
     is_keyword, kind_check,
-    lexer::TokenIter,
-    loop_until, match_keyword, skip_keyword, skip_keyword_or_break,
+    lexer::{Token, TokenIter},
+    loop_until, match_keyword, peek_keyword, skip_keyword_or_break,
     tokens::TokenType,
 };
 
@@ -34,20 +35,21 @@ impl Pat {
 #[derive(Debug)]
 pub enum PatKind {
     // Missing,
-    // Wild,
+    Wild(WildPat),
     Ident(IdentPat),
     Struct(StructPat),
     // TupleStruct(Option<P<QSelf>>, Path, ThinVec<P<Pat>>),
     // Or(ThinVec<P<Pat>>),
     Path(PathPat),
-    // Tuple(ThinVec<P<Pat>>),
+    Tuple(TuplePat),
     // Box(P<Pat>),
     // Deref(P<Pat>),
     Ref(RefPat),
+    Lit(LitPat),
     // Expr(P<Expr>),
-    // Range(Option<P<Expr>>, Option<P<Expr>>, Spanned<RangeEnd>),
-    // Slice(ThinVec<P<Pat>>),
-    // Rest,
+    Range(RangePat),
+    Slice(SlicePat),
+    Rest(RestPat),
     // Never,
     // Guard(P<Pat>, P<Expr>),
     // Paren(P<Pat>),
@@ -57,7 +59,14 @@ pub enum PatKind {
 
 impl Eatable for Pat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let kind = kind_check!(iter, PatKind, Pat, (Struct, Path, Ident, Ref));
+        let kind = kind_check!(
+            iter,
+            PatKind,
+            Pat,
+            (
+                Struct, Range, Path, Ident, Ref, Tuple, Slice, Lit, Rest, Wild
+            )
+        );
 
         Ok(Self { kind: kind? })
     }
@@ -139,7 +148,7 @@ impl Eatable for StructPat {
                 TokenType::DotDot => {
                     using_iter.advance();
                     rest = PatFieldsRest::Rest;
-                    skip_keyword!(using_iter, TokenType::Comma);
+                    peek_keyword!(using_iter, TokenType::CloseCurly);
                     break;
                 }
                 _ => {
@@ -216,4 +225,149 @@ pub enum PatFieldsRest {
     Rest,
     // Recovered(ErrorGuaranteed),
     None,
+}
+
+#[derive(Debug)]
+pub struct TuplePat(pub Vec<Box<Pat>>);
+
+impl Eatable for TuplePat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenPar);
+
+        let mut pats = Vec::new();
+        loop_until!(using_iter, TokenType::ClosePar, {
+            pats.push(Box::new(Pat::eat(&mut using_iter)?));
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::ClosePar);
+        });
+
+        iter.update(using_iter);
+        Ok(Self(pats))
+    }
+}
+
+#[derive(Debug)]
+pub struct SlicePat(pub Vec<Box<Pat>>);
+
+impl Eatable for SlicePat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenSqu);
+
+        let mut pats = Vec::new();
+        loop_until!(using_iter, TokenType::CloseSqu, {
+            pats.push(Box::new(Pat::eat(&mut using_iter)?));
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseSqu);
+        });
+
+        iter.update(using_iter);
+        Ok(Self(pats))
+    }
+}
+
+#[derive(Debug)]
+pub struct RangePat(pub Option<Box<Expr>>, pub Option<Box<Expr>>, pub RangeEnd);
+
+impl Eatable for RangePat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let get_expr = |using_iter: &mut TokenIter<'_>| {
+            if let Ok(o) = LitPat::eat(using_iter) {
+                return Some(o.0);
+            }
+            if let Ok(path) = PathPat::eat(using_iter) {
+                return Some(Box::new(Expr {
+                    kind: ExprKind::Path(PathExpr(path.0, path.1)),
+                }));
+            }
+            None
+        };
+
+        let lit1 = get_expr(&mut using_iter);
+
+        let end = match using_iter.next()? {
+            Token {
+                token_type: TokenType::DotDot,
+                ..
+            } => RangeEnd::Excluded,
+            Token {
+                token_type: TokenType::DotDotEq,
+                ..
+            } => RangeEnd::Included,
+            t => {
+                return Err(ASTError {
+                    kind: crate::ast::ASTErrorKind::MisMatch {
+                        expected: "Comma".to_owned(),
+                        actual: format!("{:?}", t.token_type.clone()),
+                    },
+                    pos: t.pos.clone(),
+                });
+            }
+        };
+
+        let lit2 = get_expr(&mut using_iter);
+
+        iter.update(using_iter);
+        Ok(Self(lit1, lit2, end))
+    }
+}
+
+#[derive(Debug)]
+pub enum RangeEnd {
+    Included,
+    Excluded,
+}
+
+#[derive(Debug)]
+pub struct RestPat;
+
+impl Eatable for RestPat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::DotDot);
+
+        iter.update(using_iter);
+        Ok(Self)
+    }
+}
+
+#[derive(Debug)]
+pub struct LitPat(pub Box<Expr>);
+
+impl Eatable for LitPat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let is_negative = is_keyword!(using_iter, TokenType::Minus);
+        let literal = Box::new(Expr {
+            kind: ExprKind::Lit(LitExpr::eat(&mut using_iter)?),
+        });
+
+        iter.update(using_iter);
+        if is_negative {
+            Ok(Self(Box::new(Expr {
+                kind: ExprKind::Unary(UnaryExpr(crate::ast::expr::UnOp::Neg, literal)),
+            })))
+        } else {
+            Ok(Self(literal))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct WildPat;
+
+impl Eatable for WildPat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Underscor);
+
+        iter.update(using_iter);
+        std::unimplemented!()
+    }
 }

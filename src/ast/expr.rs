@@ -8,7 +8,7 @@ use crate::{
     },
     kind_check,
     lexer::{Token, TokenIter},
-    loop_until, match_keyword, match_prefix, skip_keyword, skip_keyword_or_break,
+    loop_until, match_keyword, match_prefix, peek_keyword, skip_keyword, skip_keyword_or_break,
     tokens::TokenType,
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -52,6 +52,12 @@ pub enum ExprKind {
 }
 
 impl Eatable for Expr {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        Self::eat_with_priority(iter, 0)
+    }
+}
+
+impl Expr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         Self::eat_with_priority(iter, 0)
     }
@@ -1009,7 +1015,7 @@ impl Eatable for StructExpr {
                     } else {
                         StructRest::Rest
                     };
-                    skip_keyword!(using_iter, TokenType::Comma);
+                    peek_keyword!(using_iter, TokenType::CloseCurly);
                     break;
                 }
                 _ => {

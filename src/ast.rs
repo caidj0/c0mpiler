@@ -98,6 +98,23 @@ macro_rules! match_keyword {
 }
 
 #[macro_export]
+macro_rules! peek_keyword {
+    ($iter:ident, $e:expr) => {{
+        let token = $iter.peek()?;
+
+        if token.token_type != $e {
+            return Err($crate::ast::ASTError {
+                kind: $crate::ast::ASTErrorKind::MisMatch {
+                    expected: stringify!($e).to_owned(),
+                    actual: format!("{:?}", token),
+                },
+                pos: token.pos.clone(),
+            });
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! is_keyword {
     ($iter:ident, $e:expr) => {{
         if $iter.peek()?.token_type == $e {
