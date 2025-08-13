@@ -1,12 +1,13 @@
 use crate::{
     ast::{
-        ASTResult, Mutability, OptionEatable, Eatable,
+        ASTError, ASTResult, Eatable, Mutability, OptionEatable,
         expr::AnonConst,
+        generic::GenericBounds,
         path::{Path, QSelf},
     },
-    kind_check,
+    is_keyword, kind_check,
     lexer::TokenIter,
-    match_keyword,
+    loop_until, match_keyword, skip_keyword_or_break,
     tokens::TokenType,
 };
 
@@ -25,13 +26,13 @@ pub enum TyKind {
     // FnPtr(P<FnPtrTy>),
     // UnsafeBinder(P<UnsafeBinderTy>),
     // Never,
-    // Tup(ThinVec<P<Ty>>),
+    Tup(TupTy),
     Path(PathTy),
-    // TraitObject(GenericBounds, TraitObjectSyntax),
-    // ImplTrait(NodeId, GenericBounds),
+    TraitObject(TraitObjectTy),
+    ImplTrait(ImplTraitTy),
     // Paren(P<Ty>),
     // Typeof(AnonConst),
-    // Infer,
+    Infer(InferTy),
     ImplicitSelf,
     // MacCall(P<MacCall>),
     // CVarArgs,
@@ -42,7 +43,12 @@ pub enum TyKind {
 
 impl Eatable for Ty {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let kind = kind_check!(iter, TyKind, Ty, (Path, Array, Slice, Ref));
+        let kind = kind_check!(
+            iter,
+            TyKind,
+            Ty,
+            (Path, Array, Slice, Ref, Tup, TraitObject, ImplTrait, Infer)
+        );
 
         Ok(Ty { kind: kind? })
     }
@@ -136,5 +142,81 @@ impl Eatable for SliceTy {
 
         iter.update(using_iter);
         Ok(Self(Box::new(ty)))
+    }
+}
+
+#[derive(Debug)]
+pub struct TupTy(pub Vec<Box<Ty>>);
+
+impl Eatable for TupTy {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::OpenPar);
+
+        let mut ties = Vec::new();
+
+        loop_until!(using_iter, TokenType::ClosePar, {
+            ties.push(Box::new(Ty::eat(&mut using_iter)?));
+
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseCurly);
+        });
+
+        iter.update(using_iter);
+        Ok(Self(ties))
+    }
+}
+
+#[derive(Debug)]
+pub struct TraitObjectTy(pub GenericBounds);
+
+impl Eatable for TraitObjectTy {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let t = using_iter.peek()?;
+        let has_dyn = is_keyword!(using_iter, TokenType::Dyn);
+        let bounds = GenericBounds::eat(&mut using_iter)?;
+        if !has_dyn && bounds.0.len() == 1 {
+            return Err(ASTError {
+                kind: crate::ast::ASTErrorKind::MisMatch {
+                    expected: "dyn".to_owned(),
+                    actual: format!("{:?}", t.token_type.clone()),
+                },
+                pos: t.pos.clone(),
+            });
+        }
+
+        iter.update(using_iter);
+        Ok(Self(bounds))
+    }
+}
+
+#[derive(Debug)]
+pub struct ImplTraitTy(pub GenericBounds);
+
+impl Eatable for ImplTraitTy {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Impl);
+        let bounds = GenericBounds::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self(bounds))
+    }
+}
+
+#[derive(Debug)]
+pub struct InferTy;
+
+impl Eatable for InferTy {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        match_keyword!(using_iter, TokenType::Underscor);
+
+        iter.update(using_iter);
+        Ok(Self)
     }
 }

@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTResult, Ident, Mutability, OptionEatable, Eatable,
+        ASTError, ASTResult, Eatable, Ident, Mutability, OptionEatable,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::Stmt,
@@ -8,7 +8,7 @@ use crate::{
     },
     kind_check,
     lexer::{Token, TokenIter},
-    loop_until, match_keyword, match_prefix, skip_keyword,
+    loop_until, match_keyword, match_prefix, skip_keyword, skip_keyword_or_break,
     tokens::TokenType,
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -485,7 +485,7 @@ impl Eatable for ArrayExpr {
 
         loop_until!(using_iter, TokenType::CloseSqu, {
             exprs.push(Box::new(Expr::eat(&mut using_iter)?));
-            skip_keyword!(using_iter, TokenType::Comma);
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseSqu);
         });
 
         iter.update(using_iter);
@@ -634,7 +634,7 @@ impl OptionEatable for CallHelper {
         loop_until!(using_iter, TokenType::ClosePar, {
             exprs.push(Box::new(Expr::eat(&mut using_iter)?));
 
-            skip_keyword!(using_iter, TokenType::Comma);
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::ClosePar);
         });
 
         iter.update(using_iter);
@@ -653,7 +653,7 @@ impl Eatable for TupExpr {
         loop_until!(using_iter, TokenType::ClosePar, {
             exprs.push(Box::new(Expr::eat(&mut using_iter)?));
 
-            skip_keyword!(using_iter, TokenType::Comma);
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::ClosePar);
         });
 
         iter.update(using_iter);
@@ -1009,13 +1009,15 @@ impl Eatable for StructExpr {
                     } else {
                         StructRest::Rest
                     };
+                    skip_keyword!(using_iter, TokenType::Comma);
+                    break;
                 }
                 _ => {
                     fields.push(ExprField::eat(&mut using_iter)?);
                 }
             }
 
-            skip_keyword!(using_iter, TokenType::Comma);
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseCurly);
         });
 
         iter.update(using_iter);

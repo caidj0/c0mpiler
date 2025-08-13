@@ -1,15 +1,15 @@
 use crate::{
     ast::{
-        ASTError, ASTErrorKind, ASTResult, Ident, OptionEatable, Eatable,
+        ASTError, ASTErrorKind, ASTResult, Eatable, Ident, OptionEatable,
         expr::{AnonConst, BlockExpr, Expr},
         generic::{GenericBounds, Generics},
         pat::Pat,
         path::Path,
         ty::{Ty, TyKind},
     },
-    kind_check,
+    is_keyword, kind_check,
     lexer::{Token, TokenIter},
-    loop_until, match_keyword, match_prefix, skip_keyword,
+    loop_until, match_keyword, match_prefix, skip_keyword_or_break,
     tokens::TokenType,
 };
 
@@ -118,7 +118,7 @@ impl Eatable for FnDecl {
 
         loop_until!(using_iter, TokenType::ClosePar, {
             inputs.push(Param::eat(&mut using_iter)?);
-            skip_keyword!(using_iter, TokenType::Comma);
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::ClosePar);
         });
 
         let output = FnRetTy::try_eat(&mut using_iter)?.unwrap_or_default();
@@ -246,7 +246,7 @@ impl Eatable for EnumItem {
 
         loop_until!(using_iter, TokenType::CloseCurly, {
             variants.push(Variant::eat(&mut using_iter)?);
-            skip_keyword!(using_iter, TokenType::Comma);
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseCurly);
         });
 
         iter.update(using_iter);
@@ -304,7 +304,7 @@ impl Eatable for VariantData {
 
                 loop_until!(using_iter, TokenType::CloseCurly, {
                     fields.push(FieldDef::eat_with_ident(&mut using_iter, true)?);
-                    skip_keyword!(using_iter, TokenType::Comma);
+                    skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseCurly);
                 });
 
                 Self::Struct { fields }
@@ -316,7 +316,7 @@ impl Eatable for VariantData {
 
                 loop_until!(using_iter, TokenType::ClosePar, {
                     fields.push(FieldDef::eat_with_ident(&mut using_iter, false)?);
-                    skip_keyword!(using_iter, TokenType::Comma);
+                    skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::ClosePar);
                 });
 
                 Self::Tuple(fields)
@@ -537,7 +537,11 @@ impl Eatable for TraitItem {
         match_keyword!(using_iter, TokenType::Trait);
         let ident = using_iter.next()?.try_into()?;
         let generics = Generics::eat(&mut using_iter)?;
-        let bounds = GenericBounds::eat(&mut using_iter)?;
+        let bounds = if is_keyword!(using_iter, TokenType::Colon) {
+            GenericBounds::eat(&mut using_iter)?
+        } else {
+            GenericBounds::default()
+        };
 
         match_keyword!(using_iter, TokenType::OpenCurly);
         let mut items = Vec::new();

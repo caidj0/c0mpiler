@@ -1,6 +1,6 @@
 use crate::{
-    ast::{ASTResult, OptionEatable, Eatable, ty::Ty},
-    loop_until, match_prefix, skip_keyword,
+    ast::{ASTResult, Eatable, OptionEatable, path::Path, ty::Ty},
+    loop_until, loop_while, match_prefix, skip_keyword_or_break,
     tokens::TokenType,
 };
 
@@ -42,7 +42,7 @@ impl OptionEatable for AngleBracketedArgs {
         loop_until!(using_iter, TokenType::Gt, {
             args.push(AngleBracketedArg::eat(&mut using_iter)?);
 
-            skip_keyword!(using_iter, TokenType::Comma);
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::Gt);
         });
 
         iter.update(using_iter);
@@ -98,19 +98,71 @@ impl Eatable for Generics {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct GenericBounds(pub Vec<GenericBound>);
 
 impl Eatable for GenericBounds {
-    fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        // TODO
-        Ok(GenericBounds(vec![]))
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let mut bounds = Vec::new();
+        bounds.push(GenericBound::eat(&mut using_iter)?);
+        loop_while!(using_iter, TokenType::Plus, {
+            bounds.push(GenericBound::eat(&mut using_iter)?);
+        });
+
+        iter.update(using_iter);
+        Ok(GenericBounds(bounds))
     }
 }
 
 #[derive(Debug)]
 pub enum GenericBound {
-    // Trait(PolyTraitRef),
+    Trait(PolyTraitRef),
     // Outlives(Lifetime),
     // Use(ThinVec<PreciseCapturingArg>, Span),
+}
+
+impl Eatable for GenericBound {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let poly_trait_ref = PolyTraitRef::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self::Trait(poly_trait_ref))
+    }
+}
+
+#[derive(Debug)]
+pub struct PolyTraitRef {
+    // pub bound_generic_params: Vec<GenericParam>,
+    pub trait_ref: TraitRef,
+}
+
+impl Eatable for PolyTraitRef {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let trait_ref = TraitRef::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self { trait_ref })
+    }
+}
+
+#[derive(Debug)]
+pub struct TraitRef {
+    pub path: Path,
+}
+
+impl Eatable for TraitRef {
+    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let path = Path::eat(&mut using_iter)?;
+
+        iter.update(using_iter);
+        Ok(Self { path })
+    }
 }

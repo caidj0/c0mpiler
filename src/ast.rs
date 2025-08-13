@@ -73,6 +73,7 @@ pub enum ASTErrorKind {
     EOF,
     MisMatch { expected: String, actual: String },
     LiteralError,
+    MisMatchPat,
 }
 
 pub type ASTResult<T> = Result<T, ASTError>;
@@ -97,6 +98,18 @@ macro_rules! match_keyword {
 }
 
 #[macro_export]
+macro_rules! is_keyword {
+    ($iter:ident, $e:expr) => {{
+        if $iter.peek()?.token_type == $e {
+            $iter.advance();
+            true
+        } else {
+            false
+        }
+    }};
+}
+
+#[macro_export]
 macro_rules! match_prefix {
     ($iter:ident, $e:expr) => {{
         let token = $iter.peek()?;
@@ -107,6 +120,26 @@ macro_rules! match_prefix {
             return Ok(None);
         }
     }};
+}
+
+#[macro_export]
+macro_rules! skip_keyword_or_break {
+    ($iter:ident, $e:expr, $fi:expr) => {
+        let token = $iter.peek()?;
+        if token.token_type == $e {
+            $iter.advance();
+        } else if token.token_type == $fi {
+            break;
+        } else {
+            return Err($crate::ast::ASTError {
+                kind: $crate::ast::ASTErrorKind::MisMatch {
+                    expected: stringify!($e $fi).to_owned(),
+                    actual: format!("{:?}", token),
+                },
+                pos: token.pos.clone(),
+            });
+        }
+    };
 }
 
 #[macro_export]
@@ -123,6 +156,16 @@ macro_rules! loop_until {
     ($iter:ident, $y:expr, $b:block) => {
         while $iter.peek()?.token_type != $y $b;
         $iter.advance();
+    };
+}
+
+#[macro_export]
+macro_rules! loop_while {
+    ($iter:ident, $y:expr, $b:block) => {
+        while $iter.peek()?.token_type == $y {
+            $iter.advance();
+            $b
+        }
     };
 }
 

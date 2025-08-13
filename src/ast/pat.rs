@@ -1,11 +1,11 @@
 use crate::{
     ast::{
-        ASTResult, BindingMode, Ident, Mutability, OptionEatable, Eatable,
+        ASTError, ASTResult, BindingMode, Eatable, Ident, Mutability, OptionEatable,
         path::{Path, PathSegment, QSelf},
     },
-    kind_check,
+    is_keyword, kind_check,
     lexer::TokenIter,
-    match_keyword,
+    loop_until, match_keyword, skip_keyword, skip_keyword_or_break,
     tokens::TokenType,
 };
 
@@ -36,7 +36,7 @@ pub enum PatKind {
     // Missing,
     // Wild,
     Ident(IdentPat),
-    // Struct(Option<P<QSelf>>, Path, ThinVec<PatField>, PatFieldsRest),
+    Struct(StructPat),
     // TupleStruct(Option<P<QSelf>>, Path, ThinVec<P<Pat>>),
     // Or(ThinVec<P<Pat>>),
     Path(PathPat),
@@ -57,7 +57,7 @@ pub enum PatKind {
 
 impl Eatable for Pat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let kind = kind_check!(iter, PatKind, Pat, (Path, Ident, Ref));
+        let kind = kind_check!(iter, PatKind, Pat, (Struct, Path, Ident, Ref));
 
         Ok(Self { kind: kind? })
     }
@@ -112,4 +112,108 @@ impl Eatable for RefPat {
         iter.update(using_iter);
         Ok(Self(Box::new(pat), m))
     }
+}
+
+#[derive(Debug)]
+pub struct StructPat(
+    pub Option<Box<QSelf>>,
+    pub Path,
+    pub Vec<PatField>,
+    pub PatFieldsRest,
+);
+
+impl Eatable for StructPat {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let qself = QSelf::try_eat(&mut using_iter)?;
+        let path = Path::eat(&mut using_iter)?;
+
+        match_keyword!(using_iter, TokenType::OpenCurly);
+
+        let mut fields = Vec::new();
+        let mut rest = PatFieldsRest::None;
+
+        loop_until!(using_iter, TokenType::CloseCurly, {
+            match using_iter.peek()?.token_type {
+                TokenType::DotDot => {
+                    using_iter.advance();
+                    rest = PatFieldsRest::Rest;
+                    skip_keyword!(using_iter, TokenType::Comma);
+                    break;
+                }
+                _ => {
+                    fields.push(PatField::eat(&mut using_iter)?);
+                }
+            }
+
+            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseCurly);
+        });
+
+        iter.update(using_iter);
+        Ok(Self(qself.map(Box::new), path, fields, rest))
+    }
+}
+
+#[derive(Debug)]
+pub struct PatField {
+    pub ident: Ident,
+    pub pat: Box<Pat>,
+    pub is_shorthand: bool,
+}
+
+impl Eatable for PatField {
+    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+
+        let pat = Pat::eat(&mut using_iter)?;
+
+        let err = ASTError {
+            kind: crate::ast::ASTErrorKind::MisMatchPat,
+            pos: using_iter.peek()?.pos.clone(),
+        };
+
+        let (ident, pat, is_shorthand) = if is_keyword!(using_iter, TokenType::Colon) {
+            (
+                match pat.kind {
+                    PatKind::Path(PathPat(None, Path { ref segments })) => match &segments[..] {
+                        [PathSegment { ident, args: None }] => ident.clone(),
+                        _ => return Err(err),
+                    },
+                    _ => return Err(err),
+                },
+                Pat::eat(&mut using_iter)?,
+                false,
+            )
+        } else {
+            (
+                match pat.kind {
+                    PatKind::Ident(IdentPat(_, ref ident, _)) => ident.clone(),
+                    PatKind::Path(PathPat(None, Path { ref segments })) => match &segments[..] {
+                        [PathSegment { ident, args: None }] => ident.clone(),
+                        _ => return Err(err),
+                    },
+                    _ => {
+                        return Err(err);
+                    }
+                },
+                pat,
+                true,
+            )
+        };
+
+        iter.update(using_iter);
+        Ok(Self {
+            ident,
+            pat: Box::new(pat),
+            is_shorthand,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub enum PatFieldsRest {
+    Rest,
+    // Recovered(ErrorGuaranteed),
+    None,
 }

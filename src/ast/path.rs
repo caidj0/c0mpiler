@@ -1,9 +1,9 @@
 use crate::{
-    ast::{ASTResult, Ident, OptionEatable, Eatable, generic::GenericArgs, ty::Ty},
+    ast::{ASTResult, Eatable, Ident, OptionEatable, generic::GenericArgs, ty::Ty},
     tokens::TokenType,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Path {
     pub segments: Vec<PathSegment>,
 }
