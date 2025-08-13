@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTResult, Mutability, TryVisitable, Visitable,
+        ASTResult, Mutability, OptionEatable, Eatable,
         expr::AnonConst,
         path::{Path, QSelf},
     },
@@ -40,7 +40,7 @@ pub enum TyKind {
     // Err(ErrorGuaranteed),
 }
 
-impl Visitable for Ty {
+impl Eatable for Ty {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let kind = kind_check!(iter, TyKind, Ty, (Path, Array, Slice, Ref));
 
@@ -51,7 +51,7 @@ impl Visitable for Ty {
 #[derive(Debug)]
 pub struct PathTy(pub Option<Box<QSelf>>, pub Path);
 
-impl Visitable for PathTy {
+impl Eatable for PathTy {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -66,7 +66,7 @@ impl Visitable for PathTy {
 #[derive(Debug)]
 pub struct ArrayTy(pub Box<Ty>, pub AnonConst);
 
-impl Visitable for ArrayTy {
+impl Eatable for ArrayTy {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -91,7 +91,7 @@ pub struct MutTy {
     pub mutbl: Mutability,
 }
 
-impl Visitable for MutTy {
+impl Eatable for MutTy {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -109,7 +109,7 @@ impl Visitable for MutTy {
 #[derive(Debug)]
 pub struct RefTy(pub MutTy);
 
-impl Visitable for RefTy {
+impl Eatable for RefTy {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -124,7 +124,7 @@ impl Visitable for RefTy {
 #[derive(Debug)]
 pub struct SliceTy(pub Box<Ty>);
 
-impl Visitable for SliceTy {
+impl Eatable for SliceTy {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 

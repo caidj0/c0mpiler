@@ -16,7 +16,7 @@ use crate::{
     tokens::TokenType,
 };
 
-pub trait Visitable: Sized {
+pub trait Eatable: Sized {
     #[allow(unused_variables, unused_mut)]
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
@@ -28,7 +28,7 @@ pub trait Visitable: Sized {
     }
 }
 
-pub trait TryVisitable: Sized {
+pub trait OptionEatable: Sized {
     #[allow(unused_variables, unused_mut)]
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
@@ -149,7 +149,7 @@ macro_rules! kind_check {
 #[derive(Debug)]
 pub struct BindingMode(pub ByRef, pub Mutability);
 
-impl Visitable for BindingMode {
+impl Eatable for BindingMode {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -171,7 +171,7 @@ pub enum ByRef {
     No,
 }
 
-impl Visitable for ByRef {
+impl Eatable for ByRef {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         if iter.peek()?.token_type == TokenType::Ref {
             iter.advance();
@@ -188,7 +188,7 @@ pub enum Mutability {
     Mut,
 }
 
-impl Visitable for Mutability {
+impl Eatable for Mutability {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         if iter.peek()?.token_type == TokenType::Mut {
             iter.advance();
@@ -251,7 +251,7 @@ pub struct Crate {
     pub items: Vec<Box<Item>>,
 }
 
-impl Visitable for Crate {
+impl Eatable for Crate {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 

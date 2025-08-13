@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTResult, BindingMode, Ident, Mutability, TryVisitable, Visitable,
+        ASTResult, BindingMode, Ident, Mutability, OptionEatable, Eatable,
         path::{Path, PathSegment, QSelf},
     },
     kind_check,
@@ -55,7 +55,7 @@ pub enum PatKind {
     // Err(ErrorGuaranteed),
 }
 
-impl Visitable for Pat {
+impl Eatable for Pat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let kind = kind_check!(iter, PatKind, Pat, (Path, Ident, Ref));
 
@@ -66,7 +66,7 @@ impl Visitable for Pat {
 #[derive(Debug)]
 pub struct IdentPat(pub BindingMode, pub Ident, pub Option<Box<Pat>>);
 
-impl Visitable for IdentPat {
+impl Eatable for IdentPat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -86,7 +86,7 @@ impl Visitable for IdentPat {
 #[derive(Debug)]
 pub struct PathPat(pub Option<Box<QSelf>>, pub Path);
 
-impl Visitable for PathPat {
+impl Eatable for PathPat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -101,7 +101,7 @@ impl Visitable for PathPat {
 #[derive(Debug)]
 pub struct RefPat(pub Box<Pat>, pub Mutability);
 
-impl Visitable for RefPat {
+impl Eatable for RefPat {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 

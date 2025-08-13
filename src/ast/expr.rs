@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTResult, Ident, Mutability, TryVisitable, Visitable,
+        ASTError, ASTResult, Ident, Mutability, OptionEatable, Eatable,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::Stmt,
@@ -51,7 +51,7 @@ pub enum ExprKind {
     Repeat(RepeatExpr),
 }
 
-impl Visitable for Expr {
+impl Eatable for Expr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         Self::eat_with_priority(iter, 0)
     }
@@ -152,7 +152,7 @@ pub enum LitKind {
     CStrRaw(u8),
 }
 
-impl Visitable for LitExpr {
+impl Eatable for LitExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -321,7 +321,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 #[derive(Debug)]
 pub struct UnaryExpr(pub UnOp, pub Box<Expr>);
 
-impl Visitable for UnaryExpr {
+impl Eatable for UnaryExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -456,7 +456,7 @@ impl<'a> TryInto<BinOp> for &Token<'a> {
 #[derive(Debug)]
 pub struct LetExpr(pub Box<Pat>, pub Box<Expr>);
 
-impl Visitable for LetExpr {
+impl Eatable for LetExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -476,7 +476,7 @@ impl Visitable for LetExpr {
 #[derive(Debug)]
 pub struct ArrayExpr(pub Vec<Box<Expr>>);
 
-impl Visitable for ArrayExpr {
+impl Eatable for ArrayExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
         match_keyword!(using_iter, TokenType::OpenSqu);
@@ -499,7 +499,7 @@ pub struct AnonConst {
     pub value: Box<Expr>,
 }
 
-impl Visitable for AnonConst {
+impl Eatable for AnonConst {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         Ok(Self {
             value: Box::new(Expr::eat(iter)?),
@@ -510,7 +510,7 @@ impl Visitable for AnonConst {
 #[derive(Debug)]
 pub struct RepeatExpr(pub Box<Expr>, pub AnonConst);
 
-impl Visitable for RepeatExpr {
+impl Eatable for RepeatExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -534,7 +534,7 @@ pub struct BlockExpr {
     pub stmts: Vec<Stmt>,
 }
 
-impl Visitable for BlockExpr {
+impl Eatable for BlockExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -551,7 +551,7 @@ impl Visitable for BlockExpr {
     }
 }
 
-impl TryVisitable for BlockExpr {
+impl OptionEatable for BlockExpr {
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         if iter.peek()?.token_type == TokenType::OpenCurly {
             BlockExpr::eat(iter).map(Some)
@@ -567,7 +567,7 @@ pub struct IndexExpr(pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct IndexHelper(pub Box<Expr>);
 
-impl TryVisitable for IndexHelper {
+impl OptionEatable for IndexHelper {
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
@@ -585,7 +585,7 @@ impl TryVisitable for IndexHelper {
 #[derive(Debug)]
 pub struct PathExpr(pub Option<Box<QSelf>>, pub Path);
 
-impl Visitable for PathExpr {
+impl Eatable for PathExpr {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -604,7 +604,7 @@ pub struct AssignExpr(pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignHelper(pub Box<Expr>);
 
-impl TryVisitable for AssignHelper {
+impl OptionEatable for AssignHelper {
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
@@ -623,7 +623,7 @@ pub struct CallExpr(pub Box<Expr>, pub Vec<Box<Expr>>);
 pub struct TupExpr(pub Vec<Box<Expr>>);
 pub type CallHelper = TupExpr;
 
-impl TryVisitable for CallHelper {
+impl OptionEatable for CallHelper {
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
@@ -642,7 +642,7 @@ impl TryVisitable for CallHelper {
     }
 }
 
-impl Visitable for TupExpr {
+impl Eatable for TupExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -667,7 +667,7 @@ pub struct FieldExpr(pub Box<Expr>, pub Ident);
 #[derive(Debug)]
 pub struct FieldHelper(pub Ident);
 
-impl Visitable for FieldHelper {
+impl Eatable for FieldHelper {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -693,7 +693,7 @@ pub struct MethodCallHelper {
     pub args: Vec<Box<Expr>>,
 }
 
-impl Visitable for MethodCallHelper {
+impl Eatable for MethodCallHelper {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -719,7 +719,7 @@ impl Visitable for MethodCallHelper {
 #[derive(Debug)]
 pub struct IfExpr(pub Box<Expr>, pub Box<BlockExpr>, pub Option<Box<Expr>>);
 
-impl Visitable for IfExpr {
+impl Eatable for IfExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -759,7 +759,7 @@ impl Visitable for IfExpr {
 #[derive(Debug)]
 pub struct MatchExpr(pub Box<Expr>, pub Vec<Arm>);
 
-impl Visitable for MatchExpr {
+impl Eatable for MatchExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -802,7 +802,7 @@ pub struct Arm {
     pub body: Box<Expr>,
 }
 
-impl Visitable for Arm {
+impl Eatable for Arm {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -832,7 +832,7 @@ pub struct ForLoopExpr {
     pub body: Box<BlockExpr>,
 }
 
-impl Visitable for ForLoopExpr {
+impl Eatable for ForLoopExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -854,7 +854,7 @@ impl Visitable for ForLoopExpr {
 #[derive(Debug)]
 pub struct LoopExpr(pub Box<BlockExpr>);
 
-impl Visitable for LoopExpr {
+impl Eatable for LoopExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -869,7 +869,7 @@ impl Visitable for LoopExpr {
 #[derive(Debug)]
 pub struct WhileExpr(pub Box<Expr>, pub Box<BlockExpr>);
 
-impl Visitable for WhileExpr {
+impl Eatable for WhileExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -927,7 +927,7 @@ pub struct AssignOpExpr(pub AssignOp, pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignOpHelper(pub AssignOp, pub Box<Expr>);
 
-impl TryVisitable for AssignOpHelper {
+impl OptionEatable for AssignOpHelper {
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
@@ -985,7 +985,7 @@ pub struct StructExpr {
     pub rest: StructRest,
 }
 
-impl Visitable for StructExpr {
+impl Eatable for StructExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -1035,7 +1035,7 @@ pub struct ExprField {
     pub is_shorthand: bool,
 }
 
-impl Visitable for ExprField {
+impl Eatable for ExprField {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -1067,7 +1067,7 @@ pub enum StructRest {
 #[derive(Debug)]
 pub struct BreakExpr(pub Option<Box<Expr>>);
 
-impl Visitable for BreakExpr {
+impl Eatable for BreakExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -1083,7 +1083,7 @@ impl Visitable for BreakExpr {
 #[derive(Debug)]
 pub struct ContinueExpr;
 
-impl Visitable for ContinueExpr {
+impl Eatable for ContinueExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -1097,7 +1097,7 @@ impl Visitable for ContinueExpr {
 #[derive(Debug)]
 pub struct AddrOfExpr(pub Mutability, pub Box<Expr>);
 
-impl Visitable for AddrOfExpr {
+impl Eatable for AddrOfExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -1140,7 +1140,7 @@ impl CastHelper {
 #[derive(Debug)]
 pub struct ConstBlockExpr(pub AnonConst);
 
-impl Visitable for ConstBlockExpr {
+impl Eatable for ConstBlockExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -1159,7 +1159,7 @@ impl Visitable for ConstBlockExpr {
 #[derive(Debug)]
 pub struct UnderscoreExpr;
 
-impl Visitable for UnderscoreExpr {
+impl Eatable for UnderscoreExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::Underscor);
         Ok(Self)
@@ -1169,7 +1169,7 @@ impl Visitable for UnderscoreExpr {
 #[derive(Debug)]
 pub struct RetExpr(pub Option<Box<Expr>>);
 
-impl Visitable for RetExpr {
+impl Eatable for RetExpr {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 

@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ASTResult, Visitable, expr::Expr, item::Item, pat::Pat, ty::Ty},
+    ast::{ASTResult, Eatable, expr::Expr, item::Item, pat::Pat, ty::Ty},
     match_keyword,
     tokens::TokenType,
 };
@@ -19,7 +19,7 @@ pub enum StmtKind {
     // MacCall(P<MacCallStmt>),
 }
 
-impl Visitable for Stmt {
+impl Eatable for Stmt {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut kind = Err(crate::ast::ASTError::default());
         kind = kind.or_else(|err| {
@@ -66,7 +66,7 @@ pub struct LocalStmt {
     pub kind: LocalKind,
 }
 
-impl Visitable for LocalStmt {
+impl Eatable for LocalStmt {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -108,7 +108,7 @@ pub enum LocalKind {
 #[derive(Debug)]
 pub struct EmptyStmt;
 
-impl Visitable for EmptyStmt {
+impl Eatable for EmptyStmt {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::Semi);
         Ok(Self)

@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ASTResult, TryVisitable, Visitable, ty::Ty},
+    ast::{ASTResult, OptionEatable, Eatable, ty::Ty},
     loop_until, match_prefix, skip_keyword,
     tokens::TokenType,
 };
@@ -12,7 +12,7 @@ pub enum GenericArgs {
     // ParenthesizedElided(Span),
 }
 
-impl TryVisitable for GenericArgs {
+impl OptionEatable for GenericArgs {
     fn try_eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
@@ -31,7 +31,7 @@ pub struct AngleBracketedArgs {
     pub args: Vec<AngleBracketedArg>,
 }
 
-impl TryVisitable for AngleBracketedArgs {
+impl OptionEatable for AngleBracketedArgs {
     fn try_eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
@@ -56,7 +56,7 @@ pub enum AngleBracketedArg {
     // Constraint(AssocItemConstraint),
 }
 
-impl Visitable for AngleBracketedArg {
+impl Eatable for AngleBracketedArg {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -74,7 +74,7 @@ pub enum GenericArg {
     // Const(AnonConst),
 }
 
-impl Visitable for GenericArg {
+impl Eatable for GenericArg {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -91,7 +91,7 @@ pub struct Generics {
     // pub where_clause: WhereClause,
 }
 
-impl Visitable for Generics {
+impl Eatable for Generics {
     fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         // TODO
         Ok(Generics::default())
@@ -101,7 +101,7 @@ impl Visitable for Generics {
 #[derive(Debug)]
 pub struct GenericBounds(pub Vec<GenericBound>);
 
-impl Visitable for GenericBounds {
+impl Eatable for GenericBounds {
     fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         // TODO
         Ok(GenericBounds(vec![]))

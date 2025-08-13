@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTErrorKind, ASTResult, Ident, TryVisitable, Visitable,
+        ASTError, ASTErrorKind, ASTResult, Ident, OptionEatable, Eatable,
         expr::{AnonConst, BlockExpr, Expr},
         generic::{GenericBounds, Generics},
         pat::Pat,
@@ -41,7 +41,7 @@ pub enum ItemKind {
     // DelegationMac(Box<DelegationMac>),
 }
 
-impl Visitable for Item {
+impl Eatable for Item {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let kind = kind_check!(
             iter,
@@ -62,7 +62,7 @@ pub struct FnItem {
     pub body: Option<Box<BlockExpr>>,
 }
 
-impl Visitable for FnItem {
+impl Eatable for FnItem {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -94,7 +94,7 @@ pub struct FnSig {
     pub decl: Box<FnDecl>,
 }
 
-impl Visitable for FnSig {
+impl Eatable for FnSig {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         Ok(Self {
             decl: Box::new(FnDecl::eat(iter)?),
@@ -108,7 +108,7 @@ pub struct FnDecl {
     pub output: FnRetTy,
 }
 
-impl Visitable for FnDecl {
+impl Eatable for FnDecl {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -140,7 +140,7 @@ impl Default for FnRetTy {
     }
 }
 
-impl TryVisitable for FnRetTy {
+impl OptionEatable for FnRetTy {
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
@@ -159,7 +159,7 @@ pub struct Param {
     pub pat: Box<Pat>,
 }
 
-impl Visitable for Param {
+impl Eatable for Param {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -199,7 +199,7 @@ pub struct ConstItem {
     pub expr: Option<Box<Expr>>,
 }
 
-impl Visitable for ConstItem {
+impl Eatable for ConstItem {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -233,7 +233,7 @@ impl Visitable for ConstItem {
 #[derive(Debug)]
 pub struct EnumItem(pub Ident, pub Generics, pub Vec<Variant>);
 
-impl Visitable for EnumItem {
+impl Eatable for EnumItem {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -261,7 +261,7 @@ pub struct Variant {
     pub disr_expr: Option<AnonConst>,
 }
 
-impl Visitable for Variant {
+impl Eatable for Variant {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -292,7 +292,7 @@ pub enum VariantData {
     Unit,
 }
 
-impl Visitable for VariantData {
+impl Eatable for VariantData {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -335,7 +335,7 @@ pub struct FieldDef {
     pub ty: Box<Ty>,
 }
 
-impl Visitable for FieldDef {
+impl Eatable for FieldDef {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         Self::eat_with_ident(iter, true)
     }
@@ -366,7 +366,7 @@ impl FieldDef {
 #[derive(Debug)]
 pub struct StructItem(pub Ident, pub Generics, pub VariantData);
 
-impl Visitable for StructItem {
+impl Eatable for StructItem {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -388,7 +388,7 @@ pub struct ImplItem {
     pub items: Vec<Box<AssocItem>>,
 }
 
-impl Visitable for ImplItem {
+impl Eatable for ImplItem {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -456,7 +456,7 @@ pub enum AssocItemKind {
     // DelegationMac(Box<DelegationMac>),
 }
 
-impl Visitable for AssocItem {
+impl Eatable for AssocItem {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let kind = kind_check!(iter, AssocItemKind, Item, (Const, Fn));
 
@@ -467,7 +467,7 @@ impl Visitable for AssocItem {
 #[derive(Debug)]
 pub struct ModItem(pub Ident, pub ModKind);
 
-impl Visitable for ModItem {
+impl Eatable for ModItem {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
@@ -530,7 +530,7 @@ pub struct TraitItem {
     pub items: Vec<Box<AssocItem>>,
 }
 
-impl Visitable for TraitItem {
+impl Eatable for TraitItem {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
