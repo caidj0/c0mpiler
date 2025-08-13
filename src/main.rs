@@ -1,12 +1,13 @@
 use c0mpiler::{
-    ast::{Crate, Visitable},
+    ast::{Crate, Eatable},
     lexer::{Lexer, TokenBuffer},
 };
 
 fn main() {
     let test_str = r###"
 fn main() {
-    !..b 
+    match a + b {}
+    if a && b {}
 }
 "###;
     let lexer = Lexer::new(test_str);

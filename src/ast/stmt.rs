@@ -71,7 +71,7 @@ impl Eatable for LocalStmt {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Let);
-        let pat = Pat::eat(&mut using_iter)?;
+        let pat = Pat::eat_no_alt(&mut using_iter)?;
 
         let ty = if using_iter.peek()?.token_type == TokenType::Colon {
             using_iter.advance();

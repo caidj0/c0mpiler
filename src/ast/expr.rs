@@ -8,7 +8,7 @@ use crate::{
     },
     kind_check,
     lexer::{Token, TokenIter},
-    loop_until, match_keyword, match_prefix, peek_keyword, skip_keyword, skip_keyword_or_break,
+    loop_until, match_keyword, match_prefix, peek_keyword, skip_keyword_or_break,
     tokens::TokenType,
     utils::string::{parse_number_literal, parse_quoted_content},
 };
@@ -58,22 +58,36 @@ impl Eatable for Expr {
 }
 
 impl Expr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        Self::eat_with_priority(iter, 0)
+    pub fn eat_without_struct(iter: &mut TokenIter) -> ASTResult<Self> {
+        Self::eat_with_priority_and_struct(iter, 0, false)
     }
-}
 
-impl Expr {
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Self> {
-        let mut kind = kind_check!(
-            iter,
-            ExprKind,
-            Expr,
-            (
-                Struct, Path, Array, Repeat, Unary, Lit, Let, Block, If, Match, While, ForLoop,
-                Loop, Break, Continue, AddrOf, Tup, ConstBlock, Underscore, Ret
+        Self::eat_with_priority_and_struct(iter, min_priority, true)
+    }
+
+    pub fn eat_with_priority_and_struct(
+        iter: &mut TokenIter,
+        min_priority: usize,
+        has_struct: bool,
+    ) -> ASTResult<Self> {
+        let mut kind = if has_struct {
+            kind_check!(iter, ExprKind, Expr, (Struct))
+        } else {
+            Err(ASTError::default())
+        };
+        kind = kind.or_else(|err| {
+            kind_check!(
+                iter,
+                ExprKind,
+                Expr,
+                (
+                    Path, Array, Repeat, Unary, Lit, Let, Block, If, Match, While, ForLoop, Loop,
+                    Break, Continue, AddrOf, Tup, ConstBlock, Underscore, Ret
+                )
             )
-        );
+            .map_err(|err2| err.select(err2))
+        });
 
         kind = kind.or_else(|err| match RangeHelper::eat_with_priority(iter, 0) {
             Ok(Some(helper)) => Ok(ExprKind::Range(RangeExpr(None, helper.0, helper.1))),
@@ -97,7 +111,7 @@ impl Expr {
                     expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else if let Some(helper) = CastHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Cast(CastExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = BinaryHelper::eat_with_priority(iter, min_priority)? {
+                } else if let Some(helper) = BinaryHelper::eat_with_priority_and_struct(iter, min_priority, has_struct)? {
                     expr1 = ExprKind::Binary(BinaryExpr(
                         helper.0,
                         Box::new(Expr { kind: expr1 }),
@@ -372,7 +386,7 @@ pub struct BinaryExpr(pub BinOp, pub Box<Expr>, pub Box<Expr>);
 pub struct BinaryHelper(pub BinOp, pub Box<Expr>);
 
 impl BinaryHelper {
-    fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
+    fn eat_with_priority_and_struct(iter: &mut TokenIter, min_priority: usize, has_struct: bool) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
         let op_result: Result<BinOp, _> = using_iter.next()?.try_into();
@@ -385,7 +399,7 @@ impl BinaryHelper {
             return Ok(None);
         };
 
-        let expr2 = Expr::eat_with_priority(&mut using_iter, op.get_priority() + 1)?;
+        let expr2 = Expr::eat_with_priority_and_struct(&mut using_iter, op.get_priority() + 1, has_struct)?;
 
         iter.update(using_iter);
         Ok(Some(BinaryHelper(op, Box::new(expr2))))
@@ -472,7 +486,7 @@ impl Eatable for LetExpr {
 
         match_keyword!(using_iter, TokenType::Eq);
 
-        let expr = Expr::eat(&mut using_iter)?;
+        let expr = Expr::eat_without_struct(&mut using_iter)?;
 
         iter.update(using_iter);
         Ok(Self(Box::new(pat), Box::new(expr)))
@@ -731,7 +745,7 @@ impl Eatable for IfExpr {
 
         match_keyword!(using_iter, TokenType::If);
 
-        let expr = Expr::eat(&mut using_iter)?;
+        let expr = Expr::eat_without_struct(&mut using_iter)?;
         let block = BlockExpr::eat(&mut using_iter)?;
 
         let else_expr = if using_iter.peek()?.token_type == TokenType::Else {
@@ -770,7 +784,7 @@ impl Eatable for MatchExpr {
         let mut using_iter = iter.clone();
 
         match_keyword!(using_iter, TokenType::Match);
-        let expr = Expr::eat(&mut using_iter)?;
+        let expr = Expr::eat_without_struct(&mut using_iter)?;
         match_keyword!(using_iter, TokenType::OpenCurly);
 
         let mut arms = Vec::new();

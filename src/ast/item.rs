@@ -163,7 +163,7 @@ impl Eatable for Param {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
 
-        let pat = Pat::eat(&mut using_iter)?;
+        let pat = Pat::eat_no_alt(&mut using_iter)?;
 
         let ty = if using_iter.peek()?.token_type != TokenType::Colon {
             if pat.is_self() {

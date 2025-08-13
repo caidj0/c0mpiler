@@ -6,7 +6,7 @@ use crate::{
     },
     is_keyword, kind_check,
     lexer::{Token, TokenIter},
-    loop_until, match_keyword, peek_keyword, skip_keyword_or_break,
+    loop_until, loop_while, match_keyword, peek_keyword, skip_keyword, skip_keyword_or_break,
     tokens::TokenType,
 };
 
@@ -39,7 +39,7 @@ pub enum PatKind {
     Ident(IdentPat),
     Struct(StructPat),
     // TupleStruct(Option<P<QSelf>>, Path, ThinVec<P<Pat>>),
-    // Or(ThinVec<P<Pat>>),
+    Or(OrPat),
     Path(PathPat),
     Tuple(TuplePat),
     // Box(P<Pat>),
@@ -59,6 +59,28 @@ pub enum PatKind {
 
 impl Eatable for Pat {
     fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+        skip_keyword!(using_iter, TokenType::Or);
+
+        let mut pats = vec![Box::new(Pat::eat_no_alt(&mut using_iter)?)];
+
+        loop_while!(using_iter, TokenType::Or, {
+            pats.push(Box::new(Pat::eat_no_alt(&mut using_iter)?));
+        });
+
+        iter.update(using_iter);
+        if pats.len() == 1 {
+            Ok(*pats.pop().unwrap())
+        } else {
+            Ok(Self {
+                kind: PatKind::Or(OrPat(pats)),
+            })
+        }
+    }
+}
+
+impl Pat {
+    pub fn eat_no_alt(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let kind = kind_check!(
             iter,
             PatKind,
@@ -66,6 +88,17 @@ impl Eatable for Pat {
             (
                 Struct, Range, Path, Ident, Ref, Tuple, Slice, Lit, Rest, Wild
             )
+        );
+
+        Ok(Self { kind: kind? })
+    }
+
+    pub fn eat_no_range(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let kind = kind_check!(
+            iter,
+            PatKind,
+            Pat,
+            (Struct, Path, Ident, Ref, Tuple, Slice, Lit, Rest, Wild)
         );
 
         Ok(Self { kind: kind? })
@@ -82,7 +115,7 @@ impl Eatable for IdentPat {
         let bindmod = BindingMode::eat(&mut using_iter)?;
         let ident = using_iter.next()?.try_into()?;
         let pat = if using_iter.peek()?.token_type == TokenType::At {
-            Some(Pat::eat(&mut using_iter)?)
+            Some(Pat::eat_no_alt(&mut using_iter)?)
         } else {
             None
         };
@@ -116,7 +149,7 @@ impl Eatable for RefPat {
 
         match_keyword!(using_iter, TokenType::And);
         let m = Mutability::eat(&mut using_iter)?;
-        let pat = Pat::eat(&mut using_iter)?;
+        let pat = Pat::eat_no_range(&mut using_iter)?;
 
         iter.update(using_iter);
         Ok(Self(Box::new(pat), m))
@@ -371,3 +404,6 @@ impl Eatable for WildPat {
         std::unimplemented!()
     }
 }
+
+#[derive(Debug)]
+pub struct OrPat(pub Vec<Box<Pat>>);
