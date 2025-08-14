@@ -276,6 +276,7 @@ define_tokens! {
 
     // Others
     Comment: r"//[^\r\n]*\r?\n" -> skip,
-    CommentsBlock: r"/\*.*?\*/" -> skip,
+    CommentsBlock: r"/\*[\s\S]*?\*/" -> skip,
+    UnfinishedCommentBlock: r"/\*" -> err,
     Whitespace: r"[\t\n\v\f\r ]+" -> skip
 }

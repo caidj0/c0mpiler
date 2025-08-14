@@ -88,6 +88,55 @@ impl<'a> Lexer<'a> {
             }
             self.codes = self.codes.split_at(r.1.len()).1;
 
+            if matches!(r.0, TokenType::Integer) {
+                let (suffix_pos, has_prefix) = if let Some(stripped) = r.1.strip_prefix("0b") {
+                    (
+                        stripped
+                            .find(|c| c != '0' && c != '1' && c != '_')
+                            .map(|x| x + 2),
+                        true,
+                    )
+                } else if let Some(stripped) = r.1.strip_prefix("0o") {
+                    (
+                        stripped
+                            .find(|c| !('0'..='7').contains(&c) && c != '_')
+                            .map(|x| x + 2),
+                        true,
+                    )
+                } else if let Some(stripped) = r.1.strip_prefix("0x") {
+                    (
+                        stripped
+                            .find(|c: char| !c.is_ascii_hexdigit() && c != '_')
+                            .map(|x| x + 2),
+                        true,
+                    )
+                } else {
+                    (r.1.find(|c: char| !c.is_ascii_digit() && c != '_'), false)
+                };
+
+                let symbol = suffix_pos.map_or(r.1.to_owned(), |pos| r.1[..pos].to_owned());
+                let suffix = suffix_pos.map(|pos| r.1[pos..].to_owned());
+
+                if (has_prefix && symbol.len() == 2)
+                    || suffix
+                        .map(|x| {
+                            if !x.chars().next().unwrap().is_ascii_alphabetic() {
+                                return true;
+                            }
+
+                            for c in x.chars() {
+                                if !c.is_ascii_alphanumeric() && c != '_' {
+                                    return true;
+                                }
+                            }
+                            false
+                        })
+                        .unwrap_or(false)
+                {
+                    return Err((format!("Invalid integer literal: {}", r.1), self.get_pos()));
+                }
+            }
+
             if r.0.should_err() {
                 return Err((
                     format!(

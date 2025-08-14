@@ -111,7 +111,9 @@ impl Expr {
                     expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
                 } else if let Some(helper) = CastHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Cast(CastExpr(Box::new(Expr { kind: expr1 }), helper.0))
-                } else if let Some(helper) = BinaryHelper::eat_with_priority_and_struct(iter, min_priority, has_struct)? {
+                } else if let Some(helper) =
+                    BinaryHelper::eat_with_priority_and_struct(iter, min_priority, has_struct)?
+                {
                     expr1 = ExprKind::Binary(BinaryExpr(
                         helper.0,
                         Box::new(Expr { kind: expr1 }),
@@ -386,7 +388,11 @@ pub struct BinaryExpr(pub BinOp, pub Box<Expr>, pub Box<Expr>);
 pub struct BinaryHelper(pub BinOp, pub Box<Expr>);
 
 impl BinaryHelper {
-    fn eat_with_priority_and_struct(iter: &mut TokenIter, min_priority: usize, has_struct: bool) -> ASTResult<Option<Self>> {
+    fn eat_with_priority_and_struct(
+        iter: &mut TokenIter,
+        min_priority: usize,
+        has_struct: bool,
+    ) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
         let op_result: Result<BinOp, _> = using_iter.next()?.try_into();
@@ -399,7 +405,8 @@ impl BinaryHelper {
             return Ok(None);
         };
 
-        let expr2 = Expr::eat_with_priority_and_struct(&mut using_iter, op.get_priority() + 1, has_struct)?;
+        let expr2 =
+            Expr::eat_with_priority_and_struct(&mut using_iter, op.get_priority() + 1, has_struct)?;
 
         iter.update(using_iter);
         Ok(Some(BinaryHelper(op, Box::new(expr2))))
