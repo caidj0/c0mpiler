@@ -37,7 +37,7 @@ pub enum TyKind {
     // MacCall(P<MacCall>),
     // CVarArgs,
     // Pat(P<Ty>, P<TyPat>),
-    // Dummy,
+    Dummy,
     // Err(ErrorGuaranteed),
 }
 

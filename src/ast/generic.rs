@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ASTResult, Eatable, OptionEatable, path::Path, ty::Ty},
+    ast::{ASTResult, Eatable, OptionEatable, item::TraitRef, path::Path, ty::Ty},
     loop_until, loop_while, match_prefix, skip_keyword_or_break,
     tokens::TokenType,
 };
@@ -149,11 +149,6 @@ impl Eatable for PolyTraitRef {
         iter.update(using_iter);
         Ok(Self { trait_ref })
     }
-}
-
-#[derive(Debug)]
-pub struct TraitRef {
-    pub path: Path,
 }
 
 impl Eatable for TraitRef {
