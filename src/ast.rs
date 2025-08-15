@@ -259,7 +259,7 @@ impl Eatable for Mutability {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub enum Ident {
     #[default]
     Empty,

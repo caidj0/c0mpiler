@@ -79,7 +79,7 @@ macro_rules! define_tokens {
     (@is_literal $other:ident) => {false};
 
     ($($token:ident : $([$attr:ident])? $keyword:literal $(-> $action:ident)?), *) => {
-        #[derive(Debug, Clone, PartialEq)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         pub enum TokenType {
             $($token, )*
             EOF
