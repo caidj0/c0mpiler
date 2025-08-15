@@ -1,11 +1,11 @@
 pub mod visitor;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, iter::repeat_n, vec};
 
 use crate::{
     ast::{
-        BindingMode, Ident, Mutability,
-        item::{ConstItem, FieldDef, FnDecl, FnItem, FnRetTy, FnSig, Param, TraitRef},
+        BindingMode, Crate, Ident, Mutability,
+        item::{ConstItem, FieldDef, FnDecl, FnItem, FnRetTy, FnSig, ItemKind, Param, TraitRef},
         pat::{IdentPat, Pat, PatKind},
         path::{Path, PathSegment},
         ty::{MutTy, PathTy, RefTy, TupTy, Ty, TyKind},
@@ -14,7 +14,10 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub enum SemanticError {}
+pub enum SemanticError {
+    Unimplemented,
+    MultiDefined,
+}
 
 #[derive(Debug)]
 pub struct ImplInfo {
@@ -53,11 +56,18 @@ pub struct Variable {
 }
 
 #[derive(Debug)]
+pub enum AnalyzeStage {
+    TypeCollect,
+    Done,
+}
+
+#[derive(Debug)]
 pub struct SemanticAnalyzer {
     pub type_names: HashMap<Ident, TyNameSpace>,
     pub value_names: HashMap<Ident, ValueNameSpace>,
     pub current_module: Path,
     pub stacks: Vec<HashMap<Ident, Variable>>,
+    pub stage: AnalyzeStage,
 }
 
 impl SemanticAnalyzer {
@@ -283,21 +293,114 @@ impl SemanticAnalyzer {
     pub fn new() -> Self {
         let (type_names, value_names) = Self::get_builtin();
         Self {
-            type_names,
-            value_names,
+            type_names: HashMap::default(),
+            value_names: HashMap::default(),
             current_module: Path::default(),
             stacks: Vec::default(),
+            stage: AnalyzeStage::TypeCollect,
         }
+    }
+
+    pub fn parse(&mut self, krate: &Crate) -> Result<(), SemanticError> {
+        self.visit_crate(krate)?;
+
+        self.stage = AnalyzeStage::Done;
+
+        Ok(())
+    }
+
+    fn add_type(&mut self, ident: Ident, ty: TyNameSpace) -> Result<(), SemanticError> {
+        if self.type_names.get(&ident).is_some() {
+            return Err(SemanticError::MultiDefined);
+        }
+
+        self.type_names.insert(ident, ty);
+        Ok(())
+    }
+
+    fn add_value(&mut self, ident: Ident, v: ValueNameSpace) -> Result<(), SemanticError> {
+        if self.value_names.get(&ident).is_some() {
+            return Err(SemanticError::MultiDefined);
+        }
+
+        self.value_names.insert(ident, v);
+        Ok(())
     }
 }
 
 impl Visitor for SemanticAnalyzer {
     fn visit_crate(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
-        todo!()
+        for x in &krate.items {
+            let ident = match &x.kind {
+                ItemKind::Const(const_item) => const_item.ident.clone(),
+                ItemKind::Fn(fn_item) => fn_item.ident.clone(),
+                ItemKind::Mod(_) => return Err(SemanticError::Unimplemented),
+                ItemKind::Enum(enum_item) => enum_item.0.clone(),
+                ItemKind::Struct(struct_item) => struct_item.0.clone(),
+                ItemKind::Trait(trait_item) => trait_item.ident.clone(),
+                ItemKind::Impl(_) => {
+                    return Err(SemanticError::Unimplemented);
+                }
+            };
+            self.current_module.segments.push(PathSegment {
+                ident: ident,
+                args: None,
+            });
+            self.visit_item(x.as_ref())?;
+            self.current_module.segments.pop();
+        }
+        Ok(())
     }
 
     fn visit_item(&mut self, item: &crate::ast::item::Item) -> Result<(), SemanticError> {
-        todo!()
+        match self.stage {
+            AnalyzeStage::TypeCollect => match &item.kind {
+                ItemKind::Const(const_item) => self.add_value(
+                    const_item.ident.clone(),
+                    ValueNameSpace::Const(ConstItem {
+                        ident: const_item.ident.clone(),
+                        ty: Box::new(Ty {
+                            kind: TyKind::Dummy,
+                        }),
+                        expr: None,
+                    }),
+                )?,
+                ItemKind::Fn(fn_item) => self.add_value(
+                    fn_item.ident.clone(),
+                    ValueNameSpace::Fn(FnSig {
+                        decl: Box::new(FnDecl {
+                            inputs: vec![],
+                            output: FnRetTy::Default,
+                        }),
+                    }),
+                )?,
+                ItemKind::Mod(_) => return Err(SemanticError::Unimplemented),
+                ItemKind::Enum(enum_item) => self.add_type(
+                    enum_item.0.clone(),
+                    TyNameSpace::Enum {
+                        variants: vec![],
+                        impls: vec![],
+                    },
+                )?,
+                ItemKind::Struct(struct_item) => self.add_type(
+                    struct_item.0.clone(),
+                    TyNameSpace::Struct {
+                        fields: vec![],
+                        impls: vec![],
+                    },
+                )?,
+                ItemKind::Trait(trait_item) => self.add_type(
+                    trait_item.ident.clone(),
+                    TyNameSpace::Trait {
+                        methods: vec![],
+                        consts: vec![],
+                    },
+                )?,
+                ItemKind::Impl(_) => return Err(SemanticError::Unimplemented),
+            },
+            AnalyzeStage::Done => todo!(),
+        }
+        Ok(())
     }
 
     fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Result<(), SemanticError> {
