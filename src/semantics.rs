@@ -1,10 +1,14 @@
+pub mod const_eval;
 pub mod visitor;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, vec};
 
 use crate::{
-    ast::{Ident, Mutability},
-    semantics::visitor::Visitor,
+    ast::{
+        expr::{Expr, ExprKind, LitExpr}, item::{ConstItem, EnumItem, FieldDef, FnRetTy}, ty::{MutTy, RefTy, Ty, TyKind}, Ident, Mutability
+    },
+    semantics::{const_eval::ConstEvalError, visitor::Visitor},
+    tokens::TokenType,
 };
 
 #[derive(Debug)]
@@ -12,6 +16,10 @@ pub enum SemanticError {
     Unimplemented,
     UndefinedScope,
     MultiDefined,
+    ConstEvalError(ConstEvalError),
+    InvaildPath,
+    UnknownType,
+    UnknownVariable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -22,7 +30,7 @@ pub enum ResolvedTy {
     BulitIn(Ident),
     Named(Vec<Ident>),
     Ref(Box<ResolvedTy>, Mutability),
-    Array(Box<ResolvedTy>, usize),
+    Array(Box<ResolvedTy>, u32),
     Slice(Box<ResolvedTy>),
     Tup(Vec<ResolvedTy>),
     Fn(Vec<ResolvedTy>, Box<ResolvedTy>),
@@ -73,16 +81,9 @@ pub struct FnSig {
 
 #[derive(Debug)]
 pub enum TypeKind {
-    Struct {
-        fileds: Vec<(Ident, TypeId)>,
-        methods: Vec<FnSig>,
-    },
-    Enum {
-        fileds: Vec<Ident>,
-    },
-    Trait {
-        methods: Vec<FnSig>,
-    },
+    Struct { fields: Vec<(Ident, TypeId)> },
+    Enum { fields: Vec<Ident> },
+    Trait { methods: Vec<FnSig> },
 }
 
 #[derive(Debug)]
@@ -93,6 +94,7 @@ pub struct Variable {
 
 #[derive(Debug, Default)]
 pub struct Scope {
+    pub ident: String,
     pub types: HashMap<Ident, TypeInfo>,
     pub values: HashMap<Ident, Variable>,
 }
@@ -109,7 +111,6 @@ pub enum AnalyzeStage {
 pub struct SemanticAnalyzer {
     layers: Vec<Scope>,
     type_table: TypeTable,
-    path: Vec<Ident>,
     impls: HashMap<TypeId, Vec<ImplInfo>>,
     root_scope: Scope,
     stage: AnalyzeStage,
@@ -120,37 +121,22 @@ impl SemanticAnalyzer {
         Self {
             layers: Vec::default(),
             type_table: TypeTable::default(),
-            path: Vec::default(),
             impls: HashMap::default(),
             root_scope: Scope::default(),
             stage: AnalyzeStage::SymbolCollect,
         }
     }
 
-    fn get_scope(&mut self, scope_id: Option<Vec<Ident>>) -> Result<&mut Scope, SemanticError> {
-        match scope_id {
-            // 目前只有根 module，因此 scope 只有一个，剩下的都应该定义在 layers 中
-            Some(id) => {
-                if id.len() != 0 {
-                    return Err(SemanticError::UndefinedScope);
-                }
-                Ok(&mut self.root_scope)
-            }
-            None => self
-                .layers
-                .last_mut()
-                .map(Ok)
-                .unwrap_or(Err(SemanticError::UndefinedScope)),
+    fn get_scope(&mut self) -> Result<&mut Scope, SemanticError> {
+        if let Some(scope) = self.layers.last_mut() {
+            Ok(scope)
+        } else {
+            Ok(&mut self.root_scope)
         }
     }
 
-    fn add_type(
-        &mut self,
-        ident: Ident,
-        info: TypeInfo,
-        scope_id: Option<Vec<Ident>>,
-    ) -> Result<(), SemanticError> {
-        let s = self.get_scope(scope_id)?;
+    fn add_type(&mut self, ident: Ident, info: TypeInfo) -> Result<(), SemanticError> {
+        let s = self.get_scope()?;
 
         if s.types.contains_key(&ident) {
             return Err(SemanticError::MultiDefined);
@@ -161,13 +147,13 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn add_value(
-        &mut self,
-        ident: Ident,
-        var: Variable,
-        scope_id: Option<Vec<Ident>>,
-    ) -> Result<(), SemanticError> {
-        let s = self.get_scope(scope_id)?;
+    fn get_type(&mut self, ident: &Ident) -> Result<&mut TypeInfo, SemanticError> {
+        let s = self.get_scope()?;
+        s.types.get_mut(ident).ok_or(SemanticError::UnknownType)
+    }
+
+    fn add_value(&mut self, ident: Ident, var: Variable) -> Result<(), SemanticError> {
+        let s = self.get_scope()?;
 
         if s.values.contains_key(&ident) {
             return Err(SemanticError::MultiDefined);
@@ -178,25 +164,161 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
+    fn get_value(&mut self, ident: &Ident) -> Result<&mut Variable, SemanticError> {
+        let s = self.get_scope()?;
+        s.values
+            .get_mut(ident)
+            .ok_or(SemanticError::UnknownVariable)
+    }
+
     pub fn visit(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
         self.stage = AnalyzeStage::SymbolCollect;
         self.visit_crate(krate)?;
         Ok(())
     }
 
-    pub fn is_local_path(&self) -> bool {
-        for x in &self.path {
-            match x {
-                Ident::String(s) => {
-                    if s.starts_with("$") {
-                        return true;
-                    }
-                }
-                _ => panic!("The path of analyzer should always be String type!"),
-            }
+    fn get_layer_name(&self) -> String {
+        let mut ret = "".to_string();
+
+        for x in &self.layers {
+            ret.push_str(&x.ident);
         }
 
-        return false;
+        ret
+    }
+
+    fn is_builtin_type(&self, ident: &Ident) -> bool {
+        match ident {
+            Ident::Empty => false,
+            Ident::String(s) => {
+                s == "u32" || s == "i32" || s == "char" || s == "str" || s == "String"
+            }
+            Ident::PathSegment(_) => false,
+        }
+    }
+
+    fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
+        match &ty.kind {
+            TyKind::Slice(slice_ty) => {
+                Ok(ResolvedTy::Slice(Box::new(self.resolve_ty(&slice_ty.0)?)))
+            }
+            TyKind::Array(array_ty) => Ok(ResolvedTy::Array(
+                Box::new(self.resolve_ty(&array_ty.0)?),
+                array_ty.1.value.as_ref().try_into()?,
+            )),
+            TyKind::Ref(RefTy(MutTy { ty: ty2, mutbl })) => {
+                Ok(ResolvedTy::Ref(Box::new(self.resolve_ty(ty2)?), *mutbl))
+            }
+            TyKind::Tup(tup_ty) => Ok(ResolvedTy::Tup(
+                tup_ty
+                    .0
+                    .iter()
+                    .map(|x| self.resolve_ty(x))
+                    .collect::<Result<Vec<_>, SemanticError>>()?,
+            )),
+            TyKind::Path(path_ty) => {
+                if path_ty.0.is_some() {
+                    return Err(SemanticError::Unimplemented);
+                }
+
+                let mut scope = None;
+                let mut id: Ident = Ident::Empty;
+
+                for (index, seg) in path_ty.1.segments.iter().enumerate() {
+                    match &seg.ident {
+                        Ident::Empty => return Err(SemanticError::InvaildPath),
+                        Ident::String(s) => {
+                            if matches!(id, Ident::Empty) {
+                                id = Ident::String(s.to_string());
+                            } else {
+                                return Err(SemanticError::InvaildPath);
+                            }
+                        }
+                        Ident::PathSegment(token_type) => {
+                            if index != 0 {
+                                return Err(SemanticError::InvaildPath);
+                            } else {
+                                match token_type {
+                                    TokenType::LSelfType => scope = Some(&self.root_scope),
+                                    TokenType::SelfType => {
+                                        todo!() // TODO
+                                    }
+                                    TokenType::Crate => scope = Some(&self.root_scope),
+                                    TokenType::Super => return Err(SemanticError::InvaildPath),
+                                    _ => {
+                                        panic!("The path in the ident can't be {:?}", token_type);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // scope 要么为 None，要么为 root
+                match scope {
+                    Some(scope) => {
+                        assert!(std::ptr::eq(scope, &self.root_scope));
+                        if scope.types.contains_key(&id) {
+                            Ok(ResolvedTy::Named(vec![id]))
+                        } else {
+                            return Err(SemanticError::UnknownType);
+                        }
+                    }
+                    None => {
+                        let mut found_index: Option<usize> = None;
+                        for (index, scope) in self.layers.iter().enumerate().rev() {
+                            if scope.types.contains_key(&id) {
+                                found_index = Some(index);
+                                break;
+                            }
+                        }
+
+                        match found_index {
+                            Some(idx) => {
+                                let mut names: Vec<Ident> = Vec::new();
+                                for i in 0..=idx {
+                                    names.push(Ident::String(self.layers[i].ident.clone()));
+                                }
+                                names.push(id);
+                                Ok(ResolvedTy::Named(names))
+                            }
+                            None => {
+                                if self.root_scope.types.contains_key(&id) {
+                                    Ok(ResolvedTy::Named(vec![id]))
+                                } else {
+                                    if self.is_builtin_type(&id) {
+                                        Ok(ResolvedTy::BulitIn(id))
+                                    } else {
+                                        Err(SemanticError::UnknownType)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            TyKind::TraitObject(_) => Err(SemanticError::Unimplemented),
+            TyKind::ImplTrait(_) => Err(SemanticError::Unimplemented),
+            TyKind::Infer(_) => Ok(ResolvedTy::Infer),
+            TyKind::ImplicitSelf => todo!(),
+        }
+    }
+
+    fn check_const(&self, ty: &ResolvedTy, expr: &Expr) -> Result<(), SemanticError> {
+        if let ResolvedTy::BulitIn(ident) = ty {
+            if let Ident::String(s) = ident {
+                match s.as_str() {
+                    "u32" => {
+                        let _: u32 = expr.try_into()?;
+                    }
+                    _ => {}
+                }
+            }
+        };
+
+        return Err(SemanticError::ConstEvalError(
+            ConstEvalError::NotSupportedExpr,
+        ));
     }
 }
 
@@ -216,35 +338,142 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_item(&mut self, item: &crate::ast::item::Item) -> Result<(), SemanticError> {
-        match (&self.stage, &item.kind) {
-            (AnalyzeStage::SymbolCollect, crate::ast::item::ItemKind::Const(const_item)) => todo!(),
-            (AnalyzeStage::SymbolCollect, crate::ast::item::ItemKind::Fn(fn_item)) => todo!(),
-            (AnalyzeStage::SymbolCollect, crate::ast::item::ItemKind::Mod(mod_item)) => todo!(),
-            (AnalyzeStage::SymbolCollect, crate::ast::item::ItemKind::Enum(enum_item)) => todo!(),
-            (AnalyzeStage::SymbolCollect, crate::ast::item::ItemKind::Struct(struct_item)) => todo!(),
-            (AnalyzeStage::SymbolCollect, crate::ast::item::ItemKind::Trait(trait_item)) => todo!(),
-            (AnalyzeStage::SymbolCollect, crate::ast::item::ItemKind::Impl(impl_item)) => todo!(),
-            (AnalyzeStage::Definition, crate::ast::item::ItemKind::Const(const_item)) => todo!(),
-            (AnalyzeStage::Definition, crate::ast::item::ItemKind::Fn(fn_item)) => todo!(),
-            (AnalyzeStage::Definition, crate::ast::item::ItemKind::Mod(mod_item)) => todo!(),
-            (AnalyzeStage::Definition, crate::ast::item::ItemKind::Enum(enum_item)) => todo!(),
-            (AnalyzeStage::Definition, crate::ast::item::ItemKind::Struct(struct_item)) => todo!(),
-            (AnalyzeStage::Definition, crate::ast::item::ItemKind::Trait(trait_item)) => todo!(),
-            (AnalyzeStage::Definition, crate::ast::item::ItemKind::Impl(impl_item)) => todo!(),
-            (AnalyzeStage::Body, crate::ast::item::ItemKind::Const(const_item)) => todo!(),
-            (AnalyzeStage::Body, crate::ast::item::ItemKind::Fn(fn_item)) => todo!(),
-            (AnalyzeStage::Body, crate::ast::item::ItemKind::Mod(mod_item)) => todo!(),
-            (AnalyzeStage::Body, crate::ast::item::ItemKind::Enum(enum_item)) => todo!(),
-            (AnalyzeStage::Body, crate::ast::item::ItemKind::Struct(struct_item)) => todo!(),
-            (AnalyzeStage::Body, crate::ast::item::ItemKind::Trait(trait_item)) => todo!(),
-            (AnalyzeStage::Body, crate::ast::item::ItemKind::Impl(impl_item)) => todo!(),
-            (AnalyzeStage::Done, crate::ast::item::ItemKind::Const(const_item)) => todo!(),
-            (AnalyzeStage::Done, crate::ast::item::ItemKind::Fn(fn_item)) => todo!(),
-            (AnalyzeStage::Done, crate::ast::item::ItemKind::Mod(mod_item)) => todo!(),
-            (AnalyzeStage::Done, crate::ast::item::ItemKind::Enum(enum_item)) => todo!(),
-            (AnalyzeStage::Done, crate::ast::item::ItemKind::Struct(struct_item)) => todo!(),
-            (AnalyzeStage::Done, crate::ast::item::ItemKind::Trait(trait_item)) => todo!(),
-            (AnalyzeStage::Done, crate::ast::item::ItemKind::Impl(impl_item)) => todo!(),
+        match &item.kind {
+            crate::ast::item::ItemKind::Const(ConstItem { ident, ty, expr }) => match self.stage {
+                AnalyzeStage::SymbolCollect => {}
+                AnalyzeStage::Definition => {
+                    let ty = self.resolve_ty(&ty)?;
+                    if let Some(e) = expr {
+                        self.check_const(&ty, e)?;
+                    }
+                    let tyid = self.type_table.intern(ty);
+                    self.add_value(
+                        ident.clone(),
+                        Variable {
+                            ty: tyid,
+                            mutbl: Mutability::Not,
+                        },
+                    )?;
+                }
+                AnalyzeStage::Body => todo!(),
+                AnalyzeStage::Done => todo!(),
+            },
+
+            crate::ast::item::ItemKind::Fn(fn_item) => match self.stage {
+                AnalyzeStage::SymbolCollect => {}
+                AnalyzeStage::Definition => {
+                    let param_tys = fn_item
+                        .sig
+                        .decl
+                        .inputs
+                        .iter()
+                        .map(|x| self.resolve_ty(&x.ty))
+                        .collect::<Result<Vec<_>, SemanticError>>()?;
+                    let ret_ty = match &fn_item.sig.decl.output {
+                        FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
+                        FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
+                    };
+                    let tyid = self
+                        .type_table
+                        .intern(ResolvedTy::Fn(param_tys, Box::new(ret_ty)));
+                    self.add_value(
+                        fn_item.ident.clone(),
+                        Variable {
+                            ty: tyid,
+                            mutbl: Mutability::Not,
+                        },
+                    )?;
+                }
+                AnalyzeStage::Body => todo!(),
+                AnalyzeStage::Done => todo!(),
+            },
+
+            crate::ast::item::ItemKind::Mod(_) => return Err(SemanticError::Unimplemented),
+
+            crate::ast::item::ItemKind::Enum(EnumItem(ident, generics, variants)) => {
+                match self.stage {
+                    AnalyzeStage::SymbolCollect => self.add_type(
+                        ident.clone(),
+                        TypeInfo {
+                            name: ident.clone(),
+                            kind: TypeKind::Enum { fields: Vec::new() },
+                        },
+                    )?,
+                    AnalyzeStage::Definition => {
+                        let info = self.get_type(ident)?;
+                        match &mut info.kind {
+                            TypeKind::Enum { fields } => {
+                                for x in variants {
+                                    if !matches!(x.data, crate::ast::item::VariantData::Unit)
+                                        || x.disr_expr.is_some()
+                                    {
+                                        return Err(SemanticError::Unimplemented);
+                                    }
+
+                                    fields.push(x.ident.clone())
+                                }
+                            }
+                            _ => panic!(),
+                        }
+                    }
+                    AnalyzeStage::Body => todo!(),
+                    AnalyzeStage::Done => todo!(),
+                }
+            }
+
+            crate::ast::item::ItemKind::Struct(crate::ast::item::StructItem(
+                ident,
+                generics,
+                variant_data,
+            )) => match self.stage {
+                AnalyzeStage::SymbolCollect => self.add_type(
+                    ident.clone(),
+                    TypeInfo {
+                        name: ident.clone(),
+                        kind: TypeKind::Struct { fields: Vec::new() },
+                    },
+                )?,
+                AnalyzeStage::Definition => {
+                    let info = self.get_type(ident)?;
+                    match &mut info.kind {
+                        TypeKind::Struct { fields } => {
+                            match variant_data {
+                                crate::ast::item::VariantData::Struct { fields } => {
+                                    for FieldDef{ident, ty} in fields {
+                                        // TODO
+                                    }
+                                },
+                                _ => return Err(SemanticError::Unimplemented),
+                            }
+                        }
+                        _ => panic!(),
+                    }
+                }
+                AnalyzeStage::Body => todo!(),
+                AnalyzeStage::Done => todo!(),
+            },
+
+            crate::ast::item::ItemKind::Trait(crate::ast::item::TraitItem {
+                ident,
+                generics,
+                bounds,
+                items,
+            }) => match self.stage {
+                AnalyzeStage::SymbolCollect => self.add_type(
+                    ident.clone(),
+                    TypeInfo {
+                        name: ident.clone(),
+                        kind: TypeKind::Trait {
+                            methods: Vec::new(),
+                        },
+                    },
+                )?,
+                AnalyzeStage::Definition => todo!(),
+                AnalyzeStage::Body => todo!(),
+                AnalyzeStage::Done => todo!(),
+            },
+
+            crate::ast::item::ItemKind::Impl(impl_item) => todo!(),
         }
         Ok(())
     }
