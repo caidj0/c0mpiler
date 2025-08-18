@@ -242,7 +242,7 @@ impl Eatable for ByRef {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Mutability {
     Not,
     Mut,
