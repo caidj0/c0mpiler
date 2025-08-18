@@ -5,7 +5,10 @@ use std::{collections::HashMap, vec};
 
 use crate::{
     ast::{
-        expr::{Expr, ExprKind, LitExpr}, item::{ConstItem, EnumItem, FieldDef, FnRetTy}, ty::{MutTy, RefTy, Ty, TyKind}, Ident, Mutability
+        Ident, Mutability,
+        expr::{Expr, ExprKind, LitExpr},
+        item::{ConstItem, EnumItem, FieldDef, FnRetTy},
+        ty::{MutTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
     tokens::TokenType,
@@ -77,10 +80,12 @@ pub struct FnSig {
     pub name: Ident,
     pub params: Vec<TypeId>,
     pub ret: Option<TypeId>,
+    pub is_placeholder: bool,
 }
 
 #[derive(Debug)]
 pub enum TypeKind {
+    Placeholder,
     Struct { fields: Vec<(Ident, TypeId)> },
     Enum { fields: Vec<Ident> },
     Trait { methods: Vec<FnSig> },
@@ -396,25 +401,23 @@ impl Visitor for SemanticAnalyzer {
                         ident.clone(),
                         TypeInfo {
                             name: ident.clone(),
-                            kind: TypeKind::Enum { fields: Vec::new() },
+                            kind: TypeKind::Placeholder,
                         },
                     )?,
                     AnalyzeStage::Definition => {
-                        let info = self.get_type(ident)?;
-                        match &mut info.kind {
-                            TypeKind::Enum { fields } => {
-                                for x in variants {
-                                    if !matches!(x.data, crate::ast::item::VariantData::Unit)
-                                        || x.disr_expr.is_some()
-                                    {
-                                        return Err(SemanticError::Unimplemented);
-                                    }
-
-                                    fields.push(x.ident.clone())
+                        let fields = variants
+                            .iter()
+                            .map(|x| {
+                                if !matches!(x.data, crate::ast::item::VariantData::Unit)
+                                    || x.disr_expr.is_some()
+                                {
+                                    Err(SemanticError::Unimplemented)
+                                } else {
+                                    Ok(x.ident.clone())
                                 }
-                            }
-                            _ => panic!(),
-                        }
+                            })
+                            .collect::<Result<Vec<_>, SemanticError>>()?;
+                        self.get_type(ident)?.kind = TypeKind::Enum { fields };
                     }
                     AnalyzeStage::Body => todo!(),
                     AnalyzeStage::Done => todo!(),
@@ -434,20 +437,22 @@ impl Visitor for SemanticAnalyzer {
                     },
                 )?,
                 AnalyzeStage::Definition => {
-                    let info = self.get_type(ident)?;
-                    match &mut info.kind {
-                        TypeKind::Struct { fields } => {
-                            match variant_data {
-                                crate::ast::item::VariantData::Struct { fields } => {
-                                    for FieldDef{ident, ty} in fields {
-                                        // TODO
-                                    }
-                                },
-                                _ => return Err(SemanticError::Unimplemented),
-                            }
+                    let fields = match variant_data {
+                        crate::ast::item::VariantData::Struct { fields } => fields
+                            .iter()
+                            .map(|x| {
+                                Ok((
+                                    x.ident.clone().ok_or(SemanticError::Unimplemented)?,
+                                    self.type_table.intern(self.resolve_ty(&x.ty)?),
+                                ))
+                            })
+                            .collect::<Result<Vec<_>, SemanticError>>()?,
+                        crate::ast::item::VariantData::Tuple(_) => {
+                            return Err(SemanticError::Unimplemented);
                         }
-                        _ => panic!(),
-                    }
+                        crate::ast::item::VariantData::Unit => Vec::new(),
+                    };
+                    self.get_type(ident)?.kind = TypeKind::Struct { fields }
                 }
                 AnalyzeStage::Body => todo!(),
                 AnalyzeStage::Done => todo!(),
@@ -463,9 +468,7 @@ impl Visitor for SemanticAnalyzer {
                     ident.clone(),
                     TypeInfo {
                         name: ident.clone(),
-                        kind: TypeKind::Trait {
-                            methods: Vec::new(),
-                        },
+                        kind: TypeKind::Placeholder,
                     },
                 )?,
                 AnalyzeStage::Definition => todo!(),

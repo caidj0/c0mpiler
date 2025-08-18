@@ -373,11 +373,10 @@ impl Eatable for StructItem {
         match_keyword!(using_iter, TokenType::Struct);
         let ident = using_iter.next()?.try_into()?;
         let generics = Generics::eat(&mut using_iter)?;
-        let variant_data = if is_keyword!(using_iter, TokenType::Semi) {
-            VariantData::Struct { fields: Vec::new() }
-        } else {
-            VariantData::eat(&mut using_iter)?
-        };
+        let variant_data = VariantData::eat(&mut using_iter)?;
+        if !matches!(variant_data, VariantData::Struct { fields: _ }) {
+            match_keyword!(using_iter, TokenType::Semi);
+        }
 
         iter.update(using_iter);
         Ok(Self(ident, generics, variant_data))
