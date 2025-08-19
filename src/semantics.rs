@@ -8,6 +8,7 @@ use crate::{
         Ident, Mutability,
         expr::Expr,
         item::{AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, StructItem, TraitItem},
+        stmt::StmtKind,
         ty::{MutTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
@@ -23,6 +24,8 @@ pub enum SemanticError {
     InvaildPath,
     UnknownType,
     UnknownVariable,
+    InvaildScope,
+    FnWithoutBody,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -38,6 +41,12 @@ pub enum ResolvedTy {
     Tup(Vec<ResolvedTy>),
     Fn(Vec<ResolvedTy>, Box<ResolvedTy>),
     Infer,
+}
+
+impl ResolvedTy {
+    pub fn unit() -> Self {
+        Self::Tup(vec![])
+    }
 }
 
 #[derive(Debug, Default)]
@@ -106,14 +115,33 @@ pub enum TypeKind {
 }
 
 #[derive(Debug)]
+pub enum VariableKind {
+    Decl,
+    Inited,
+    Const,
+}
+
+#[derive(Debug)]
 pub struct Variable {
     pub ty: TypeId,
     pub mutbl: Mutability,
+    pub kind: VariableKind,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
+pub enum ScopeKind {
+    Root,
+    Fn,
+    Trait,
+    Enum,
+    Struct,
+    Impl,
+}
+
+#[derive(Debug)]
 pub struct Scope {
     pub ident: String,
+    pub kind: ScopeKind,
     pub types: HashMap<Ident, TypeInfo>,
     pub values: HashMap<Ident, Variable>,
 }
@@ -123,7 +151,6 @@ pub enum AnalyzeStage {
     SymbolCollect,
     Definition,
     Body,
-    Done,
 }
 
 #[derive(Debug)]
@@ -137,11 +164,19 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
+        let mut type_table = TypeTable::default();
+        type_table.intern(ResolvedTy::unit());
+
         Self {
             layers: Vec::default(),
-            type_table: TypeTable::default(),
+            type_table,
             impls: HashMap::default(),
-            root_scope: Scope::default(),
+            root_scope: Scope {
+                ident: String::default(),
+                kind: ScopeKind::Root,
+                types: HashMap::default(),
+                values: HashMap::default(),
+            },
             stage: AnalyzeStage::SymbolCollect,
         }
     }
@@ -151,6 +186,40 @@ impl SemanticAnalyzer {
             Ok(scope)
         } else {
             Ok(&mut self.root_scope)
+        }
+    }
+
+    fn push_scope(&mut self, ident: Ident, kind: ScopeKind) -> Result<(), SemanticError> {
+        let name = match ident {
+            Ident::String(s) => {
+                match kind {
+                    ScopeKind::Root => "",
+                    ScopeKind::Fn => "$Fn$",
+                    ScopeKind::Trait => "$Trait$",
+                    ScopeKind::Enum => "$Enum$",
+                    ScopeKind::Struct => "$Struct$",
+                    ScopeKind::Impl => "$Impl$",
+                }
+                .to_string()
+                    + &s
+            }
+            _ => return Err(SemanticError::InvaildScope),
+        };
+
+        self.layers.push(Scope {
+            ident: name,
+            kind,
+            types: HashMap::default(),
+            values: HashMap::default(),
+        });
+        Ok(())
+    }
+
+    fn pop_scope(&mut self) -> Result<(), SemanticError> {
+        if let Some(_) = self.layers.pop() {
+            Err(SemanticError::InvaildScope)
+        } else {
+            Ok(())
         }
     }
 
@@ -325,6 +394,18 @@ impl SemanticAnalyzer {
         }
     }
 
+    fn intern_type(&mut self, ty: ResolvedTy) -> TypeId {
+        self.type_table.intern(ty)
+    }
+
+    fn get_type_by_id(&self, id: TypeId) -> &ResolvedTy {
+        self.type_table.get(id)
+    }
+
+    fn unit_type() -> TypeId {
+        TypeId(0)
+    }
+
     fn check_const(&self, ty: &ResolvedTy, expr: &Expr) -> Result<(), SemanticError> {
         if let ResolvedTy::BulitIn(ident) = ty {
             if let Ident::String(s) = ident {
@@ -345,29 +426,11 @@ impl SemanticAnalyzer {
 }
 
 impl Visitor for SemanticAnalyzer {
-    fn visit_crate(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
-        for item in &krate.items {
-            self.visit_item(item)?
-        }
-        Ok(())
-    }
-
-    fn visit_item(&mut self, item: &crate::ast::item::Item) -> Result<(), SemanticError> {
-        match &item.kind {
-            crate::ast::item::ItemKind::Const(const_item) => self.visit_const_item(const_item),
-            crate::ast::item::ItemKind::Fn(fn_item) => self.visit_fn_item(fn_item),
-            crate::ast::item::ItemKind::Mod(mod_item) => self.visit_mod_item(mod_item),
-            crate::ast::item::ItemKind::Enum(enum_item) => self.visit_enum_item(enum_item),
-            crate::ast::item::ItemKind::Struct(struct_item) => self.visit_struct_item(struct_item),
-            crate::ast::item::ItemKind::Trait(trait_item) => self.visit_trait_item(trait_item),
-            crate::ast::item::ItemKind::Impl(impl_item) => self.visit_impl_item(impl_item),
-        }
-    }
-
     fn visit_const_item(
         &mut self,
         ConstItem { ident, ty, expr }: &ConstItem,
     ) -> Result<(), SemanticError> {
+        // const item 只需在 Definition 阶段收集和评估即可
         match self.stage {
             AnalyzeStage::SymbolCollect => {}
             AnalyzeStage::Definition => {
@@ -375,17 +438,17 @@ impl Visitor for SemanticAnalyzer {
                 if let Some(e) = expr {
                     self.check_const(&ty, e)?;
                 }
-                let tyid = self.type_table.intern(ty);
+                let tyid = self.intern_type(ty);
                 self.add_value(
                     ident.clone(),
                     Variable {
                         ty: tyid,
                         mutbl: Mutability::Not,
+                        kind: VariableKind::Const,
                     },
                 )?;
             }
-            AnalyzeStage::Body => todo!(),
-            AnalyzeStage::Done => todo!(),
+            AnalyzeStage::Body => {}
         }
 
         Ok(())
@@ -397,7 +460,7 @@ impl Visitor for SemanticAnalyzer {
             ident,
             generics: _,
             sig,
-            body: _,
+            body,
         }: &FnItem,
     ) -> Result<(), SemanticError> {
         match self.stage {
@@ -413,19 +476,49 @@ impl Visitor for SemanticAnalyzer {
                     FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
                     FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
                 };
-                let tyid = self
-                    .type_table
-                    .intern(ResolvedTy::Fn(param_tys, Box::new(ret_ty)));
+                let tyid = self.intern_type(ResolvedTy::Fn(param_tys, Box::new(ret_ty)));
                 self.add_value(
                     ident.clone(),
                     Variable {
                         ty: tyid,
                         mutbl: Mutability::Not,
+                        kind: VariableKind::Const,
                     },
                 )?;
             }
-            AnalyzeStage::Body => todo!(),
-            AnalyzeStage::Done => todo!(),
+            AnalyzeStage::Body => {
+                match body {
+                    Some(body) => {
+                        self.push_scope(ident.clone(), ScopeKind::Fn)?;
+
+                        for stage in [
+                            AnalyzeStage::SymbolCollect,
+                            AnalyzeStage::Definition,
+                            AnalyzeStage::Body,
+                        ] {
+                            self.stage = stage;
+                            for stmt in &body.stmts {
+                                self.visit_stmt(stmt)?;
+                            }
+                        }
+
+                        // Do something...
+
+                        self.pop_scope()?;
+                    }
+                    None => {
+                        let scope = self.get_scope()?;
+                        match scope.kind {
+                            ScopeKind::Root | ScopeKind::Fn => {
+                                return Err(SemanticError::FnWithoutBody);
+                            }
+                            ScopeKind::Trait => {}
+                            ScopeKind::Impl => todo!(), // TODO
+                            ScopeKind::Enum | ScopeKind::Struct => panic!("Impossible condition!"),
+                        }
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -462,7 +555,6 @@ impl Visitor for SemanticAnalyzer {
                 self.get_type(ident)?.kind = TypeKind::Enum { fields };
             }
             AnalyzeStage::Body => todo!(),
-            AnalyzeStage::Done => todo!(),
         }
         Ok(())
     }
@@ -486,7 +578,7 @@ impl Visitor for SemanticAnalyzer {
                         .map(|x| {
                             Ok((
                                 x.ident.clone().ok_or(SemanticError::Unimplemented)?,
-                                self.type_table.intern(self.resolve_ty(&x.ty)?),
+                                self.intern_type(self.resolve_ty(&x.ty)?),
                             ))
                         })
                         .collect::<Result<Vec<_>, SemanticError>>()?,
@@ -498,7 +590,6 @@ impl Visitor for SemanticAnalyzer {
                 self.get_type(ident)?.kind = TypeKind::Struct { fields }
             }
             AnalyzeStage::Body => todo!(),
-            AnalyzeStage::Done => todo!(),
         }
         Ok(())
     }
@@ -530,7 +621,7 @@ impl Visitor for SemanticAnalyzer {
                             if let Some(e) = expr {
                                 self.check_const(&resloved_ty, e)?;
                             }
-                            let tyid = self.type_table.intern(resloved_ty);
+                            let tyid = self.intern_type(resloved_ty);
                             constants.push(Constant {
                                 name: ident.clone(),
                                 ty: tyid,
@@ -553,11 +644,9 @@ impl Visitor for SemanticAnalyzer {
                                 FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
                                 FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
                             };
-                            let params_id = param_tys
-                                .into_iter()
-                                .map(|x| self.type_table.intern(x))
-                                .collect();
-                            let ret_id = self.type_table.intern(ret_ty);
+                            let params_id =
+                                param_tys.into_iter().map(|x| self.intern_type(x)).collect();
+                            let ret_id = self.intern_type(ret_ty);
                             methods.push(FnSig {
                                 name: ident.clone(),
                                 params: params_id,
@@ -570,7 +659,6 @@ impl Visitor for SemanticAnalyzer {
                 self.get_type(ident)?.kind = TypeKind::Trait { methods, constants };
             }
             AnalyzeStage::Body => todo!(),
-            AnalyzeStage::Done => todo!(),
         }
         Ok(())
     }
@@ -579,15 +667,235 @@ impl Visitor for SemanticAnalyzer {
         Err(SemanticError::Unimplemented)
     }
 
-    fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Result<(), SemanticError> {
+    fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Result<TypeId, SemanticError> {
+        match &stmt.kind {
+            StmtKind::Let(local_stmt) => {
+                self.visit_let_stmt(local_stmt)?;
+                Ok(Self::unit_type())
+            }
+            StmtKind::Item(item) => {
+                self.visit_item(item)?;
+                Ok(Self::unit_type())
+            }
+            StmtKind::Expr(expr) => self.visit_expr(expr),
+            StmtKind::Semi(expr) => self.visit_expr(expr).map(|_| Self::unit_type()),
+            StmtKind::Empty(_) => Ok(Self::unit_type()),
+        }
+    }
+
+    fn visit_let_stmt(&mut self, stmt: &crate::ast::stmt::LocalStmt) -> Result<(), SemanticError> {
+        match self.stage {
+            AnalyzeStage::SymbolCollect => {}
+            AnalyzeStage::Definition => {
+                // TODO: 先做 Expr
+                todo!()
+            }
+            AnalyzeStage::Body => {}
+        }
+        Ok(())
+    }
+
+    fn visit_array_expr(
+        &mut self,
+        expr: &crate::ast::expr::ArrayExpr,
+    ) -> Result<TypeId, SemanticError> {
         todo!()
     }
 
-    fn visit_expr(&mut self, expr: &crate::ast::expr::Expr) -> Result<ResolvedTy, SemanticError> {
+    fn visit_const_block_expr(
+        &mut self,
+        expr: &crate::ast::expr::ConstBlockExpr,
+    ) -> Result<TypeId, SemanticError> {
         todo!()
     }
 
-    fn visit_pat(&mut self, pat: &crate::ast::pat::Pat) -> Result<ResolvedTy, SemanticError> {
+    fn visit_call_expr(
+        &mut self,
+        expr: &crate::ast::expr::CallExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_method_call_expr(
+        &mut self,
+        expr: &crate::ast::expr::MethodCallExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_tup_expr(
+        &mut self,
+        expr: &crate::ast::expr::TupExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_binary_expr(
+        &mut self,
+        expr: &crate::ast::expr::BinaryExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_unary_expr(
+        &mut self,
+        expr: &crate::ast::expr::UnaryExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_lit_expr(
+        &mut self,
+        expr: &crate::ast::expr::LitExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_cast_expr(
+        &mut self,
+        expr: &crate::ast::expr::CastExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_let_expr(
+        &mut self,
+        expr: &crate::ast::expr::LetExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_if_expr(&mut self, expr: &crate::ast::expr::IfExpr) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_while_expr(
+        &mut self,
+        expr: &crate::ast::expr::WhileExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_for_loop_expr(
+        &mut self,
+        expr: &crate::ast::expr::ForLoopExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_loop_expr(
+        &mut self,
+        expr: &crate::ast::expr::LoopExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_match_expr(
+        &mut self,
+        expr: &crate::ast::expr::MatchExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_block_expr(
+        &mut self,
+        expr: &crate::ast::expr::BlockExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_assign_expr(
+        &mut self,
+        expr: &crate::ast::expr::AssignExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_assign_op_expr(
+        &mut self,
+        expr: &crate::ast::expr::AssignOpExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_field_expr(
+        &mut self,
+        expr: &crate::ast::expr::FieldExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_index_expr(
+        &mut self,
+        expr: &crate::ast::expr::IndexExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_range_expr(
+        &mut self,
+        expr: &crate::ast::expr::RangeExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_underscore_expr(
+        &mut self,
+        expr: &crate::ast::expr::UnderscoreExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_path_expr(
+        &mut self,
+        expr: &crate::ast::expr::PathExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_addr_of_expr(
+        &mut self,
+        expr: &crate::ast::expr::AddrOfExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_break_expr(
+        &mut self,
+        expr: &crate::ast::expr::BreakExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_continue_expr(
+        &mut self,
+        expr: &crate::ast::expr::ContinueExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_ret_expr(
+        &mut self,
+        expr: &crate::ast::expr::RetExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_struct_expr(
+        &mut self,
+        expr: &crate::ast::expr::StructExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_repeat_expr(
+        &mut self,
+        expr: &crate::ast::expr::RepeatExpr,
+    ) -> Result<TypeId, SemanticError> {
+        todo!()
+    }
+
+    fn visit_pat(&mut self, pat: &crate::ast::pat::Pat) -> Result<TypeId, SemanticError> {
         todo!()
     }
 }
