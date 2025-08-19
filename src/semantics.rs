@@ -7,7 +7,7 @@ use crate::{
     ast::{
         Ident, Mutability,
         expr::Expr,
-        item::{AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy},
+        item::{AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, StructItem, TraitItem},
         ty::{MutTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
@@ -346,16 +346,83 @@ impl SemanticAnalyzer {
 
 impl Visitor for SemanticAnalyzer {
     fn visit_crate(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
+        for item in &krate.items {
+            self.visit_item(item)?
+        }
+        Ok(())
+    }
+
+    fn visit_item(&mut self, item: &crate::ast::item::Item) -> Result<(), SemanticError> {
+        match &item.kind {
+            crate::ast::item::ItemKind::Const(const_item) => self.visit_const_item(const_item),
+            crate::ast::item::ItemKind::Fn(fn_item) => self.visit_fn_item(fn_item),
+            crate::ast::item::ItemKind::Mod(mod_item) => self.visit_mod_item(mod_item),
+            crate::ast::item::ItemKind::Enum(enum_item) => self.visit_enum_item(enum_item),
+            crate::ast::item::ItemKind::Struct(struct_item) => self.visit_struct_item(struct_item),
+            crate::ast::item::ItemKind::Trait(trait_item) => self.visit_trait_item(trait_item),
+            crate::ast::item::ItemKind::Impl(impl_item) => self.visit_impl_item(impl_item),
+        }
+    }
+
+    fn visit_const_item(
+        &mut self,
+        ConstItem { ident, ty, expr }: &ConstItem,
+    ) -> Result<(), SemanticError> {
         match self.stage {
-            AnalyzeStage::SymbolCollect => {
-                for item in &krate.items {
-                    self.visit_item(item)?
-                }
-            }
+            AnalyzeStage::SymbolCollect => {}
             AnalyzeStage::Definition => {
-                for item in &krate.items {
-                    self.visit_item(item)?
+                let ty = self.resolve_ty(&ty)?;
+                if let Some(e) = expr {
+                    self.check_const(&ty, e)?;
                 }
+                let tyid = self.type_table.intern(ty);
+                self.add_value(
+                    ident.clone(),
+                    Variable {
+                        ty: tyid,
+                        mutbl: Mutability::Not,
+                    },
+                )?;
+            }
+            AnalyzeStage::Body => todo!(),
+            AnalyzeStage::Done => todo!(),
+        }
+
+        Ok(())
+    }
+
+    fn visit_fn_item(
+        &mut self,
+        FnItem {
+            ident,
+            generics: _,
+            sig,
+            body: _,
+        }: &FnItem,
+    ) -> Result<(), SemanticError> {
+        match self.stage {
+            AnalyzeStage::SymbolCollect => {}
+            AnalyzeStage::Definition => {
+                let param_tys = sig
+                    .decl
+                    .inputs
+                    .iter()
+                    .map(|x| self.resolve_ty(&x.ty))
+                    .collect::<Result<Vec<_>, SemanticError>>()?;
+                let ret_ty = match &sig.decl.output {
+                    FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
+                    FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
+                };
+                let tyid = self
+                    .type_table
+                    .intern(ResolvedTy::Fn(param_tys, Box::new(ret_ty)));
+                self.add_value(
+                    ident.clone(),
+                    Variable {
+                        ty: tyid,
+                        mutbl: Mutability::Not,
+                    },
+                )?;
             }
             AnalyzeStage::Body => todo!(),
             AnalyzeStage::Done => todo!(),
@@ -363,189 +430,153 @@ impl Visitor for SemanticAnalyzer {
         Ok(())
     }
 
-    fn visit_item(&mut self, item: &crate::ast::item::Item) -> Result<(), SemanticError> {
-        match &item.kind {
-            crate::ast::item::ItemKind::Const(ConstItem { ident, ty, expr }) => match self.stage {
-                AnalyzeStage::SymbolCollect => {}
-                AnalyzeStage::Definition => {
-                    let ty = self.resolve_ty(&ty)?;
-                    if let Some(e) = expr {
-                        self.check_const(&ty, e)?;
-                    }
-                    let tyid = self.type_table.intern(ty);
-                    self.add_value(
-                        ident.clone(),
-                        Variable {
-                            ty: tyid,
-                            mutbl: Mutability::Not,
-                        },
-                    )?;
-                }
-                AnalyzeStage::Body => todo!(),
-                AnalyzeStage::Done => todo!(),
-            },
+    fn visit_mod_item(&mut self, _: &crate::ast::item::ModItem) -> Result<(), SemanticError> {
+        Err(SemanticError::Unimplemented)
+    }
 
-            crate::ast::item::ItemKind::Fn(fn_item) => match self.stage {
-                AnalyzeStage::SymbolCollect => {}
-                AnalyzeStage::Definition => {
-                    let param_tys = fn_item
-                        .sig
-                        .decl
-                        .inputs
-                        .iter()
-                        .map(|x| self.resolve_ty(&x.ty))
-                        .collect::<Result<Vec<_>, SemanticError>>()?;
-                    let ret_ty = match &fn_item.sig.decl.output {
-                        FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
-                        FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
-                    };
-                    let tyid = self
-                        .type_table
-                        .intern(ResolvedTy::Fn(param_tys, Box::new(ret_ty)));
-                    self.add_value(
-                        fn_item.ident.clone(),
-                        Variable {
-                            ty: tyid,
-                            mutbl: Mutability::Not,
-                        },
-                    )?;
-                }
-                AnalyzeStage::Body => todo!(),
-                AnalyzeStage::Done => todo!(),
-            },
-
-            crate::ast::item::ItemKind::Mod(_) => return Err(SemanticError::Unimplemented),
-
-            crate::ast::item::ItemKind::Enum(EnumItem(ident, _, variants)) => match self.stage {
-                AnalyzeStage::SymbolCollect => self.add_type(
-                    ident.clone(),
-                    TypeInfo {
-                        name: ident.clone(),
-                        kind: TypeKind::Placeholder,
-                    },
-                )?,
-                AnalyzeStage::Definition => {
-                    let fields = variants
-                        .iter()
-                        .map(|x| {
-                            if !matches!(x.data, crate::ast::item::VariantData::Unit)
-                                || x.disr_expr.is_some()
-                            {
-                                Err(SemanticError::Unimplemented)
-                            } else {
-                                Ok(x.ident.clone())
-                            }
-                        })
-                        .collect::<Result<Vec<_>, SemanticError>>()?;
-                    self.get_type(ident)?.kind = TypeKind::Enum { fields };
-                }
-                AnalyzeStage::Body => todo!(),
-                AnalyzeStage::Done => todo!(),
-            },
-
-            crate::ast::item::ItemKind::Struct(crate::ast::item::StructItem(
-                ident,
-                _,
-                variant_data,
-            )) => match self.stage {
-                AnalyzeStage::SymbolCollect => self.add_type(
-                    ident.clone(),
-                    TypeInfo {
-                        name: ident.clone(),
-                        kind: TypeKind::Struct { fields: Vec::new() },
-                    },
-                )?,
-                AnalyzeStage::Definition => {
-                    let fields = match variant_data {
-                        crate::ast::item::VariantData::Struct { fields } => fields
-                            .iter()
-                            .map(|x| {
-                                Ok((
-                                    x.ident.clone().ok_or(SemanticError::Unimplemented)?,
-                                    self.type_table.intern(self.resolve_ty(&x.ty)?),
-                                ))
-                            })
-                            .collect::<Result<Vec<_>, SemanticError>>()?,
-                        crate::ast::item::VariantData::Tuple(_) => {
-                            return Err(SemanticError::Unimplemented);
+    fn visit_enum_item(
+        &mut self,
+        EnumItem(ident, _, variants): &EnumItem,
+    ) -> Result<(), SemanticError> {
+        match self.stage {
+            AnalyzeStage::SymbolCollect => self.add_type(
+                ident.clone(),
+                TypeInfo {
+                    name: ident.clone(),
+                    kind: TypeKind::Placeholder,
+                },
+            )?,
+            AnalyzeStage::Definition => {
+                let fields = variants
+                    .iter()
+                    .map(|x| {
+                        if !matches!(x.data, crate::ast::item::VariantData::Unit)
+                            || x.disr_expr.is_some()
+                        {
+                            Err(SemanticError::Unimplemented)
+                        } else {
+                            Ok(x.ident.clone())
                         }
-                        crate::ast::item::VariantData::Unit => Vec::new(),
-                    };
-                    self.get_type(ident)?.kind = TypeKind::Struct { fields }
-                }
-                AnalyzeStage::Body => todo!(),
-                AnalyzeStage::Done => todo!(),
-            },
-
-            crate::ast::item::ItemKind::Trait(crate::ast::item::TraitItem {
-                ident,
-                generics: _,
-                bounds: _,
-                items,
-            }) => match self.stage {
-                AnalyzeStage::SymbolCollect => self.add_type(
-                    ident.clone(),
-                    TypeInfo {
-                        name: ident.clone(),
-                        kind: TypeKind::Placeholder,
-                    },
-                )?,
-                AnalyzeStage::Definition => {
-                    let mut methods = Vec::new();
-                    let mut constants = Vec::new();
-                    for item in items {
-                        match &item.kind {
-                            AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
-                                let resloved_ty = self.resolve_ty(&ty)?;
-                                if let Some(e) = expr {
-                                    self.check_const(&resloved_ty, e)?;
-                                }
-                                let tyid = self.type_table.intern(resloved_ty);
-                                constants.push(Constant {
-                                    name: ident.clone(),
-                                    ty: tyid,
-                                    is_placeholder: expr.is_none(),
-                                })
-                            }
-                            AssocItemKind::Fn(FnItem {
-                                ident,
-                                generics: _,
-                                sig,
-                                body,
-                            }) => {
-                                let param_tys = sig
-                                    .decl
-                                    .inputs
-                                    .iter()
-                                    .map(|x| self.resolve_ty(&x.ty))
-                                    .collect::<Result<Vec<_>, SemanticError>>()?;
-                                let ret_ty = match &sig.decl.output {
-                                    FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
-                                    FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
-                                };
-                                let params_id = param_tys
-                                    .into_iter()
-                                    .map(|x| self.type_table.intern(x))
-                                    .collect();
-                                let ret_id = self.type_table.intern(ret_ty);
-                                methods.push(FnSig {
-                                    name: ident.clone(),
-                                    params: params_id,
-                                    ret: ret_id,
-                                    is_placeholder: body.is_none(),
-                                });
-                            }
-                        }
-                    }
-                    self.get_type(ident)?.kind = TypeKind::Trait { methods, constants };
-                }
-                AnalyzeStage::Body => todo!(),
-                AnalyzeStage::Done => todo!(),
-            },
-
-            crate::ast::item::ItemKind::Impl(impl_item) => todo!(),
+                    })
+                    .collect::<Result<Vec<_>, SemanticError>>()?;
+                self.get_type(ident)?.kind = TypeKind::Enum { fields };
+            }
+            AnalyzeStage::Body => todo!(),
+            AnalyzeStage::Done => todo!(),
         }
         Ok(())
+    }
+
+    fn visit_struct_item(
+        &mut self,
+        StructItem(ident, _, variant_data): &crate::ast::item::StructItem,
+    ) -> Result<(), SemanticError> {
+        match self.stage {
+            AnalyzeStage::SymbolCollect => self.add_type(
+                ident.clone(),
+                TypeInfo {
+                    name: ident.clone(),
+                    kind: TypeKind::Struct { fields: Vec::new() },
+                },
+            )?,
+            AnalyzeStage::Definition => {
+                let fields = match variant_data {
+                    crate::ast::item::VariantData::Struct { fields } => fields
+                        .iter()
+                        .map(|x| {
+                            Ok((
+                                x.ident.clone().ok_or(SemanticError::Unimplemented)?,
+                                self.type_table.intern(self.resolve_ty(&x.ty)?),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, SemanticError>>()?,
+                    crate::ast::item::VariantData::Tuple(_) => {
+                        return Err(SemanticError::Unimplemented);
+                    }
+                    crate::ast::item::VariantData::Unit => Vec::new(),
+                };
+                self.get_type(ident)?.kind = TypeKind::Struct { fields }
+            }
+            AnalyzeStage::Body => todo!(),
+            AnalyzeStage::Done => todo!(),
+        }
+        Ok(())
+    }
+
+    fn visit_trait_item(
+        &mut self,
+        TraitItem {
+            ident,
+            generics: _,
+            bounds: _,
+            items,
+        }: &crate::ast::item::TraitItem,
+    ) -> Result<(), SemanticError> {
+        match self.stage {
+            AnalyzeStage::SymbolCollect => self.add_type(
+                ident.clone(),
+                TypeInfo {
+                    name: ident.clone(),
+                    kind: TypeKind::Placeholder,
+                },
+            )?,
+            AnalyzeStage::Definition => {
+                let mut methods = Vec::new();
+                let mut constants = Vec::new();
+                for item in items {
+                    match &item.kind {
+                        AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
+                            let resloved_ty = self.resolve_ty(&ty)?;
+                            if let Some(e) = expr {
+                                self.check_const(&resloved_ty, e)?;
+                            }
+                            let tyid = self.type_table.intern(resloved_ty);
+                            constants.push(Constant {
+                                name: ident.clone(),
+                                ty: tyid,
+                                is_placeholder: expr.is_none(),
+                            })
+                        }
+                        AssocItemKind::Fn(FnItem {
+                            ident,
+                            generics: _,
+                            sig,
+                            body,
+                        }) => {
+                            let param_tys = sig
+                                .decl
+                                .inputs
+                                .iter()
+                                .map(|x| self.resolve_ty(&x.ty))
+                                .collect::<Result<Vec<_>, SemanticError>>()?;
+                            let ret_ty = match &sig.decl.output {
+                                FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
+                                FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
+                            };
+                            let params_id = param_tys
+                                .into_iter()
+                                .map(|x| self.type_table.intern(x))
+                                .collect();
+                            let ret_id = self.type_table.intern(ret_ty);
+                            methods.push(FnSig {
+                                name: ident.clone(),
+                                params: params_id,
+                                ret: ret_id,
+                                is_placeholder: body.is_none(),
+                            });
+                        }
+                    }
+                }
+                self.get_type(ident)?.kind = TypeKind::Trait { methods, constants };
+            }
+            AnalyzeStage::Body => todo!(),
+            AnalyzeStage::Done => todo!(),
+        }
+        Ok(())
+    }
+
+    fn visit_impl_item(&mut self, _: &crate::ast::item::ImplItem) -> Result<(), SemanticError> {
+        Err(SemanticError::Unimplemented)
     }
 
     fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Result<(), SemanticError> {
