@@ -6,7 +6,7 @@ use std::{collections::HashMap, vec};
 
 use crate::{
     ast::{
-        Ident, Mutability,
+        Ident, Mutability, Symbol,
         expr::Expr,
         item::{AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, StructItem, TraitItem},
         stmt::StmtKind,
@@ -34,8 +34,8 @@ pub struct TypeId(usize);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResolvedTy {
-    BulitIn(Ident),
-    Named(Vec<Ident>),
+    BulitIn(Symbol),
+    Named(Vec<Symbol>),
     Ref(Box<ResolvedTy>, Mutability),
     Array(Box<ResolvedTy>, u32),
     Slice(Box<ResolvedTy>),
@@ -143,8 +143,8 @@ pub enum ScopeKind {
 pub struct Scope {
     pub ident: String,
     pub kind: ScopeKind,
-    pub types: HashMap<Ident, TypeInfo>,
-    pub values: HashMap<Ident, Variable>,
+    pub types: HashMap<Symbol, TypeInfo>,
+    pub values: HashMap<Symbol, Variable>,
 }
 
 #[derive(Debug)]
@@ -198,9 +198,9 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn push_scope(&mut self, ident: Ident, kind: ScopeKind) -> Result<(), SemanticError> {
+    fn push_scope(&mut self, ident: Symbol, kind: ScopeKind) -> Result<(), SemanticError> {
         let name = match ident {
-            Ident::String(s) => {
+            Symbol::String(s) => {
                 match kind {
                     ScopeKind::Root => "",
                     ScopeKind::Fn => "$Fn$",
@@ -232,7 +232,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn add_type(&mut self, ident: Ident, info: TypeInfo) -> Result<(), SemanticError> {
+    fn add_type(&mut self, ident: Symbol, info: TypeInfo) -> Result<(), SemanticError> {
         let s = self.get_scope_mut()?;
 
         if s.types.contains_key(&ident) {
@@ -244,12 +244,12 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_type(&mut self, ident: &Ident) -> Result<&mut TypeInfo, SemanticError> {
+    fn get_type(&mut self, ident: &Symbol) -> Result<&mut TypeInfo, SemanticError> {
         let s = self.get_scope_mut()?;
         s.types.get_mut(ident).ok_or(SemanticError::UnknownType)
     }
 
-    fn add_value(&mut self, ident: Ident, var: Variable) -> Result<(), SemanticError> {
+    fn add_value(&mut self, ident: Symbol, var: Variable) -> Result<(), SemanticError> {
         let s = self.get_scope_mut()?;
 
         if s.values.contains_key(&ident) {
@@ -261,7 +261,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_value(&mut self, ident: &Ident) -> Result<&mut Variable, SemanticError> {
+    fn get_value(&mut self, ident: &Symbol) -> Result<&mut Variable, SemanticError> {
         let s = self.get_scope_mut()?;
         s.values
             .get_mut(ident)
@@ -286,13 +286,13 @@ impl SemanticAnalyzer {
         ret
     }
 
-    fn is_builtin_type(&self, ident: &Ident) -> bool {
+    fn is_builtin_type(&self, ident: &Symbol) -> bool {
         match ident {
-            Ident::Empty => false,
-            Ident::String(s) => {
+            Symbol::Empty => false,
+            Symbol::String(s) => {
                 s == "u32" || s == "i32" || s == "char" || s == "str" || s == "String"
             }
-            Ident::PathSegment(_) => false,
+            Symbol::PathSegment(_) => false,
         }
     }
 
@@ -321,19 +321,29 @@ impl SemanticAnalyzer {
                 }
 
                 let mut scope = None;
-                let mut id: Ident = Ident::Empty;
+                let mut id = Symbol::Empty;
 
                 for (index, seg) in path_ty.1.segments.iter().enumerate() {
                     match &seg.ident {
-                        Ident::Empty => return Err(SemanticError::InvaildPath),
-                        Ident::String(s) => {
-                            if matches!(id, Ident::Empty) {
-                                id = Ident::String(s.to_string());
+                        Ident {
+                            symbol: Symbol::Empty,
+                            span: _,
+                        } => return Err(SemanticError::InvaildPath),
+                        Ident {
+                            symbol: Symbol::String(s),
+                            span: _,
+                        } => {
+                            if matches!(id, Symbol::Empty) {
+                                // id 应该只能被赋值一次
+                                id = Symbol::String(s.to_string());
                             } else {
                                 return Err(SemanticError::InvaildPath);
                             }
                         }
-                        Ident::PathSegment(token_type) => {
+                        Ident {
+                            symbol: Symbol::PathSegment(token_type),
+                            span: _,
+                        } => {
                             if index != 0 {
                                 return Err(SemanticError::InvaildPath);
                             } else {
@@ -385,9 +395,9 @@ impl SemanticAnalyzer {
 
                         match found_index {
                             Some(idx) => {
-                                let mut names: Vec<Ident> = Vec::new();
+                                let mut names = Vec::new();
                                 for i in 0..=idx {
-                                    names.push(Ident::String(self.layers[i].ident.clone()));
+                                    names.push(Symbol::String(self.layers[i].ident.clone()));
                                 }
                                 names.push(id);
                                 Ok(ResolvedTy::Named(names))
@@ -428,7 +438,7 @@ impl SemanticAnalyzer {
 
     fn check_const(&self, ty: &ResolvedTy, expr: &Expr) -> Result<(), SemanticError> {
         if let ResolvedTy::BulitIn(ident) = ty {
-            if let Ident::String(s) = ident {
+            if let Symbol::String(s) = ident {
                 match s.as_str() {
                     "u32" => {
                         let _: u32 = expr.try_into()?;
@@ -460,7 +470,7 @@ impl Visitor for SemanticAnalyzer {
                 }
                 let tyid = self.intern_type(ty);
                 self.add_value(
-                    ident.clone(),
+                    ident.symbol.clone(),
                     Variable {
                         ty: tyid,
                         mutbl: Mutability::Not,
@@ -498,7 +508,7 @@ impl Visitor for SemanticAnalyzer {
                 };
                 let tyid = self.intern_type(ResolvedTy::Fn(param_tys, Box::new(ret_ty)));
                 self.add_value(
-                    ident.clone(),
+                    ident.symbol.clone(),
                     Variable {
                         ty: tyid,
                         mutbl: Mutability::Not,
@@ -509,7 +519,7 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::Body => {
                 match body {
                     Some(body) => {
-                        self.push_scope(ident.clone(), ScopeKind::Fn)?;
+                        self.push_scope(ident.symbol.clone(), ScopeKind::Fn)?;
 
                         for stage in [
                             AnalyzeStage::SymbolCollect,
@@ -553,7 +563,7 @@ impl Visitor for SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         match self.stage {
             AnalyzeStage::SymbolCollect => self.add_type(
-                ident.clone(),
+                ident.symbol.clone(),
                 TypeInfo {
                     name: ident.clone(),
                     kind: TypeKind::Placeholder,
@@ -572,7 +582,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     })
                     .collect::<Result<Vec<_>, SemanticError>>()?;
-                self.get_type(ident)?.kind = TypeKind::Enum { fields };
+                self.get_type(&ident.symbol)?.kind = TypeKind::Enum { fields };
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -585,7 +595,7 @@ impl Visitor for SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         match self.stage {
             AnalyzeStage::SymbolCollect => self.add_type(
-                ident.clone(),
+                ident.symbol.clone(),
                 TypeInfo {
                     name: ident.clone(),
                     kind: TypeKind::Struct { fields: Vec::new() },
@@ -607,7 +617,7 @@ impl Visitor for SemanticAnalyzer {
                     }
                     crate::ast::item::VariantData::Unit => Vec::new(),
                 };
-                self.get_type(ident)?.kind = TypeKind::Struct { fields }
+                self.get_type(&ident.symbol)?.kind = TypeKind::Struct { fields }
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -625,7 +635,7 @@ impl Visitor for SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         match self.stage {
             AnalyzeStage::SymbolCollect => self.add_type(
-                ident.clone(),
+                ident.symbol.clone(),
                 TypeInfo {
                     name: ident.clone(),
                     kind: TypeKind::Placeholder,
@@ -676,7 +686,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                 }
-                self.get_type(ident)?.kind = TypeKind::Trait { methods, constants };
+                self.get_type(&ident.symbol)?.kind = TypeKind::Trait { methods, constants };
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -724,8 +734,6 @@ impl Visitor for SemanticAnalyzer {
             .iter()
             .map(|x| self.visit_expr(x))
             .collect::<Result<Vec<_>, SemanticError>>()?;
-        
-        
 
         todo!()
     }

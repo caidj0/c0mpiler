@@ -12,9 +12,9 @@ use crate::{
             ConstItem, EnumItem, FnItem, ImplItem, Item, ItemKind, ModItem, StructItem, TraitItem,
         },
         pat::Pat,
-        stmt::{LocalStmt, Stmt, StmtKind},
+        stmt::{LocalStmt, Stmt},
     },
-    semantics::{ResolvedTy, SemanticError, TypeId},
+    semantics::{SemanticError, TypeId},
 };
 
 pub trait Visitor {

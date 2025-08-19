@@ -8,7 +8,6 @@ pub mod ty;
 
 use crate::{
     ast::{
-        expr::{Expr, PathExpr},
         item::Item,
         path::{Path, PathSegment},
     },
@@ -16,28 +15,38 @@ use crate::{
     tokens::TokenType,
 };
 
+pub type NodeId = usize;
+
+#[derive(Debug, Clone)]
+pub struct Span {
+    pub begin: TokenPosition,
+    pub end: TokenPosition,
+}
+
 pub trait Eatable: Sized {
-    #[allow(unused_variables, unused_mut)]
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
-
-        // Do something...
-
-        iter.update(using_iter);
-        unimplemented!()
+        let ret = Self::eat_impl(&mut using_iter);
+        if ret.is_ok() {
+            iter.update(using_iter);
+        }
+        ret
     }
+
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self>;
 }
 
 pub trait OptionEatable: Sized {
-    #[allow(unused_variables, unused_mut)]
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
-
-        // Do something...
-
-        iter.update(using_iter);
-        unimplemented!()
+        let ret = Self::try_eat_impl(&mut using_iter);
+        if ret.is_ok() {
+            iter.update(using_iter);
+        }
+        ret
     }
+
+    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>>;
 }
 
 #[derive(Debug)]
@@ -210,17 +219,13 @@ macro_rules! kind_check {
 pub struct BindingMode(pub ByRef, pub Mutability);
 
 impl Eatable for BindingMode {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        let r = ByRef::eat(&mut using_iter)?;
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        let r = ByRef::eat(iter)?;
         let m = if matches!(r, ByRef::No) {
-            Mutability::eat(&mut using_iter)?
+            Mutability::eat(iter)?
         } else {
             Mutability::Not
         };
-
-        iter.update(using_iter);
         Ok(Self(r, m))
     }
 }
@@ -232,7 +237,7 @@ pub enum ByRef {
 }
 
 impl Eatable for ByRef {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         if iter.peek()?.token_type == TokenType::Ref {
             iter.advance();
             Ok(Self::Yes(Mutability::eat(iter)?))
@@ -249,7 +254,7 @@ pub enum Mutability {
 }
 
 impl Eatable for Mutability {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         if iter.peek()?.token_type == TokenType::Mut {
             iter.advance();
             Ok(Mutability::Mut)
@@ -260,16 +265,23 @@ impl Eatable for Mutability {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub enum Ident {
+pub enum Symbol {
     #[default]
     Empty,
     String(String),
     PathSegment(TokenType),
 }
 
+#[derive(Debug, Clone)]
+pub struct Ident {
+    pub symbol: Symbol,
+    pub span: Span,
+}
+
 impl From<Ident> for Path {
     fn from(val: Ident) -> Self {
         Path {
+            span: val.span.clone(),
             segments: vec![PathSegment {
                 ident: val,
                 args: None,
@@ -278,22 +290,40 @@ impl From<Ident> for Path {
     }
 }
 
-impl From<Ident> for Expr {
-    fn from(val: Ident) -> Self {
-        Expr {
-            kind: expr::ExprKind::Path(PathExpr(None, val.into())),
-        }
-    }
-}
+// impl From<Ident> for Expr {
+//     fn from(val: Ident) -> Self {
+//         Expr {
+//             kind: expr::ExprKind::Path(PathExpr(None, val.into())),
+//         }
+//     }
+// }
 
 impl<'a> TryInto<Ident> for &Token<'a> {
     type Error = ASTError;
 
     fn try_into(self) -> Result<Ident, Self::Error> {
         match self.token_type {
-            TokenType::Id => Ok(Ident::String(self.lexeme.to_owned())),
+            TokenType::Id => Ok(Ident {
+                symbol: Symbol::String(self.lexeme.to_owned()),
+                span: Span {
+                    begin: self.pos.clone(),
+                    end: TokenPosition {
+                        line: self.pos.line,
+                        col: self.pos.col + self.lexeme.len(),
+                    },
+                },
+            }),
             TokenType::LSelfType | TokenType::SelfType | TokenType::Crate | TokenType::Super => {
-                Ok(Ident::PathSegment(self.token_type.clone()))
+                Ok(Ident {
+                    symbol: Symbol::PathSegment(self.token_type.clone()),
+                    span: Span {
+                        begin: self.pos.clone(),
+                        end: TokenPosition {
+                            line: self.pos.line,
+                            col: self.pos.col + self.lexeme.len(),
+                        },
+                    },
+                })
             }
             _ => Err(ASTError {
                 kind: ASTErrorKind::MisMatch {
@@ -309,19 +339,19 @@ impl<'a> TryInto<Ident> for &Token<'a> {
 #[derive(Debug)]
 pub struct Crate {
     pub items: Vec<Box<Item>>,
+    pub id: NodeId,
 }
 
 impl Eatable for Crate {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut items = Vec::new();
 
-        while using_iter.peek().is_ok() {
-            items.push(Box::new(Item::eat(&mut using_iter)?));
+        while iter.peek().is_ok() {
+            items.push(Box::new(Item::eat(iter)?));
         }
-
-        iter.update(using_iter);
-        Ok(Self { items })
+        Ok(Self {
+            items,
+            id: iter.assign_id(),
+        })
     }
 }

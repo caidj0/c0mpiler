@@ -3,7 +3,7 @@ use std::fmt::Display;
 use fancy_regex::Regex;
 
 use crate::{
-    ast::{ASTError, ASTResult},
+    ast::{ASTError, ASTResult, NodeId},
     tokens::{TokenType, get_all_tokens},
 };
 
@@ -170,11 +170,13 @@ pub struct TokenBuffer<'a> {
 pub struct TokenIter<'a> {
     buffer: &'a Vec<Token<'a>>,
     pos: usize,
+    id: NodeId,
 }
 
 impl<'a> TokenIter<'a> {
     pub fn update(&mut self, new_iter: Self) {
         self.pos = new_iter.pos;
+        self.id = new_iter.id;
     }
 
     pub fn advance(&mut self) {
@@ -205,10 +207,22 @@ impl<'a> TokenIter<'a> {
         Ok(&self.buffer[self.pos])
     }
 
+    pub fn get_pos(&self) -> TokenPosition {
+        self.buffer
+            .get(self.pos)
+            .map_or(self.get_last_pos(), |t| t.pos.clone())
+    }
+
     pub fn get_last_pos(&self) -> TokenPosition {
         self.buffer
             .last()
             .map_or(TokenPosition { line: 0, col: 0 }, |x| x.pos.clone())
+    }
+
+    pub fn assign_id(&mut self) -> NodeId {
+        let ret = self.id;
+        self.id += 1;
+        ret
     }
 }
 
@@ -238,6 +252,7 @@ impl<'a> TokenBuffer<'a> {
         TokenIter {
             buffer: &self.buffer,
             pos: 0,
+            id: 0,
         }
     }
 }

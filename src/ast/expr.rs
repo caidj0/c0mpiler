@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTResult, Eatable, Ident, Mutability, OptionEatable,
+        ASTError, ASTResult, Eatable, Ident, Mutability, NodeId, OptionEatable, Span,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::Stmt,
@@ -16,6 +16,8 @@ use crate::{
 #[derive(Debug)]
 pub struct Expr {
     pub kind: ExprKind,
+    pub span: Span,
+    pub id: NodeId,
 }
 
 #[derive(Debug)]
@@ -52,7 +54,7 @@ pub enum ExprKind {
 }
 
 impl Eatable for Expr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         Self::eat_with_priority(iter, 0)
     }
 }
@@ -71,6 +73,8 @@ impl Expr {
         min_priority: usize,
         has_struct: bool,
     ) -> ASTResult<Self> {
+        let begin = iter.get_pos();
+
         let mut kind = if has_struct {
             kind_check!(iter, ExprKind, Expr, (Struct))
         } else {
@@ -97,42 +101,43 @@ impl Expr {
 
         let kind = if let Ok(mut expr1) = kind {
             loop {
+                let warp_expr = |e: ExprKind, i: &mut TokenIter| {
+                    Box::new(Expr {
+                        kind: e,
+                        span: Span {
+                            begin: begin.clone(),
+                            end: i.get_pos(),
+                        },
+                        id: i.assign_id(),
+                    })
+                };
                 if let Ok(helper) = MethodCallHelper::eat(iter) {
                     expr1 = ExprKind::MethodCall(MethodCallExpr {
                         seg: helper.seg,
-                        receiver: Box::new(Expr { kind: expr1 }),
+                        receiver: warp_expr(expr1, iter),
                         args: helper.args,
+                        span: helper.span,
                     })
                 } else if let Ok(helper) = FieldHelper::eat(iter) {
-                    expr1 = ExprKind::Field(FieldExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                    expr1 = ExprKind::Field(FieldExpr(warp_expr(expr1, iter), helper.0))
                 } else if let Some(helper) = CallHelper::try_eat(iter)? {
-                    expr1 = ExprKind::Call(CallExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                    expr1 = ExprKind::Call(CallExpr(warp_expr(expr1, iter), helper.0))
                 } else if let Some(helper) = IndexHelper::try_eat(iter)? {
-                    expr1 = ExprKind::Index(IndexExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                    expr1 = ExprKind::Index(IndexExpr(warp_expr(expr1, iter), helper.0))
                 } else if let Some(helper) = CastHelper::eat_with_priority(iter, min_priority)? {
-                    expr1 = ExprKind::Cast(CastExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                    expr1 = ExprKind::Cast(CastExpr(warp_expr(expr1, iter), helper.0))
                 } else if let Some(helper) =
                     BinaryHelper::eat_with_priority_and_struct(iter, min_priority, has_struct)?
                 {
-                    expr1 = ExprKind::Binary(BinaryExpr(
-                        helper.0,
-                        Box::new(Expr { kind: expr1 }),
-                        helper.1,
-                    ))
+                    expr1 = ExprKind::Binary(BinaryExpr(helper.0, warp_expr(expr1, iter), helper.1))
                 } else if let Some(helper) = RangeHelper::eat_with_priority(iter, min_priority)? {
-                    expr1 = ExprKind::Range(RangeExpr(
-                        Some(Box::new(Expr { kind: expr1 })),
-                        helper.0,
-                        helper.1,
-                    ))
+                    expr1 =
+                        ExprKind::Range(RangeExpr(Some(warp_expr(expr1, iter)), helper.0, helper.1))
                 } else if let Some(helper) = AssignHelper::try_eat(iter)? {
-                    expr1 = ExprKind::Assign(AssignExpr(Box::new(Expr { kind: expr1 }), helper.0))
+                    expr1 = ExprKind::Assign(AssignExpr(warp_expr(expr1, iter), helper.0))
                 } else if let Some(helper) = AssignOpHelper::try_eat(iter)? {
-                    expr1 = ExprKind::AssignOp(AssignOpExpr(
-                        helper.0,
-                        Box::new(Expr { kind: expr1 }),
-                        helper.1,
-                    ))
+                    expr1 =
+                        ExprKind::AssignOp(AssignOpExpr(helper.0, warp_expr(expr1, iter), helper.1))
                 } else {
                     break Ok(expr1);
                 };
@@ -141,7 +146,14 @@ impl Expr {
             kind
         };
 
-        Ok(Expr { kind: kind? })
+        Ok(Expr {
+            kind: kind?,
+            id: iter.assign_id(),
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
+        })
     }
 
     pub fn is_block(&self) -> bool {
@@ -175,12 +187,8 @@ pub enum LitKind {
 }
 
 impl Eatable for LitExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        let ret = using_iter.next()?.try_into()?;
-
-        iter.update(using_iter);
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        let ret = iter.next()?.try_into()?;
         Ok(ret)
     }
 }
@@ -344,13 +352,9 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 pub struct UnaryExpr(pub UnOp, pub Box<Expr>);
 
 impl Eatable for UnaryExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        let unop = using_iter.next()?.try_into()?;
-        let expr = Expr::eat_with_priority(&mut using_iter, 1000000)?;
-
-        iter.update(using_iter);
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        let unop = iter.next()?.try_into()?;
+        let expr = Expr::eat_with_priority(iter, 1000000)?;
         Ok(Self(unop, Box::new(expr)))
     }
 }
@@ -393,9 +397,7 @@ impl BinaryHelper {
         min_priority: usize,
         has_struct: bool,
     ) -> ASTResult<Option<Self>> {
-        let mut using_iter = iter.clone();
-
-        let op_result: Result<BinOp, _> = using_iter.next()?.try_into();
+        let op_result: Result<BinOp, _> = iter.next()?.try_into();
         let op: BinOp = if let Ok(ok) = op_result {
             if ok.get_priority() < min_priority {
                 return Ok(None);
@@ -405,10 +407,8 @@ impl BinaryHelper {
             return Ok(None);
         };
 
-        let expr2 =
-            Expr::eat_with_priority_and_struct(&mut using_iter, op.get_priority() + 1, has_struct)?;
+        let expr2 = Expr::eat_with_priority_and_struct(iter, op.get_priority() + 1, has_struct)?;
 
-        iter.update(using_iter);
         Ok(Some(BinaryHelper(op, Box::new(expr2))))
     }
 }
@@ -484,18 +484,14 @@ impl<'a> TryInto<BinOp> for &Token<'a> {
 pub struct LetExpr(pub Box<Pat>, pub Box<Expr>);
 
 impl Eatable for LetExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Let);
 
-        match_keyword!(using_iter, TokenType::Let);
+        let pat = Pat::eat(iter)?;
 
-        let pat = Pat::eat(&mut using_iter)?;
+        match_keyword!(iter, TokenType::Eq);
 
-        match_keyword!(using_iter, TokenType::Eq);
-
-        let expr = Expr::eat_without_struct(&mut using_iter)?;
-
-        iter.update(using_iter);
+        let expr = Expr::eat_without_struct(iter)?;
         Ok(Self(Box::new(pat), Box::new(expr)))
     }
 }
@@ -504,18 +500,16 @@ impl Eatable for LetExpr {
 pub struct ArrayExpr(pub Vec<Box<Expr>>);
 
 impl Eatable for ArrayExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-        match_keyword!(using_iter, TokenType::OpenSqu);
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::OpenSqu);
 
         let mut exprs = Vec::new();
 
-        loop_until!(using_iter, TokenType::CloseSqu, {
-            exprs.push(Box::new(Expr::eat(&mut using_iter)?));
-            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseSqu);
+        loop_until!(iter, TokenType::CloseSqu, {
+            exprs.push(Box::new(Expr::eat(iter)?));
+            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::CloseSqu);
         });
 
-        iter.update(using_iter);
         Ok(Self(exprs))
     }
 }
@@ -524,12 +518,14 @@ impl Eatable for ArrayExpr {
 #[derive(Debug)]
 pub struct AnonConst {
     pub value: Box<Expr>,
+    pub id: NodeId,
 }
 
 impl Eatable for AnonConst {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         Ok(Self {
             value: Box::new(Expr::eat(iter)?),
+            id: iter.assign_id(),
         })
     }
 }
@@ -538,20 +534,17 @@ impl Eatable for AnonConst {
 pub struct RepeatExpr(pub Box<Expr>, pub AnonConst);
 
 impl Eatable for RepeatExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::OpenSqu);
 
-        match_keyword!(using_iter, TokenType::OpenSqu);
+        let expr = Expr::eat(iter)?;
 
-        let expr = Expr::eat(&mut using_iter)?;
+        match_keyword!(iter, TokenType::Semi);
 
-        match_keyword!(using_iter, TokenType::Semi);
+        let anon = AnonConst::eat(iter)?;
 
-        let anon = AnonConst::eat(&mut using_iter)?;
+        match_keyword!(iter, TokenType::CloseSqu);
 
-        match_keyword!(using_iter, TokenType::CloseSqu);
-
-        iter.update(using_iter);
         Ok(Self(Box::new(expr), anon))
     }
 }
@@ -559,27 +552,34 @@ impl Eatable for RepeatExpr {
 #[derive(Debug)]
 pub struct BlockExpr {
     pub stmts: Vec<Stmt>,
+    pub id: NodeId,
+    pub span: Span,
 }
 
 impl Eatable for BlockExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        match_keyword!(using_iter, TokenType::OpenCurly);
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        let begin = iter.get_pos();
+        match_keyword!(iter, TokenType::OpenCurly);
 
         let mut stmts = Vec::new();
 
-        loop_until!(using_iter, TokenType::CloseCurly, {
-            stmts.push(Stmt::eat(&mut using_iter)?);
+        loop_until!(iter, TokenType::CloseCurly, {
+            stmts.push(Stmt::eat(iter)?);
         });
 
-        iter.update(using_iter);
-        Ok(Self { stmts })
+        Ok(Self {
+            stmts,
+            id: iter.assign_id(),
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
+        })
     }
 }
 
 impl OptionEatable for BlockExpr {
-    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
+    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         if iter.peek()?.token_type == TokenType::OpenCurly {
             BlockExpr::eat(iter).map(Some)
         } else {
@@ -595,16 +595,13 @@ pub struct IndexExpr(pub Box<Expr>, pub Box<Expr>);
 pub struct IndexHelper(pub Box<Expr>);
 
 impl OptionEatable for IndexHelper {
-    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
-        let mut using_iter = iter.clone();
+    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
+        match_prefix!(iter, TokenType::OpenSqu);
 
-        match_prefix!(using_iter, TokenType::OpenSqu);
+        let expr = Expr::eat(iter)?;
 
-        let expr = Expr::eat(&mut using_iter)?;
+        match_keyword!(iter, TokenType::CloseSqu);
 
-        match_keyword!(using_iter, TokenType::CloseSqu);
-
-        iter.update(using_iter);
         Ok(Some(IndexHelper(Box::new(expr))))
     }
 }
@@ -613,13 +610,10 @@ impl OptionEatable for IndexHelper {
 pub struct PathExpr(pub Option<Box<QSelf>>, pub Path);
 
 impl Eatable for PathExpr {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let qself = QSelf::try_eat(iter)?;
+        let path = Path::eat(iter)?;
 
-        let qself = QSelf::try_eat(&mut using_iter)?;
-        let path = Path::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self(qself.map(Box::new), path))
     }
 }
@@ -632,13 +626,10 @@ pub struct AssignExpr(pub Box<Expr>, pub Box<Expr>);
 pub struct AssignHelper(pub Box<Expr>);
 
 impl OptionEatable for AssignHelper {
-    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
-        let mut using_iter = iter.clone();
+    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
+        match_prefix!(iter, TokenType::Eq);
+        let expr2 = Expr::eat(iter)?;
 
-        match_prefix!(using_iter, TokenType::Eq);
-        let expr2 = Expr::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Some(AssignHelper(Box::new(expr2))))
     }
 }
@@ -651,39 +642,33 @@ pub struct TupExpr(pub Vec<Box<Expr>>);
 pub type CallHelper = TupExpr;
 
 impl OptionEatable for CallHelper {
-    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
-        let mut using_iter = iter.clone();
-
-        match_prefix!(using_iter, TokenType::OpenPar);
+    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
+        match_prefix!(iter, TokenType::OpenPar);
 
         let mut exprs = Vec::new();
 
-        loop_until!(using_iter, TokenType::ClosePar, {
-            exprs.push(Box::new(Expr::eat(&mut using_iter)?));
+        loop_until!(iter, TokenType::ClosePar, {
+            exprs.push(Box::new(Expr::eat(iter)?));
 
-            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::ClosePar);
+            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::ClosePar);
         });
 
-        iter.update(using_iter);
         Ok(Some(TupExpr(exprs)))
     }
 }
 
 impl Eatable for TupExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        match_keyword!(using_iter, TokenType::OpenPar);
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::OpenPar);
 
         let mut exprs = Vec::new();
 
-        loop_until!(using_iter, TokenType::ClosePar, {
-            exprs.push(Box::new(Expr::eat(&mut using_iter)?));
+        loop_until!(iter, TokenType::ClosePar, {
+            exprs.push(Box::new(Expr::eat(iter)?));
 
-            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::ClosePar);
+            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::ClosePar);
         });
 
-        iter.update(using_iter);
         Ok(Self(exprs))
     }
 }
@@ -695,14 +680,11 @@ pub struct FieldExpr(pub Box<Expr>, pub Ident);
 pub struct FieldHelper(pub Ident);
 
 impl Eatable for FieldHelper {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Dot);
 
-        match_keyword!(using_iter, TokenType::Dot);
+        let ident = iter.next()?.try_into()?;
 
-        let ident = using_iter.next()?.try_into()?;
-
-        iter.update(using_iter);
         Ok(Self(ident))
     }
 }
@@ -712,33 +694,38 @@ pub struct MethodCallExpr {
     pub seg: PathSegment,
     pub receiver: Box<Expr>,
     pub args: Vec<Box<Expr>>,
+    pub span: Span,
 }
 
 #[derive(Debug)]
 pub struct MethodCallHelper {
     pub seg: PathSegment,
     pub args: Vec<Box<Expr>>,
+    pub span: Span,
 }
 
 impl Eatable for MethodCallHelper {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Dot);
 
-        match_keyword!(using_iter, TokenType::Dot);
+        let begin = iter.get_pos();
 
-        let seg = PathSegment::eat(&mut using_iter)?;
-        let call_helper = CallHelper::try_eat(&mut using_iter)?.ok_or(ASTError {
+        let seg = PathSegment::eat(iter)?;
+        let call_helper = CallHelper::try_eat(iter)?.ok_or(ASTError {
             kind: crate::ast::ASTErrorKind::MisMatch {
                 expected: "(".to_string(),
-                actual: format!("{:?}", using_iter.peek()?.token_type.clone()),
+                actual: format!("{:?}", iter.peek()?.token_type.clone()),
             },
-            pos: using_iter.peek()?.pos.clone(),
+            pos: iter.peek()?.pos.clone(),
         })?;
 
-        iter.update(using_iter);
         Ok(Self {
             seg,
             args: call_helper.0,
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
         })
     }
 }
@@ -747,20 +734,18 @@ impl Eatable for MethodCallHelper {
 pub struct IfExpr(pub Box<Expr>, pub Box<BlockExpr>, pub Option<Box<Expr>>);
 
 impl Eatable for IfExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::If);
 
-        match_keyword!(using_iter, TokenType::If);
+        let expr = Expr::eat_without_struct(iter)?;
+        let block = BlockExpr::eat(iter)?;
 
-        let expr = Expr::eat_without_struct(&mut using_iter)?;
-        let block = BlockExpr::eat(&mut using_iter)?;
+        let else_expr = if iter.peek()?.token_type == TokenType::Else {
+            iter.advance();
 
-        let else_expr = if using_iter.peek()?.token_type == TokenType::Else {
-            using_iter.advance();
+            let t = iter.peek()?;
 
-            let t = using_iter.peek()?;
-
-            let else_expr = Expr::eat(&mut using_iter)?;
+            let else_expr = Expr::eat(iter)?;
 
             match else_expr.kind {
                 ExprKind::Block(_) | ExprKind::If(_) => Some(Box::new(else_expr)),
@@ -778,7 +763,6 @@ impl Eatable for IfExpr {
             None
         };
 
-        iter.update(using_iter);
         Ok(Self(Box::new(expr), Box::new(block), else_expr))
     }
 }
@@ -787,24 +771,22 @@ impl Eatable for IfExpr {
 pub struct MatchExpr(pub Box<Expr>, pub Vec<Arm>);
 
 impl Eatable for MatchExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        match_keyword!(using_iter, TokenType::Match);
-        let expr = Expr::eat_without_struct(&mut using_iter)?;
-        match_keyword!(using_iter, TokenType::OpenCurly);
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Match);
+        let expr = Expr::eat_without_struct(iter)?;
+        match_keyword!(iter, TokenType::OpenCurly);
 
         let mut arms = Vec::new();
 
-        loop_until!(using_iter, TokenType::CloseCurly, {
-            let arm = Arm::eat(&mut using_iter)?;
+        loop_until!(iter, TokenType::CloseCurly, {
+            let arm = Arm::eat(iter)?;
             let is_block = arm.body.is_block();
             arms.push(arm);
 
-            if using_iter.peek()?.token_type == TokenType::Comma {
-                using_iter.advance();
+            if iter.peek()?.token_type == TokenType::Comma {
+                iter.advance();
             } else if !is_block {
-                let t = using_iter.peek()?;
+                let t = iter.peek()?;
                 if t.token_type != TokenType::CloseCurly {
                     return Err(ASTError {
                         kind: crate::ast::ASTErrorKind::MisMatch {
@@ -817,7 +799,6 @@ impl Eatable for MatchExpr {
             }
         });
 
-        iter.update(using_iter);
         Ok(Self(Box::new(expr), arms))
     }
 }
@@ -827,27 +808,33 @@ pub struct Arm {
     pub pat: Box<Pat>,
     pub guard: Option<Box<Expr>>,
     pub body: Box<Expr>,
+    pub span: Span,
+    pub id: NodeId,
 }
 
 impl Eatable for Arm {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        let begin = iter.get_pos();
 
-        let pat = Pat::eat(&mut using_iter)?;
-        let guard = if using_iter.peek()?.token_type == TokenType::If {
-            using_iter.advance();
-            Some(Expr::eat(&mut using_iter)?)
+        let pat = Pat::eat(iter)?;
+        let guard = if iter.peek()?.token_type == TokenType::If {
+            iter.advance();
+            Some(Expr::eat(iter)?)
         } else {
             None
         };
-        match_keyword!(using_iter, TokenType::FatArrow);
-        let body = Expr::eat(&mut using_iter)?;
+        match_keyword!(iter, TokenType::FatArrow);
+        let body = Expr::eat(iter)?;
 
-        iter.update(using_iter);
         Ok(Self {
             pat: Box::new(pat),
             guard: guard.map(Box::new),
             body: Box::new(body),
+            id: iter.assign_id(),
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
         })
     }
 }
@@ -860,16 +847,13 @@ pub struct ForLoopExpr {
 }
 
 impl Eatable for ForLoopExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::For);
+        let pat = Pat::eat(iter)?;
+        match_keyword!(iter, TokenType::In);
+        let loop_iter = Expr::eat(iter)?;
+        let block = BlockExpr::eat(iter)?;
 
-        match_keyword!(using_iter, TokenType::For);
-        let pat = Pat::eat(&mut using_iter)?;
-        match_keyword!(using_iter, TokenType::In);
-        let loop_iter = Expr::eat(&mut using_iter)?;
-        let block = BlockExpr::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self {
             pat: Box::new(pat),
             iter: Box::new(loop_iter),
@@ -882,13 +866,10 @@ impl Eatable for ForLoopExpr {
 pub struct LoopExpr(pub Box<BlockExpr>);
 
 impl Eatable for LoopExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Loop);
+        let block = BlockExpr::eat(iter)?;
 
-        match_keyword!(using_iter, TokenType::Loop);
-        let block = BlockExpr::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self(Box::new(block)))
     }
 }
@@ -897,14 +878,11 @@ impl Eatable for LoopExpr {
 pub struct WhileExpr(pub Box<Expr>, pub Box<BlockExpr>);
 
 impl Eatable for WhileExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::While);
+        let expr = Expr::eat(iter)?;
+        let block = BlockExpr::eat(iter)?;
 
-        match_keyword!(using_iter, TokenType::While);
-        let expr = Expr::eat(&mut using_iter)?;
-        let block = BlockExpr::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self(Box::new(expr), Box::new(block)))
     }
 }
@@ -955,17 +933,14 @@ pub struct AssignOpExpr(pub AssignOp, pub Box<Expr>, pub Box<Expr>);
 pub struct AssignOpHelper(pub AssignOp, pub Box<Expr>);
 
 impl OptionEatable for AssignOpHelper {
-    fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
-        let mut using_iter = iter.clone();
-
-        let assign_op_result: Result<AssignOp, _> = using_iter.next()?.try_into();
+    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
+        let assign_op_result: Result<AssignOp, _> = iter.next()?.try_into();
         let assign_op = match assign_op_result {
             Ok(o) => o,
             Err(_) => return Ok(None),
         };
-        let expr2 = Expr::eat(&mut using_iter)?;
+        let expr2 = Expr::eat(iter)?;
 
-        iter.update(using_iter);
         Ok(Some(AssignOpHelper(assign_op, Box::new(expr2))))
     }
 }
@@ -1013,41 +988,38 @@ pub struct StructExpr {
 }
 
 impl Eatable for StructExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        let qself = QSelf::try_eat(iter)?;
+        let path = Path::eat(iter)?;
 
-        let qself = QSelf::try_eat(&mut using_iter)?;
-        let path = Path::eat(&mut using_iter)?;
-
-        match_keyword!(using_iter, TokenType::OpenCurly);
+        match_keyword!(iter, TokenType::OpenCurly);
 
         let mut fields = Vec::new();
         let mut rest = StructRest::None;
 
-        loop_until!(using_iter, TokenType::CloseCurly, {
-            match using_iter.peek()?.token_type {
+        loop_until!(iter, TokenType::CloseCurly, {
+            match iter.peek()?.token_type {
                 TokenType::DotDot => {
-                    using_iter.advance();
-                    let t = using_iter.peek()?;
+                    iter.advance();
+                    let t = iter.peek()?;
                     rest = if t.token_type != TokenType::Comma
                         && t.token_type != TokenType::CloseCurly
                     {
-                        StructRest::Base(Box::new(Expr::eat(&mut using_iter)?))
+                        StructRest::Base(Box::new(Expr::eat(iter)?))
                     } else {
                         StructRest::Rest
                     };
-                    peek_keyword!(using_iter, TokenType::CloseCurly);
+                    peek_keyword!(iter, TokenType::CloseCurly);
                     break;
                 }
                 _ => {
-                    fields.push(ExprField::eat(&mut using_iter)?);
+                    fields.push(ExprField::eat(iter)?);
                 }
             }
 
-            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::CloseCurly);
+            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::CloseCurly);
         });
 
-        iter.update(using_iter);
         Ok(Self {
             qself: qself.map(Box::new),
             path,
@@ -1062,26 +1034,37 @@ pub struct ExprField {
     pub ident: Ident,
     pub expr: Box<Expr>,
     pub is_shorthand: bool,
+    pub id: NodeId,
+    pub span: Span,
 }
 
 impl Eatable for ExprField {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        let begin = iter.get_pos();
 
-        let ident: Ident = using_iter.next()?.try_into()?;
+        let ident: Ident = iter.next()?.try_into()?;
 
-        let (expr, is_shorthand) = if using_iter.peek()?.token_type == TokenType::Colon {
-            using_iter.advance();
-            (Box::new(Expr::eat(&mut using_iter)?), false)
+        let (expr, is_shorthand) = if iter.peek()?.token_type == TokenType::Colon {
+            iter.advance();
+            (Box::new(Expr::eat(iter)?), false)
         } else {
-            (Box::new(ident.clone().into()), true)
+            let expr = Expr {
+                kind: ExprKind::Path(PathExpr(None, ident.clone().into())),
+                span: ident.span.clone(),
+                id: iter.assign_id(),
+            };
+            (Box::new(expr), true)
         };
 
-        iter.update(using_iter);
         Ok(Self {
             ident,
             expr,
             is_shorthand,
+            id: iter.assign_id(),
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
         })
     }
 }
@@ -1097,14 +1080,11 @@ pub enum StructRest {
 pub struct BreakExpr(pub Option<Box<Expr>>);
 
 impl Eatable for BreakExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Break);
 
-        match_keyword!(using_iter, TokenType::Break);
+        let expr = Expr::eat(iter).ok();
 
-        let expr = Expr::eat(&mut using_iter).ok();
-
-        iter.update(using_iter);
         Ok(Self(expr.map(Box::new)))
     }
 }
@@ -1113,12 +1093,9 @@ impl Eatable for BreakExpr {
 pub struct ContinueExpr;
 
 impl Eatable for ContinueExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Continue);
 
-        match_keyword!(using_iter, TokenType::Continue);
-
-        iter.update(using_iter);
         Ok(Self)
     }
 }
@@ -1127,18 +1104,15 @@ impl Eatable for ContinueExpr {
 pub struct AddrOfExpr(pub Mutability, pub Box<Expr>);
 
 impl Eatable for AddrOfExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        match_keyword!(using_iter, TokenType::And);
-        let mutability = if using_iter.peek()?.token_type == TokenType::Mut {
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::And);
+        let mutability = if iter.peek()?.token_type == TokenType::Mut {
             Mutability::Mut
         } else {
             Mutability::Not
         };
-        let expr = Expr::eat(&mut using_iter)?;
+        let expr = Expr::eat(iter)?;
 
-        iter.update(using_iter);
         Ok(Self(mutability, Box::new(expr)))
     }
 }
@@ -1170,17 +1144,22 @@ impl CastHelper {
 pub struct ConstBlockExpr(pub AnonConst);
 
 impl Eatable for ConstBlockExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Const);
 
-        match_keyword!(using_iter, TokenType::Const);
-        let block = BlockExpr::eat(&mut using_iter)?;
+        let begin = iter.get_pos();
+        let block = BlockExpr::eat(iter)?;
 
-        iter.update(using_iter);
         Ok(Self(AnonConst {
             value: Box::new(Expr {
                 kind: ExprKind::Block(block),
+                span: Span {
+                    begin,
+                    end: iter.get_pos(),
+                },
+                id: iter.assign_id(),
             }),
+            id: iter.assign_id(),
         }))
     }
 }
@@ -1189,7 +1168,7 @@ impl Eatable for ConstBlockExpr {
 pub struct UnderscoreExpr;
 
 impl Eatable for UnderscoreExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::Underscor);
         Ok(Self)
     }
@@ -1199,14 +1178,11 @@ impl Eatable for UnderscoreExpr {
 pub struct RetExpr(pub Option<Box<Expr>>);
 
 impl Eatable for RetExpr {
-    fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
-        match_keyword!(using_iter, TokenType::Return);
+    fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        match_keyword!(iter, TokenType::Return);
         // 暂时这样做
-        let expr = Expr::eat(&mut using_iter).ok();
+        let expr = Expr::eat(iter).ok();
 
-        iter.update(using_iter);
         Ok(Self(expr.map(Box::new)))
     }
 }

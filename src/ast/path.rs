@@ -1,50 +1,62 @@
 use crate::{
-    ast::{ASTResult, Eatable, Ident, OptionEatable, generic::GenericArgs, ty::Ty},
+    ast::{ASTResult, Eatable, Ident, OptionEatable, Span, Symbol, generic::GenericArgs, ty::Ty},
     tokens::TokenType,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Path {
     pub segments: Vec<PathSegment>,
+    pub span: Span,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PathSegment {
     pub ident: Ident,
     pub args: Option<Box<GenericArgs>>,
 }
 
 impl Eatable for Path {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let begin = iter.get_pos();
         let mut segments = Vec::new();
 
-        if using_iter.peek()?.token_type == TokenType::PathSep {
+        if iter.peek()?.token_type == TokenType::PathSep {
             // 上面的短路运算是合法的，因为这里不可能是末尾
-            segments.push(PathSegment::default());
-            using_iter.advance();
+            segments.push(PathSegment {
+                ident: Ident {
+                    symbol: Symbol::Empty,
+                    span: Span {
+                        begin: iter.get_pos(),
+                        end: iter.get_pos(),
+                    },
+                },
+                args: None,
+            });
+            iter.advance();
         }
 
-        segments.push(PathSegment::eat(&mut using_iter)?);
+        segments.push(PathSegment::eat(iter)?);
 
-        while using_iter.peek()?.token_type == TokenType::PathSep {
-            using_iter.advance();
-            segments.push(PathSegment::eat(&mut using_iter)?);
+        while iter.peek()?.token_type == TokenType::PathSep {
+            iter.advance();
+            segments.push(PathSegment::eat(iter)?);
         }
 
-        iter.update(using_iter);
-        Ok(Self { segments })
+        Ok(Self {
+            segments,
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
+        })
     }
 }
 
 impl Eatable for PathSegment {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let ident = iter.next()?.try_into()?;
+        let args = GenericArgs::try_eat(iter)?;
 
-        let ident = using_iter.next()?.try_into()?;
-        let args = GenericArgs::try_eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self {
             ident,
             args: args.map(Box::new),
@@ -59,7 +71,7 @@ pub struct QSelf {
 }
 
 impl OptionEatable for QSelf {
-    fn try_eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
+    fn try_eat_impl(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
         // TODO
         Ok(None)
     }

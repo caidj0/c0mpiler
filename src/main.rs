@@ -6,22 +6,8 @@ use c0mpiler::{
 
 fn main() {
     let test_str = r###"
-struct A {
-    a: i32,
-    b: u32,
-    c: C,
-}
-struct B;
-struct C;
-
-fn foo(a: A, b: B, c: C) -> String {}
-
-const ABC: u32 = 123;
-
-trait Trait {
-    const AAA: u32 = 456;
-
-    fn foo(a:C) {}
+fn main() {
+    let a;
 }
 "###;
     let lexer = Lexer::new(test_str);
@@ -31,13 +17,13 @@ trait Trait {
     let krate = Crate::eat(&mut iter);
     match krate {
         Ok(ast) => {
-            // println!("{ast:#?}");
-            let mut semantic = SemanticAnalyzer::new();
-            let result = semantic.visit(&ast);
-            match result {
-                Ok(_) => println!("{:#?}", semantic),
-                Err(err) => println!("{:#?}", err),
-            }
+            println!("{ast:#?}");
+            // let mut semantic = SemanticAnalyzer::new();
+            // let result = semantic.visit(&ast);
+            // match result {
+            //     Ok(_) => println!("{:#?}", semantic),
+            //     Err(err) => println!("{:#?}", err),
+            // }
         }
         Err(err) => {
             println!("{err:#?}");

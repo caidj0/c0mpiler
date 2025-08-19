@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ASTResult, Eatable, expr::Expr, item::Item, pat::Pat, ty::Ty},
+    ast::{ASTResult, Eatable, NodeId, Span, expr::Expr, item::Item, pat::Pat, ty::Ty},
     match_keyword,
     tokens::TokenType,
 };
@@ -7,6 +7,8 @@ use crate::{
 #[derive(Debug)]
 pub struct Stmt {
     pub kind: StmtKind,
+    pub id: NodeId,
+    pub span: Span,
 }
 
 #[derive(Debug)]
@@ -20,7 +22,9 @@ pub enum StmtKind {
 }
 
 impl Eatable for Stmt {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let begin = iter.get_pos();
+
         let mut kind = Err(crate::ast::ASTError::default());
         kind = kind.or_else(|err| {
             LocalStmt::eat(iter)
@@ -55,7 +59,14 @@ impl Eatable for Stmt {
                 .map_err(|err2| err.select(err2))
         });
 
-        Ok(Self { kind: kind? })
+        Ok(Self {
+            kind: kind?,
+            id: iter.assign_id(),
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
+        })
     }
 }
 
@@ -64,36 +75,42 @@ pub struct LocalStmt {
     pub pat: Box<Pat>,
     pub ty: Option<Box<Ty>>,
     pub kind: LocalKind,
+    pub id: NodeId,
+    pub span: Span,
 }
 
 impl Eatable for LocalStmt {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let begin = iter.get_pos();
 
-        match_keyword!(using_iter, TokenType::Let);
-        let pat = Pat::eat_no_alt(&mut using_iter)?;
+        match_keyword!(iter, TokenType::Let);
+        let pat = Pat::eat_no_alt(iter)?;
 
-        let ty = if using_iter.peek()?.token_type == TokenType::Colon {
-            using_iter.advance();
-            Some(Box::new(Ty::eat(&mut using_iter)?))
+        let ty = if iter.peek()?.token_type == TokenType::Colon {
+            iter.advance();
+            Some(Box::new(Ty::eat(iter)?))
         } else {
             None
         };
 
-        let kind = if using_iter.peek()?.token_type == TokenType::Eq {
-            using_iter.advance();
-            LocalKind::Init(Box::new(Expr::eat(&mut using_iter)?))
+        let kind = if iter.peek()?.token_type == TokenType::Eq {
+            iter.advance();
+            LocalKind::Init(Box::new(Expr::eat(iter)?))
         } else {
             LocalKind::Decl
         };
 
-        match_keyword!(using_iter, TokenType::Semi);
+        match_keyword!(iter, TokenType::Semi);
 
-        iter.update(using_iter);
         Ok(Self {
             pat: Box::new(pat),
             ty,
             kind,
+            id: iter.assign_id(),
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
         })
     }
 }
@@ -109,7 +126,7 @@ pub enum LocalKind {
 pub struct EmptyStmt;
 
 impl Eatable for EmptyStmt {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::Semi);
         Ok(Self)
     }

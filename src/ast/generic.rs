@@ -1,5 +1,5 @@
 use crate::{
-    ast::{ASTResult, Eatable, OptionEatable, item::TraitRef, path::Path, ty::Ty},
+    ast::{ASTResult, Eatable, OptionEatable, Span, item::TraitRef, path::Path, ty::Ty},
     loop_until, loop_while, match_prefix, skip_keyword_or_break,
     tokens::TokenType,
 };
@@ -13,12 +13,9 @@ pub enum GenericArgs {
 }
 
 impl OptionEatable for GenericArgs {
-    fn try_eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
-        let mut using_iter = iter.clone();
+    fn try_eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
+        let angle_args = AngleBracketedArgs::try_eat(iter)?;
 
-        let angle_args = AngleBracketedArgs::try_eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         match angle_args {
             Some(x) => Ok(Some(GenericArgs::AngleBracketed(x))),
             None => Ok(None),
@@ -29,24 +26,30 @@ impl OptionEatable for GenericArgs {
 #[derive(Debug)]
 pub struct AngleBracketedArgs {
     pub args: Vec<AngleBracketedArg>,
+    pub span: Span,
 }
 
 impl OptionEatable for AngleBracketedArgs {
-    fn try_eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
-        let mut using_iter = iter.clone();
+    fn try_eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
+        let begin = iter.get_pos();
 
-        match_prefix!(using_iter, TokenType::Lt);
+        match_prefix!(iter, TokenType::Lt);
 
         let mut args = Vec::new();
 
-        loop_until!(using_iter, TokenType::Gt, {
-            args.push(AngleBracketedArg::eat(&mut using_iter)?);
+        loop_until!(iter, TokenType::Gt, {
+            args.push(AngleBracketedArg::eat(iter)?);
 
-            skip_keyword_or_break!(using_iter, TokenType::Comma, TokenType::Gt);
+            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::Gt);
         });
 
-        iter.update(using_iter);
-        Ok(Some(Self { args }))
+        Ok(Some(Self {
+            args,
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
+        }))
     }
 }
 
@@ -57,12 +60,9 @@ pub enum AngleBracketedArg {
 }
 
 impl Eatable for AngleBracketedArg {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let arg = GenericArg::eat(iter)?;
 
-        let arg = GenericArg::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self::Arg(arg))
     }
 }
@@ -75,12 +75,9 @@ pub enum GenericArg {
 }
 
 impl Eatable for GenericArg {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let ty = Ty::eat(iter)?;
 
-        let ty = Ty::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self::Type(Box::new(ty)))
     }
 }
@@ -92,7 +89,7 @@ pub struct Generics {
 }
 
 impl Eatable for Generics {
-    fn eat(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+    fn eat_impl(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         // TODO
         Ok(Generics::default())
     }
@@ -102,16 +99,13 @@ impl Eatable for Generics {
 pub struct GenericBounds(pub Vec<GenericBound>);
 
 impl Eatable for GenericBounds {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
-
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let mut bounds = Vec::new();
-        bounds.push(GenericBound::eat(&mut using_iter)?);
-        loop_while!(using_iter, TokenType::Plus, {
-            bounds.push(GenericBound::eat(&mut using_iter)?);
+        bounds.push(GenericBound::eat(iter)?);
+        loop_while!(iter, TokenType::Plus, {
+            bounds.push(GenericBound::eat(iter)?);
         });
 
-        iter.update(using_iter);
         Ok(GenericBounds(bounds))
     }
 }
@@ -124,12 +118,9 @@ pub enum GenericBound {
 }
 
 impl Eatable for GenericBound {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let poly_trait_ref = PolyTraitRef::eat(iter)?;
 
-        let poly_trait_ref = PolyTraitRef::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self::Trait(poly_trait_ref))
     }
 }
@@ -138,26 +129,29 @@ impl Eatable for GenericBound {
 pub struct PolyTraitRef {
     // pub bound_generic_params: Vec<GenericParam>,
     pub trait_ref: TraitRef,
+    pub span: Span,
 }
 
 impl Eatable for PolyTraitRef {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let begin = iter.get_pos();
 
-        let trait_ref = TraitRef::eat(&mut using_iter)?;
+        let trait_ref = TraitRef::eat(iter)?;
 
-        iter.update(using_iter);
-        Ok(Self { trait_ref })
+        Ok(Self {
+            trait_ref,
+            span: Span {
+                begin,
+                end: iter.get_pos(),
+            },
+        })
     }
 }
 
 impl Eatable for TraitRef {
-    fn eat(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        let mut using_iter = iter.clone();
+    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+        let path = Path::eat(iter)?;
 
-        let path = Path::eat(&mut using_iter)?;
-
-        iter.update(using_iter);
         Ok(Self { path })
     }
 }
