@@ -1,4 +1,5 @@
 pub mod const_eval;
+pub mod primitives;
 pub mod visitor;
 
 use std::{collections::HashMap, vec};
@@ -132,10 +133,10 @@ pub struct Variable {
 pub enum ScopeKind {
     Root,
     Fn,
-    Trait,
+    Trait(TypeId),
     Enum,
     Struct,
-    Impl,
+    Impl(TypeId),
 }
 
 #[derive(Debug)]
@@ -164,7 +165,7 @@ pub struct SemanticAnalyzer {
 
 impl SemanticAnalyzer {
     pub fn new() -> Self {
-        let mut type_table = TypeTable::default();
+        let mut type_table: TypeTable = TypeTable::default();
         type_table.intern(ResolvedTy::unit());
 
         Self {
@@ -181,11 +182,19 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_scope(&mut self) -> Result<&mut Scope, SemanticError> {
+    fn get_scope_mut(&mut self) -> Result<&mut Scope, SemanticError> {
         if let Some(scope) = self.layers.last_mut() {
             Ok(scope)
         } else {
             Ok(&mut self.root_scope)
+        }
+    }
+
+    fn get_scope(&self) -> Result<&Scope, SemanticError> {
+        if let Some(scope) = self.layers.last() {
+            Ok(scope)
+        } else {
+            Ok(&self.root_scope)
         }
     }
 
@@ -195,10 +204,10 @@ impl SemanticAnalyzer {
                 match kind {
                     ScopeKind::Root => "",
                     ScopeKind::Fn => "$Fn$",
-                    ScopeKind::Trait => "$Trait$",
+                    ScopeKind::Trait(_) => "$Trait$",
                     ScopeKind::Enum => "$Enum$",
                     ScopeKind::Struct => "$Struct$",
-                    ScopeKind::Impl => "$Impl$",
+                    ScopeKind::Impl(_) => "$Impl$",
                 }
                 .to_string()
                     + &s
@@ -224,7 +233,7 @@ impl SemanticAnalyzer {
     }
 
     fn add_type(&mut self, ident: Ident, info: TypeInfo) -> Result<(), SemanticError> {
-        let s = self.get_scope()?;
+        let s = self.get_scope_mut()?;
 
         if s.types.contains_key(&ident) {
             return Err(SemanticError::MultiDefined);
@@ -236,12 +245,12 @@ impl SemanticAnalyzer {
     }
 
     fn get_type(&mut self, ident: &Ident) -> Result<&mut TypeInfo, SemanticError> {
-        let s = self.get_scope()?;
+        let s = self.get_scope_mut()?;
         s.types.get_mut(ident).ok_or(SemanticError::UnknownType)
     }
 
     fn add_value(&mut self, ident: Ident, var: Variable) -> Result<(), SemanticError> {
-        let s = self.get_scope()?;
+        let s = self.get_scope_mut()?;
 
         if s.values.contains_key(&ident) {
             return Err(SemanticError::MultiDefined);
@@ -253,7 +262,7 @@ impl SemanticAnalyzer {
     }
 
     fn get_value(&mut self, ident: &Ident) -> Result<&mut Variable, SemanticError> {
-        let s = self.get_scope()?;
+        let s = self.get_scope_mut()?;
         s.values
             .get_mut(ident)
             .ok_or(SemanticError::UnknownVariable)
@@ -331,7 +340,18 @@ impl SemanticAnalyzer {
                                 match token_type {
                                     TokenType::LSelfType => scope = Some(&self.root_scope),
                                     TokenType::SelfType => {
-                                        todo!() // TODO
+                                        if path_ty.1.segments.len() == 1
+                                            && let Scope {
+                                                ident: _,
+                                                kind: ScopeKind::Impl(id) | ScopeKind::Trait(id),
+                                                types: _,
+                                                values: _,
+                                            } = self.get_scope()?
+                                        {
+                                            return Ok(self.get_type_by_id(*id).clone());
+                                        } else {
+                                            return Err(SemanticError::InvaildPath);
+                                        }
                                     }
                                     TokenType::Crate => scope = Some(&self.root_scope),
                                     TokenType::Super => return Err(SemanticError::InvaildPath),
@@ -507,13 +527,13 @@ impl Visitor for SemanticAnalyzer {
                         self.pop_scope()?;
                     }
                     None => {
-                        let scope = self.get_scope()?;
+                        let scope = self.get_scope_mut()?;
                         match scope.kind {
                             ScopeKind::Root | ScopeKind::Fn => {
                                 return Err(SemanticError::FnWithoutBody);
                             }
-                            ScopeKind::Trait => {}
-                            ScopeKind::Impl => todo!(), // TODO
+                            ScopeKind::Trait(_) => {}
+                            ScopeKind::Impl(_) => todo!(), // TODO
                             ScopeKind::Enum | ScopeKind::Struct => panic!("Impossible condition!"),
                         }
                     }
@@ -699,6 +719,14 @@ impl Visitor for SemanticAnalyzer {
         &mut self,
         expr: &crate::ast::expr::ArrayExpr,
     ) -> Result<TypeId, SemanticError> {
+        let type_ids = expr
+            .0
+            .iter()
+            .map(|x| self.visit_expr(x))
+            .collect::<Result<Vec<_>, SemanticError>>()?;
+        
+        
+
         todo!()
     }
 
