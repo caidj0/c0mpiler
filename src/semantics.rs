@@ -6,8 +6,8 @@ use std::{collections::HashMap, vec};
 use crate::{
     ast::{
         Ident, Mutability,
-        expr::{Expr, ExprKind, LitExpr},
-        item::{ConstItem, EnumItem, FieldDef, FnRetTy},
+        expr::Expr,
+        item::{AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy},
         ty::{MutTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
@@ -79,16 +79,30 @@ pub struct ImplInfo {
 pub struct FnSig {
     pub name: Ident,
     pub params: Vec<TypeId>,
-    pub ret: Option<TypeId>,
+    pub ret: TypeId,
+    pub is_placeholder: bool,
+}
+
+#[derive(Debug)]
+pub struct Constant {
+    pub name: Ident,
+    pub ty: TypeId,
     pub is_placeholder: bool,
 }
 
 #[derive(Debug)]
 pub enum TypeKind {
     Placeholder,
-    Struct { fields: Vec<(Ident, TypeId)> },
-    Enum { fields: Vec<Ident> },
-    Trait { methods: Vec<FnSig> },
+    Struct {
+        fields: Vec<(Ident, TypeId)>,
+    },
+    Enum {
+        fields: Vec<Ident>,
+    },
+    Trait {
+        methods: Vec<FnSig>,
+        constants: Vec<Constant>,
+    },
 }
 
 #[derive(Debug)]
@@ -178,6 +192,8 @@ impl SemanticAnalyzer {
 
     pub fn visit(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
         self.stage = AnalyzeStage::SymbolCollect;
+        self.visit_crate(krate)?;
+        self.stage = AnalyzeStage::Definition;
         self.visit_crate(krate)?;
         Ok(())
     }
@@ -315,6 +331,7 @@ impl SemanticAnalyzer {
                 match s.as_str() {
                     "u32" => {
                         let _: u32 = expr.try_into()?;
+                        return Ok(());
                     }
                     _ => {}
                 }
@@ -335,7 +352,11 @@ impl Visitor for SemanticAnalyzer {
                     self.visit_item(item)?
                 }
             }
-            AnalyzeStage::Definition => todo!(),
+            AnalyzeStage::Definition => {
+                for item in &krate.items {
+                    self.visit_item(item)?
+                }
+            }
             AnalyzeStage::Body => todo!(),
             AnalyzeStage::Done => todo!(),
         }
@@ -395,38 +416,36 @@ impl Visitor for SemanticAnalyzer {
 
             crate::ast::item::ItemKind::Mod(_) => return Err(SemanticError::Unimplemented),
 
-            crate::ast::item::ItemKind::Enum(EnumItem(ident, generics, variants)) => {
-                match self.stage {
-                    AnalyzeStage::SymbolCollect => self.add_type(
-                        ident.clone(),
-                        TypeInfo {
-                            name: ident.clone(),
-                            kind: TypeKind::Placeholder,
-                        },
-                    )?,
-                    AnalyzeStage::Definition => {
-                        let fields = variants
-                            .iter()
-                            .map(|x| {
-                                if !matches!(x.data, crate::ast::item::VariantData::Unit)
-                                    || x.disr_expr.is_some()
-                                {
-                                    Err(SemanticError::Unimplemented)
-                                } else {
-                                    Ok(x.ident.clone())
-                                }
-                            })
-                            .collect::<Result<Vec<_>, SemanticError>>()?;
-                        self.get_type(ident)?.kind = TypeKind::Enum { fields };
-                    }
-                    AnalyzeStage::Body => todo!(),
-                    AnalyzeStage::Done => todo!(),
+            crate::ast::item::ItemKind::Enum(EnumItem(ident, _, variants)) => match self.stage {
+                AnalyzeStage::SymbolCollect => self.add_type(
+                    ident.clone(),
+                    TypeInfo {
+                        name: ident.clone(),
+                        kind: TypeKind::Placeholder,
+                    },
+                )?,
+                AnalyzeStage::Definition => {
+                    let fields = variants
+                        .iter()
+                        .map(|x| {
+                            if !matches!(x.data, crate::ast::item::VariantData::Unit)
+                                || x.disr_expr.is_some()
+                            {
+                                Err(SemanticError::Unimplemented)
+                            } else {
+                                Ok(x.ident.clone())
+                            }
+                        })
+                        .collect::<Result<Vec<_>, SemanticError>>()?;
+                    self.get_type(ident)?.kind = TypeKind::Enum { fields };
                 }
-            }
+                AnalyzeStage::Body => todo!(),
+                AnalyzeStage::Done => todo!(),
+            },
 
             crate::ast::item::ItemKind::Struct(crate::ast::item::StructItem(
                 ident,
-                generics,
+                _,
                 variant_data,
             )) => match self.stage {
                 AnalyzeStage::SymbolCollect => self.add_type(
@@ -460,8 +479,8 @@ impl Visitor for SemanticAnalyzer {
 
             crate::ast::item::ItemKind::Trait(crate::ast::item::TraitItem {
                 ident,
-                generics,
-                bounds,
+                generics: _,
+                bounds: _,
                 items,
             }) => match self.stage {
                 AnalyzeStage::SymbolCollect => self.add_type(
@@ -471,7 +490,55 @@ impl Visitor for SemanticAnalyzer {
                         kind: TypeKind::Placeholder,
                     },
                 )?,
-                AnalyzeStage::Definition => todo!(),
+                AnalyzeStage::Definition => {
+                    let mut methods = Vec::new();
+                    let mut constants = Vec::new();
+                    for item in items {
+                        match &item.kind {
+                            AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
+                                let resloved_ty = self.resolve_ty(&ty)?;
+                                if let Some(e) = expr {
+                                    self.check_const(&resloved_ty, e)?;
+                                }
+                                let tyid = self.type_table.intern(resloved_ty);
+                                constants.push(Constant {
+                                    name: ident.clone(),
+                                    ty: tyid,
+                                    is_placeholder: expr.is_none(),
+                                })
+                            }
+                            AssocItemKind::Fn(FnItem {
+                                ident,
+                                generics: _,
+                                sig,
+                                body,
+                            }) => {
+                                let param_tys = sig
+                                    .decl
+                                    .inputs
+                                    .iter()
+                                    .map(|x| self.resolve_ty(&x.ty))
+                                    .collect::<Result<Vec<_>, SemanticError>>()?;
+                                let ret_ty = match &sig.decl.output {
+                                    FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
+                                    FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
+                                };
+                                let params_id = param_tys
+                                    .into_iter()
+                                    .map(|x| self.type_table.intern(x))
+                                    .collect();
+                                let ret_id = self.type_table.intern(ret_ty);
+                                methods.push(FnSig {
+                                    name: ident.clone(),
+                                    params: params_id,
+                                    ret: ret_id,
+                                    is_placeholder: body.is_none(),
+                                });
+                            }
+                        }
+                    }
+                    self.get_type(ident)?.kind = TypeKind::Trait { methods, constants };
+                }
                 AnalyzeStage::Body => todo!(),
                 AnalyzeStage::Done => todo!(),
             },
