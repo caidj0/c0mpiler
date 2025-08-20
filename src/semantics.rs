@@ -2,11 +2,14 @@ pub mod const_eval;
 pub mod primitives;
 pub mod visitor;
 
-use std::{collections::HashMap, vec};
+use std::{
+    collections::{HashMap, HashSet},
+    vec,
+};
 
 use crate::{
     ast::{
-        Ident, Mutability, Symbol,
+        Ident, Mutability, NodeId, Symbol,
         expr::Expr,
         item::{AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, StructItem, TraitItem},
         stmt::StmtKind,
@@ -74,20 +77,20 @@ impl TypeTable {
 
 #[derive(Debug)]
 pub struct TypeInfo {
-    pub name: Ident,
+    pub name: Symbol,
     pub kind: TypeKind,
 }
 
 #[derive(Debug)]
 pub struct ImplInfo {
     pub self_ty: TypeId,
-    pub for_trait: Option<Vec<Ident>>,
+    pub for_trait: Option<Vec<Symbol>>,
     pub methods: Vec<FnSig>,
 }
 
 #[derive(Debug)]
 pub struct FnSig {
-    pub name: Ident,
+    pub name: Symbol,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
     pub is_placeholder: bool,
@@ -95,7 +98,7 @@ pub struct FnSig {
 
 #[derive(Debug)]
 pub struct Constant {
-    pub name: Ident,
+    pub name: Symbol,
     pub ty: TypeId,
     pub is_placeholder: bool,
 }
@@ -141,10 +144,12 @@ pub enum ScopeKind {
 
 #[derive(Debug)]
 pub struct Scope {
-    pub ident: String,
+    pub id: NodeId,
     pub kind: ScopeKind,
     pub types: HashMap<Symbol, TypeInfo>,
     pub values: HashMap<Symbol, Variable>,
+    pub children: HashSet<NodeId>,
+    pub father: NodeId,
 }
 
 #[derive(Debug)]
@@ -156,10 +161,10 @@ pub enum AnalyzeStage {
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
-    layers: Vec<Scope>,
     type_table: TypeTable,
     impls: HashMap<TypeId, Vec<ImplInfo>>,
-    root_scope: Scope,
+    scopes: HashMap<NodeId, Scope>,
+    current_scope: NodeId,
     stage: AnalyzeStage,
 }
 
@@ -169,71 +174,65 @@ impl SemanticAnalyzer {
         type_table.intern(ResolvedTy::unit());
 
         Self {
-            layers: Vec::default(),
             type_table,
             impls: HashMap::default(),
-            root_scope: Scope {
-                ident: String::default(),
-                kind: ScopeKind::Root,
-                types: HashMap::default(),
-                values: HashMap::default(),
-            },
+            scopes: HashMap::default(),
+            current_scope: 0,
             stage: AnalyzeStage::SymbolCollect,
         }
     }
 
-    fn get_scope_mut(&mut self) -> Result<&mut Scope, SemanticError> {
-        if let Some(scope) = self.layers.last_mut() {
-            Ok(scope)
-        } else {
-            Ok(&mut self.root_scope)
-        }
+    fn get_scope_mut(&mut self) -> &mut Scope {
+        self.scopes.get_mut(&self.current_scope).unwrap()
     }
 
-    fn get_scope(&self) -> Result<&Scope, SemanticError> {
-        if let Some(scope) = self.layers.last() {
-            Ok(scope)
-        } else {
-            Ok(&self.root_scope)
-        }
+    fn get_scope(&self) -> &Scope {
+        self.scopes.get(&self.current_scope).unwrap()
     }
 
-    fn push_scope(&mut self, ident: Symbol, kind: ScopeKind) -> Result<(), SemanticError> {
-        let name = match ident {
-            Symbol::String(s) => {
-                match kind {
-                    ScopeKind::Root => "",
-                    ScopeKind::Fn => "$Fn$",
-                    ScopeKind::Trait(_) => "$Trait$",
-                    ScopeKind::Enum => "$Enum$",
-                    ScopeKind::Struct => "$Struct$",
-                    ScopeKind::Impl(_) => "$Impl$",
-                }
-                .to_string()
-                    + &s
-            }
-            _ => return Err(SemanticError::InvaildScope),
-        };
+    fn add_scope(&mut self, id: NodeId, kind: ScopeKind) -> Result<(), SemanticError> {
+        if self.scopes.contains_key(&id) || self.get_scope().children.contains(&id) {
+            return Err(SemanticError::InvaildScope);
+        }
 
-        self.layers.push(Scope {
-            ident: name,
-            kind,
-            types: HashMap::default(),
-            values: HashMap::default(),
-        });
+        self.get_scope_mut().children.insert(id);
+        self.scopes.insert(
+            id,
+            Scope {
+                id: id,
+                kind: kind,
+                types: HashMap::new(),
+                values: HashMap::new(),
+                children: HashSet::new(),
+                father: self.get_scope().id,
+            },
+        );
+
+        Ok(())
+    }
+
+    fn enter_scope(&mut self, id: NodeId) -> Result<(), SemanticError> {
+        if !self.get_scope().children.contains(&id) {
+            return Err(SemanticError::UndefinedScope);
+        }
+
+        self.current_scope = id;
+
         Ok(())
     }
 
     fn pop_scope(&mut self) -> Result<(), SemanticError> {
-        if let Some(_) = self.layers.pop() {
-            Err(SemanticError::InvaildScope)
-        } else {
-            Ok(())
+        if matches!(self.get_scope().kind, ScopeKind::Root) {
+            return Err(SemanticError::InvaildScope);
         }
+
+        self.current_scope = self.get_scope().id;
+
+        Ok(())
     }
 
     fn add_type(&mut self, ident: Symbol, info: TypeInfo) -> Result<(), SemanticError> {
-        let s = self.get_scope_mut()?;
+        let s = self.get_scope_mut();
 
         if s.types.contains_key(&ident) {
             return Err(SemanticError::MultiDefined);
@@ -244,13 +243,117 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_type(&mut self, ident: &Symbol) -> Result<&mut TypeInfo, SemanticError> {
-        let s = self.get_scope_mut()?;
-        s.types.get_mut(ident).ok_or(SemanticError::UnknownType)
+    fn get_type_from(&self, ident: &Symbol, mut id: NodeId) -> Result<&TypeInfo, SemanticError> {
+        loop {
+            let scope = if let Some(scope) = self.scopes.get(&id) {
+                scope
+            } else {
+                return Err(SemanticError::UndefinedScope);
+            };
+
+            if scope.types.contains_key(ident) {
+                return Ok(scope.types.get(ident).unwrap());
+            }
+
+            if matches!(scope.kind, ScopeKind::Root) {
+                return Err(SemanticError::UnknownType);
+            } else {
+                id = scope.father;
+            }
+        }
+    }
+
+    fn get_type_from_mut(
+        &mut self,
+        ident: &Symbol,
+        mut id: NodeId,
+    ) -> Result<&mut TypeInfo, SemanticError> {
+        loop {
+            let scope = if let Some(scope) = self.scopes.get_mut(&id) {
+                scope
+            } else {
+                return Err(SemanticError::UndefinedScope);
+            };
+
+            if scope.types.contains_key(ident) {
+                // 不知道为什么，此处必须重新 get scope，否则会导致借用检查器报错
+                return Ok(self
+                    .scopes
+                    .get_mut(&id)
+                    .unwrap()
+                    .types
+                    .get_mut(ident)
+                    .unwrap());
+            }
+
+            if matches!(scope.kind, ScopeKind::Root) {
+                return Err(SemanticError::UnknownType);
+            } else {
+                id = scope.father;
+            }
+        }
+    }
+
+    fn get_value_from(&self, ident: &Symbol, mut id: NodeId) -> Result<&Variable, SemanticError> {
+        loop {
+            let scope = if let Some(scope) = self.scopes.get(&id) {
+                scope
+            } else {
+                return Err(SemanticError::UndefinedScope);
+            };
+
+            if scope.types.contains_key(ident) {
+                return Ok(scope.values.get(ident).unwrap());
+            }
+
+            if matches!(scope.kind, ScopeKind::Root) {
+                return Err(SemanticError::UnknownVariable);
+            } else {
+                id = scope.father;
+            }
+        }
+    }
+
+    fn get_value_from_mut(
+        &mut self,
+        ident: &Symbol,
+        mut id: NodeId,
+    ) -> Result<&mut Variable, SemanticError> {
+        loop {
+            let scope = if let Some(scope) = self.scopes.get_mut(&id) {
+                scope
+            } else {
+                return Err(SemanticError::UndefinedScope);
+            };
+
+            if scope.types.contains_key(ident) {
+                return Ok(self
+                    .scopes
+                    .get_mut(&id)
+                    .unwrap()
+                    .values
+                    .get_mut(ident)
+                    .unwrap());
+            }
+
+            if matches!(scope.kind, ScopeKind::Root) {
+                return Err(SemanticError::UnknownVariable);
+            } else {
+                id = scope.father;
+            }
+        }
+    }
+
+    fn get_type_mut(&mut self, ident: &Symbol) -> Result<&mut TypeInfo, SemanticError> {
+        self.get_type_from_mut(ident, self.current_scope)
+    }
+
+    fn get_type(&self, ident: &Symbol) -> Result<&TypeInfo, SemanticError> {
+        self.get_type_from(ident, self.current_scope)
     }
 
     fn add_value(&mut self, ident: Symbol, var: Variable) -> Result<(), SemanticError> {
-        let s = self.get_scope_mut()?;
+        let s = self.get_scope_mut();
 
         if s.values.contains_key(&ident) {
             return Err(SemanticError::MultiDefined);
@@ -261,11 +364,12 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_value(&mut self, ident: &Symbol) -> Result<&mut Variable, SemanticError> {
-        let s = self.get_scope_mut()?;
-        s.values
-            .get_mut(ident)
-            .ok_or(SemanticError::UnknownVariable)
+    fn get_value_mut(&mut self, ident: &Symbol) -> Result<&mut Variable, SemanticError> {
+        self.get_value_from_mut(ident, self.current_scope)
+    }
+
+    fn get_value(&self, ident: &Symbol) -> Result<&Variable, SemanticError> {
+        self.get_value_from(ident, self.current_scope)
     }
 
     pub fn visit(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
@@ -276,14 +380,21 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_layer_name(&self) -> String {
-        let mut ret = "".to_string();
+    fn get_prefix_name(&self) -> String {
+        let mut ret = Vec::new();
 
-        for x in &self.layers {
-            ret.push_str(&x.ident);
+        let mut id = self.current_scope;
+        loop {
+            let scope = self.scopes.get(&id).unwrap();
+            ret.push(format!("${}", scope.id));
+            if matches!(scope.kind, ScopeKind::Root) {
+                break;
+            } else {
+                id = scope.father;
+            }
         }
 
-        ret
+        String::from_iter(ret.into_iter().rev())
     }
 
     fn is_builtin_type(&self, ident: &Symbol) -> bool {
@@ -519,7 +630,7 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::Body => {
                 match body {
                     Some(body) => {
-                        self.push_scope(ident.symbol.clone(), ScopeKind::Fn)?;
+                        self.enter_scope(ident.symbol.clone(), ScopeKind::Fn)?;
 
                         for stage in [
                             AnalyzeStage::SymbolCollect,
@@ -582,7 +693,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     })
                     .collect::<Result<Vec<_>, SemanticError>>()?;
-                self.get_type(&ident.symbol)?.kind = TypeKind::Enum { fields };
+                self.get_type_mut(&ident.symbol)?.kind = TypeKind::Enum { fields };
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -617,7 +728,7 @@ impl Visitor for SemanticAnalyzer {
                     }
                     crate::ast::item::VariantData::Unit => Vec::new(),
                 };
-                self.get_type(&ident.symbol)?.kind = TypeKind::Struct { fields }
+                self.get_type_mut(&ident.symbol)?.kind = TypeKind::Struct { fields }
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -686,7 +797,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                 }
-                self.get_type(&ident.symbol)?.kind = TypeKind::Trait { methods, constants };
+                self.get_type_mut(&ident.symbol)?.kind = TypeKind::Trait { methods, constants };
             }
             AnalyzeStage::Body => todo!(),
         }
