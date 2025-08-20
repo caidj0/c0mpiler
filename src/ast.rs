@@ -265,11 +265,16 @@ impl Eatable for Mutability {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub enum Symbol {
-    #[default]
-    Empty,
-    String(String),
-    PathSegment(TokenType),
+pub struct Symbol(pub String);
+
+impl Symbol {
+    pub fn is_path_segment(&self) -> bool {
+        self.0 == "self" || self.0 == "Self"
+    }
+
+    pub fn is_self(&self) -> bool {
+        self.0 == "self"
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -290,21 +295,13 @@ impl From<Ident> for Path {
     }
 }
 
-// impl From<Ident> for Expr {
-//     fn from(val: Ident) -> Self {
-//         Expr {
-//             kind: expr::ExprKind::Path(PathExpr(None, val.into())),
-//         }
-//     }
-// }
-
 impl<'a> TryInto<Ident> for &Token<'a> {
     type Error = ASTError;
 
     fn try_into(self) -> Result<Ident, Self::Error> {
         match self.token_type {
             TokenType::Id => Ok(Ident {
-                symbol: Symbol::String(self.lexeme.to_owned()),
+                symbol: Symbol(self.lexeme.to_owned()),
                 span: Span {
                     begin: self.pos.clone(),
                     end: TokenPosition {
@@ -313,21 +310,19 @@ impl<'a> TryInto<Ident> for &Token<'a> {
                     },
                 },
             }),
-            TokenType::LSelfType | TokenType::SelfType | TokenType::Crate | TokenType::Super => {
-                Ok(Ident {
-                    symbol: Symbol::PathSegment(self.token_type.clone()),
-                    span: Span {
-                        begin: self.pos.clone(),
-                        end: TokenPosition {
-                            line: self.pos.line,
-                            col: self.pos.col + self.lexeme.len(),
-                        },
+            TokenType::LSelfType | TokenType::SelfType => Ok(Ident {
+                symbol: Symbol(self.token_type.to_keyword().unwrap().to_string()),
+                span: Span {
+                    begin: self.pos.clone(),
+                    end: TokenPosition {
+                        line: self.pos.line,
+                        col: self.pos.col + self.lexeme.len(),
                     },
-                })
-            }
+                },
+            }),
             _ => Err(ASTError {
                 kind: ASTErrorKind::MisMatch {
-                    expected: r#"Identifier, "self", "Self", "crate" or "super""#.to_owned(),
+                    expected: r#"Identifier, "self" or "Self""#.to_owned(),
                     actual: format!("{self:?}"),
                 },
                 pos: self.pos.clone(),

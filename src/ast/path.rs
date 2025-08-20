@@ -24,7 +24,7 @@ impl Eatable for Path {
             // 上面的短路运算是合法的，因为这里不可能是末尾
             segments.push(PathSegment {
                 ident: Ident {
-                    symbol: Symbol::Empty,
+                    symbol: Symbol::default(),
                     span: Span {
                         begin: iter.get_pos(),
                         end: iter.get_pos(),

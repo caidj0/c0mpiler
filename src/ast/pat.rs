@@ -21,25 +21,21 @@ pub struct Pat {
 impl Pat {
     pub fn is_self(&self) -> bool {
         match &self.kind {
-            PatKind::Path(PathPat(_, Path { segments, span: _ })) => matches!(
-                &segments[..],
-                [PathSegment {
-                    ident: Ident {
-                        symbol: Symbol::PathSegment(TokenType::LSelfType),
-                        span: _
+            PatKind::Path(PathPat(_, Path { segments, span: _ })) => {
+                if let [
+                    PathSegment {
+                        ident: Ident { symbol, span: _ },
+                        args: _,
                     },
-                    args: _
-                }]
-            ),
+                ] = &segments[..]
+                {
+                    symbol.is_self()
+                } else {
+                    false
+                }
+            }
             PatKind::Ref(ref_pat) => ref_pat.0.is_self(),
-            PatKind::Ident(IdentPat(
-                _,
-                Ident {
-                    symbol: Symbol::PathSegment(TokenType::LSelfType),
-                    span: _,
-                },
-                _,
-            )) => true,
+            PatKind::Ident(IdentPat(_, Ident { symbol, span: _ }, _)) => symbol.is_self(),
             _ => false,
         }
     }

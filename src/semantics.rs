@@ -13,7 +13,7 @@ use crate::{
         expr::Expr,
         item::{AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, StructItem, TraitItem},
         stmt::StmtKind,
-        ty::{MutTy, RefTy, Ty, TyKind},
+        ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
     tokens::TokenType,
@@ -37,7 +37,7 @@ pub struct TypeId(usize);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ResolvedTy {
-    BulitIn(Symbol),
+    BulitIn(Symbol, Vec<ResolvedTy>),
     Named(Vec<Symbol>),
     Ref(Box<ResolvedTy>, Mutability),
     Array(Box<ResolvedTy>, u32),
@@ -243,7 +243,23 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_type_from(&self, ident: &Symbol, mut id: NodeId) -> Result<&TypeInfo, SemanticError> {
+    fn add_value(&mut self, ident: Symbol, var: Variable) -> Result<(), SemanticError> {
+        let s = self.get_scope_mut();
+
+        if s.values.contains_key(&ident) {
+            return Err(SemanticError::MultiDefined);
+        }
+
+        s.values.insert(ident, var);
+
+        Ok(())
+    }
+
+    fn get_type_from(
+        &self,
+        ident: &Symbol,
+        mut id: NodeId,
+    ) -> Result<(NodeId, &TypeInfo), SemanticError> {
         loop {
             let scope = if let Some(scope) = self.scopes.get(&id) {
                 scope
@@ -252,7 +268,7 @@ impl SemanticAnalyzer {
             };
 
             if scope.types.contains_key(ident) {
-                return Ok(scope.types.get(ident).unwrap());
+                return Ok((id, scope.types.get(ident).unwrap()));
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
@@ -267,7 +283,7 @@ impl SemanticAnalyzer {
         &mut self,
         ident: &Symbol,
         mut id: NodeId,
-    ) -> Result<&mut TypeInfo, SemanticError> {
+    ) -> Result<(NodeId, &mut TypeInfo), SemanticError> {
         loop {
             let scope = if let Some(scope) = self.scopes.get_mut(&id) {
                 scope
@@ -277,13 +293,15 @@ impl SemanticAnalyzer {
 
             if scope.types.contains_key(ident) {
                 // 不知道为什么，此处必须重新 get scope，否则会导致借用检查器报错
-                return Ok(self
-                    .scopes
-                    .get_mut(&id)
-                    .unwrap()
-                    .types
-                    .get_mut(ident)
-                    .unwrap());
+                return Ok((
+                    id,
+                    self.scopes
+                        .get_mut(&id)
+                        .unwrap()
+                        .types
+                        .get_mut(ident)
+                        .unwrap(),
+                ));
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
@@ -294,7 +312,11 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_value_from(&self, ident: &Symbol, mut id: NodeId) -> Result<&Variable, SemanticError> {
+    fn get_value_from(
+        &self,
+        ident: &Symbol,
+        mut id: NodeId,
+    ) -> Result<(NodeId, &Variable), SemanticError> {
         loop {
             let scope = if let Some(scope) = self.scopes.get(&id) {
                 scope
@@ -303,7 +325,7 @@ impl SemanticAnalyzer {
             };
 
             if scope.types.contains_key(ident) {
-                return Ok(scope.values.get(ident).unwrap());
+                return Ok((id, scope.values.get(ident).unwrap()));
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
@@ -318,7 +340,7 @@ impl SemanticAnalyzer {
         &mut self,
         ident: &Symbol,
         mut id: NodeId,
-    ) -> Result<&mut Variable, SemanticError> {
+    ) -> Result<(NodeId, &mut Variable), SemanticError> {
         loop {
             let scope = if let Some(scope) = self.scopes.get_mut(&id) {
                 scope
@@ -327,13 +349,15 @@ impl SemanticAnalyzer {
             };
 
             if scope.types.contains_key(ident) {
-                return Ok(self
-                    .scopes
-                    .get_mut(&id)
-                    .unwrap()
-                    .values
-                    .get_mut(ident)
-                    .unwrap());
+                return Ok((
+                    id,
+                    self.scopes
+                        .get_mut(&id)
+                        .unwrap()
+                        .values
+                        .get_mut(ident)
+                        .unwrap(),
+                ));
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
@@ -344,31 +368,19 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_type_mut(&mut self, ident: &Symbol) -> Result<&mut TypeInfo, SemanticError> {
+    fn get_type_mut(&mut self, ident: &Symbol) -> Result<(NodeId, &mut TypeInfo), SemanticError> {
         self.get_type_from_mut(ident, self.current_scope)
     }
 
-    fn get_type(&self, ident: &Symbol) -> Result<&TypeInfo, SemanticError> {
+    fn get_type(&self, ident: &Symbol) -> Result<(NodeId, &TypeInfo), SemanticError> {
         self.get_type_from(ident, self.current_scope)
     }
 
-    fn add_value(&mut self, ident: Symbol, var: Variable) -> Result<(), SemanticError> {
-        let s = self.get_scope_mut();
-
-        if s.values.contains_key(&ident) {
-            return Err(SemanticError::MultiDefined);
-        }
-
-        s.values.insert(ident, var);
-
-        Ok(())
-    }
-
-    fn get_value_mut(&mut self, ident: &Symbol) -> Result<&mut Variable, SemanticError> {
+    fn get_value_mut(&mut self, ident: &Symbol) -> Result<(NodeId, &mut Variable), SemanticError> {
         self.get_value_from_mut(ident, self.current_scope)
     }
 
-    fn get_value(&self, ident: &Symbol) -> Result<&Variable, SemanticError> {
+    fn get_value(&self, ident: &Symbol) -> Result<(NodeId, &Variable), SemanticError> {
         self.get_value_from(ident, self.current_scope)
     }
 
@@ -380,13 +392,11 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_prefix_name(&self) -> String {
+    fn get_prefix_name_from(&self, mut id: NodeId) -> Vec<Symbol> {
         let mut ret = Vec::new();
-
-        let mut id = self.current_scope;
         loop {
             let scope = self.scopes.get(&id).unwrap();
-            ret.push(format!("${}", scope.id));
+            ret.push(Symbol(format!("${}", scope.id)));
             if matches!(scope.kind, ScopeKind::Root) {
                 break;
             } else {
@@ -394,17 +404,52 @@ impl SemanticAnalyzer {
             }
         }
 
-        String::from_iter(ret.into_iter().rev())
+        ret.reverse();
+        ret
     }
 
-    fn is_builtin_type(&self, ident: &Symbol) -> bool {
-        match ident {
-            Symbol::Empty => false,
-            Symbol::String(s) => {
-                s == "u32" || s == "i32" || s == "char" || s == "str" || s == "String"
+    fn get_prefix_name(&self) -> Vec<Symbol> {
+        self.get_prefix_name_from(self.current_scope)
+    }
+
+    fn is_builtin_type(&self, ident: &Symbol, arg_num: usize) -> bool {
+        const BUILTINS: [(&str, usize); 8] = [
+            ("u32", 0),
+            ("i32", 0),
+            ("char", 0),
+            ("str", 0),
+            ("String", 0),
+            ("Option", 1),
+            ("Box", 1),
+            ("Result", 2),
+        ];
+
+        for (bs, n) in BUILTINS {
+            if ident.0 == bs && arg_num == n {
+                return true;
             }
-            Symbol::PathSegment(_) => false,
         }
+        false
+    }
+
+    fn get_self_type_from(&self, mut id: NodeId) -> Result<TypeId, SemanticError> {
+        loop {
+            let scope = if let Some(scope) = self.scopes.get(&id) {
+                scope
+            } else {
+                return Err(SemanticError::UndefinedScope);
+            };
+
+            match scope.kind {
+                ScopeKind::Root => return Err(SemanticError::UnknownType),
+                ScopeKind::Trait(type_id) | ScopeKind::Impl(type_id) => return Ok(type_id),
+                _ => id = scope.father,
+            }
+        }
+    }
+
+    fn get_self_type(&self) -> Result<TypeId, SemanticError> {
+        self.get_self_type_from(self.current_scope)
     }
 
     fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
@@ -427,103 +472,65 @@ impl SemanticAnalyzer {
                     .collect::<Result<Vec<_>, SemanticError>>()?,
             )),
             TyKind::Path(path_ty) => {
-                if path_ty.0.is_some() {
+                let PathTy(qself, path) = path_ty;
+                if qself.is_some() {
                     return Err(SemanticError::Unimplemented);
                 }
 
-                let mut scope = None;
-                let mut id = Symbol::Empty;
-
-                for (index, seg) in path_ty.1.segments.iter().enumerate() {
-                    match &seg.ident {
-                        Ident {
-                            symbol: Symbol::Empty,
-                            span: _,
-                        } => return Err(SemanticError::InvaildPath),
-                        Ident {
-                            symbol: Symbol::String(s),
-                            span: _,
-                        } => {
-                            if matches!(id, Symbol::Empty) {
-                                // id 应该只能被赋值一次
-                                id = Symbol::String(s.to_string());
-                            } else {
-                                return Err(SemanticError::InvaildPath);
-                            }
-                        }
-                        Ident {
-                            symbol: Symbol::PathSegment(token_type),
-                            span: _,
-                        } => {
-                            if index != 0 {
-                                return Err(SemanticError::InvaildPath);
-                            } else {
-                                match token_type {
-                                    TokenType::LSelfType => scope = Some(&self.root_scope),
-                                    TokenType::SelfType => {
-                                        if path_ty.1.segments.len() == 1
-                                            && let Scope {
-                                                ident: _,
-                                                kind: ScopeKind::Impl(id) | ScopeKind::Trait(id),
-                                                types: _,
-                                                values: _,
-                                            } = self.get_scope()?
-                                        {
-                                            return Ok(self.get_type_by_id(*id).clone());
-                                        } else {
-                                            return Err(SemanticError::InvaildPath);
-                                        }
-                                    }
-                                    TokenType::Crate => scope = Some(&self.root_scope),
-                                    TokenType::Super => return Err(SemanticError::InvaildPath),
-                                    _ => {
-                                        panic!("The path in the ident can't be {:?}", token_type);
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if path.segments.len() > 1 {
+                    return Err(SemanticError::InvaildPath);
                 }
 
-                // scope 要么为 None，要么为 root
-                match scope {
-                    Some(scope) => {
-                        assert!(std::ptr::eq(scope, &self.root_scope));
-                        if scope.types.contains_key(&id) {
-                            Ok(ResolvedTy::Named(vec![id]))
-                        } else {
-                            return Err(SemanticError::UnknownType);
+                let seg = path.segments.get(0).unwrap();
+                let s = &seg.ident.symbol;
+                if s.is_path_segment() {
+                    if s.is_self() {
+                        if seg.args.is_some() {
+                            return Err(SemanticError::InvaildPath);
                         }
+                        return Ok(self.get_type_by_id(self.get_self_type()?).clone());
                     }
-                    None => {
-                        let mut found_index: Option<usize> = None;
-                        for (index, scope) in self.layers.iter().enumerate().rev() {
-                            if scope.types.contains_key(&id) {
-                                found_index = Some(index);
-                                break;
-                            }
-                        }
+                    return Err(SemanticError::InvaildPath);
+                }
+                match self.get_type(s) {
+                    Ok((id, _)) => {
+                        let mut full_name = self.get_prefix_name_from(id);
+                        full_name.push(s.clone());
 
-                        match found_index {
-                            Some(idx) => {
-                                let mut names = Vec::new();
-                                for i in 0..=idx {
-                                    names.push(Symbol::String(self.layers[i].ident.clone()));
-                                }
-                                names.push(id);
-                                Ok(ResolvedTy::Named(names))
-                            }
-                            None => {
-                                if self.root_scope.types.contains_key(&id) {
-                                    Ok(ResolvedTy::Named(vec![id]))
-                                } else {
-                                    if self.is_builtin_type(&id) {
-                                        Ok(ResolvedTy::BulitIn(id))
-                                    } else {
-                                        Err(SemanticError::UnknownType)
+                        Ok(ResolvedTy::Named(full_name))
+                    }
+                    Err(err) => {
+                        if self.is_builtin_type(
+                            &seg.ident.symbol,
+                            seg.args.as_ref().map_or(0, |x| match x.as_ref() {
+                                crate::ast::generic::GenericArgs::AngleBracketed(
+                                    angle_bracketed_args,
+                                ) => angle_bracketed_args.args.len(),
+                            }),
+                        ) {
+                            let mut args_v = Vec::new();
+                            if let Some(args) = &seg.args {
+                                match args.as_ref() {
+                                    crate::ast::generic::GenericArgs::AngleBracketed(
+                                        angle_bracketed_args,
+                                    ) => {
+                                        for x in &angle_bracketed_args.args {
+                                            match x {
+                                                crate::ast::generic::AngleBracketedArg::Arg(
+                                                    generic_arg,
+                                                ) => match generic_arg {
+                                                    crate::ast::generic::GenericArg::Type(ty) => {
+                                                        args_v.push(self.resolve_ty(ty)?)
+                                                    }
+                                                },
+                                            }
+                                        }
                                     }
                                 }
                             }
+                            Ok(ResolvedTy::BulitIn(s.clone(), args_v))
+                        } else {
+                            Err(err)
                         }
                     }
                 }
@@ -548,15 +555,13 @@ impl SemanticAnalyzer {
     }
 
     fn check_const(&self, ty: &ResolvedTy, expr: &Expr) -> Result<(), SemanticError> {
-        if let ResolvedTy::BulitIn(ident) = ty {
-            if let Symbol::String(s) = ident {
-                match s.as_str() {
-                    "u32" => {
-                        let _: u32 = expr.try_into()?;
-                        return Ok(());
-                    }
-                    _ => {}
+        if let ResolvedTy::BulitIn(ident, _) = ty {
+            match ident.0.as_str() {
+                "u32" => {
+                    let _: u32 = expr.try_into()?;
+                    return Ok(());
                 }
+                _ => {}
             }
         };
 
