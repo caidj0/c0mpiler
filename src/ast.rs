@@ -40,8 +40,10 @@ pub trait OptionEatable: Sized {
     fn try_eat(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
         let ret = Self::try_eat_impl(&mut using_iter);
-        if ret.is_ok() {
-            iter.update(using_iter);
+
+        match &ret {
+            Ok(Some(_)) => iter.update(using_iter),
+            _ => {}
         }
         ret
     }
@@ -83,6 +85,7 @@ pub enum ASTErrorKind {
     MisMatch { expected: String, actual: String },
     LiteralError,
     MisMatchPat,
+    MissingSemi,
 }
 
 pub type ASTResult<T> = Result<T, ASTError>;

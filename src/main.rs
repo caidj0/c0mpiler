@@ -1,13 +1,13 @@
 use c0mpiler::{
     ast::{Crate, Eatable},
     lexer::{Lexer, TokenBuffer},
-    semantics::SemanticAnalyzer,
 };
 
 fn main() {
     let test_str = r###"
 fn main() {
-    let a;
+    1 + 1
+    abcde
 }
 "###;
     let lexer = Lexer::new(test_str);

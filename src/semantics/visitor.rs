@@ -26,10 +26,10 @@ pub trait Visitor {
     fn visit_trait_item(&mut self, item: &TraitItem) -> Result<(), SemanticError>;
     fn visit_impl_item(&mut self, item: &ImplItem) -> Result<(), SemanticError>;
 
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<ExprResult, SemanticError>;
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Option<ExprResult>, SemanticError>;
     fn visit_let_stmt(&mut self, stmt: &LocalStmt) -> Result<(), SemanticError>;
 
-    fn visit_expr(&mut self, expr: &Expr) -> Result<ExprResult, SemanticError> {
+    fn visit_expr(&mut self, expr: &Expr) -> Result<Option<ExprResult>, SemanticError> {
         match &expr.kind {
             ExprKind::Array(array_expr) => self.visit_array_expr(array_expr),
             ExprKind::ConstBlock(const_block_expr) => self.visit_const_block_expr(const_block_expr),
@@ -62,35 +62,35 @@ pub trait Visitor {
             ExprKind::Repeat(repeat_expr) => self.visit_repeat_expr(repeat_expr),
         }
     }
-    fn visit_array_expr(&mut self, expr: &ArrayExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_const_block_expr(&mut self, expr: &ConstBlockExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_call_expr(&mut self, expr: &CallExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_method_call_expr(&mut self, expr: &MethodCallExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_tup_expr(&mut self, expr: &TupExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_lit_expr(&mut self, expr: &LitExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_cast_expr(&mut self, expr: &CastExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_let_expr(&mut self, expr: &LetExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_if_expr(&mut self, expr: &IfExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_while_expr(&mut self, expr: &WhileExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_for_loop_expr(&mut self, expr: &ForLoopExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_loop_expr(&mut self, expr: &LoopExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_match_expr(&mut self, expr: &MatchExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_block_expr(&mut self, expr: &BlockExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_assign_op_expr(&mut self, expr: &AssignOpExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_field_expr(&mut self, expr: &FieldExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_index_expr(&mut self, expr: &IndexExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_range_expr(&mut self, expr: &RangeExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_underscore_expr(&mut self, expr: &UnderscoreExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_path_expr(&mut self, expr: &PathExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_addr_of_expr(&mut self, expr: &AddrOfExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_break_expr(&mut self, expr: &BreakExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_continue_expr(&mut self, expr: &ContinueExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_ret_expr(&mut self, expr: &RetExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_struct_expr(&mut self, expr: &StructExpr) -> Result<ExprResult, SemanticError>;
-    fn visit_repeat_expr(&mut self, expr: &RepeatExpr) -> Result<ExprResult, SemanticError>;
+    fn visit_array_expr(&mut self, expr: &ArrayExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_const_block_expr(&mut self, expr: &ConstBlockExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_call_expr(&mut self, expr: &CallExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_method_call_expr(&mut self, expr: &MethodCallExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_tup_expr(&mut self, expr: &TupExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_lit_expr(&mut self, expr: &LitExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_cast_expr(&mut self, expr: &CastExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_let_expr(&mut self, expr: &LetExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_if_expr(&mut self, expr: &IfExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_while_expr(&mut self, expr: &WhileExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_for_loop_expr(&mut self, expr: &ForLoopExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_loop_expr(&mut self, expr: &LoopExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_match_expr(&mut self, expr: &MatchExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_block_expr(&mut self, expr: &BlockExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_assign_op_expr(&mut self, expr: &AssignOpExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_field_expr(&mut self, expr: &FieldExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_index_expr(&mut self, expr: &IndexExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_range_expr(&mut self, expr: &RangeExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_underscore_expr(&mut self, expr: &UnderscoreExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_path_expr(&mut self, expr: &PathExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_addr_of_expr(&mut self, expr: &AddrOfExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_break_expr(&mut self, expr: &BreakExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_continue_expr(&mut self, expr: &ContinueExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_ret_expr(&mut self, expr: &RetExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_struct_expr(&mut self, expr: &StructExpr) -> Result<Option<ExprResult>, SemanticError>;
+    fn visit_repeat_expr(&mut self, expr: &RepeatExpr) -> Result<Option<ExprResult>, SemanticError>;
 
-    fn visit_pat(&mut self, pat: &Pat) -> Result<ExprResult, SemanticError>;
+    fn visit_pat(&mut self, pat: &Pat) -> Result<Option<ExprResult>, SemanticError>;
 }

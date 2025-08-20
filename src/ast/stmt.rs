@@ -1,7 +1,5 @@
 use crate::{
-    ast::{ASTResult, Eatable, NodeId, Span, expr::Expr, item::Item, pat::Pat, ty::Ty},
-    match_keyword,
-    tokens::TokenType,
+    ast::{expr::Expr, item::Item, pat::Pat, ty::Ty, ASTResult, Eatable, NodeId, Span}, is_keyword, match_keyword, tokens::TokenType
 };
 
 #[derive(Debug)]
@@ -43,7 +41,7 @@ impl Eatable for Stmt {
 
             match expr_result {
                 Ok(expr) => {
-                    if expr.is_block() && iter.peek()?.token_type == TokenType::Semi {
+                    if is_keyword!(iter, TokenType::Semi) {
                         Ok(StmtKind::Semi(Box::new(expr)))
                     } else {
                         Ok(StmtKind::Expr(Box::new(expr)))

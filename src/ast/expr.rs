@@ -3,7 +3,7 @@ use crate::{
         ASTError, ASTResult, Eatable, Ident, Mutability, NodeId, OptionEatable, Span,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
-        stmt::Stmt,
+        stmt::{Stmt, StmtKind},
         ty::Ty,
     },
     kind_check,
@@ -397,7 +397,9 @@ impl BinaryHelper {
         min_priority: usize,
         has_struct: bool,
     ) -> ASTResult<Option<Self>> {
-        let op_result: Result<BinOp, _> = iter.next()?.try_into();
+        let mut using_iter = iter.clone();
+
+        let op_result: Result<BinOp, _> = using_iter.next()?.try_into();
         let op: BinOp = if let Ok(ok) = op_result {
             if ok.get_priority() < min_priority {
                 return Ok(None);
@@ -407,8 +409,10 @@ impl BinaryHelper {
             return Ok(None);
         };
 
-        let expr2 = Expr::eat_with_priority_and_struct(iter, op.get_priority() + 1, has_struct)?;
+        let expr2 =
+            Expr::eat_with_priority_and_struct(&mut using_iter, op.get_priority() + 1, has_struct)?;
 
+        iter.update(using_iter);
         Ok(Some(BinaryHelper(op, Box::new(expr2))))
     }
 }
@@ -566,6 +570,22 @@ impl Eatable for BlockExpr {
         loop_until!(iter, TokenType::CloseCurly, {
             stmts.push(Stmt::eat(iter)?);
         });
+
+        let mut stmt_iter = stmts.iter().rev();
+        stmt_iter.next();
+        for stmt in stmt_iter {
+            match &stmt.kind {
+                StmtKind::Expr(e) => {
+                    if !e.is_block() {
+                        return Err(ASTError {
+                            kind: crate::ast::ASTErrorKind::MissingSemi,
+                            pos: e.span.end.clone(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
 
         Ok(Self {
             stmts,
@@ -913,7 +933,11 @@ impl RangeHelper {
             _ => return Ok(None),
         };
 
-        let expr2 = Expr::eat_with_priority(&mut using_iter, Self::RANGE_PRIORITY + 1).ok();
+        let mut using_iter2 = using_iter.clone();
+        let expr2 = Expr::eat_with_priority(&mut using_iter2, Self::RANGE_PRIORITY + 1).ok();
+        if expr2.is_some() {
+            using_iter.update(using_iter2);
+        }
 
         iter.update(using_iter);
         Ok(Some(RangeHelper(expr2.map(Box::new), limits)))
