@@ -2,15 +2,12 @@ pub mod const_eval;
 pub mod primitives;
 pub mod visitor;
 
-use std::{
-    collections::{HashMap, HashSet},
-    vec,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::{
         Crate, Ident, Mutability, NodeId, Symbol,
-        expr::{Expr, LitKind},
+        expr::{Expr, LitKind, UnOp},
         item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem,
@@ -33,6 +30,8 @@ pub enum SemanticError {
     InvaildScope,
     FnWithoutBody,
     UnknownSuffix,
+    NoImplementation,
+    UnDereferenceable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -183,7 +182,7 @@ pub struct Scope {
 
 #[derive(Debug)]
 pub enum PlaceValueExpr {
-    Place,
+    Place(Mutability),
     Value,
 }
 
@@ -196,7 +195,6 @@ pub enum AssigneeExpr {
 #[derive(Debug)]
 pub struct ExprResult {
     pub type_id: TypeId,
-    pub mutbl: Mutability,
     pub category: AssigneeExpr,
 }
 
@@ -612,7 +610,6 @@ impl SemanticAnalyzer {
     fn unit_expr_result() -> ExprResult {
         ExprResult {
             type_id: Self::unit_type(),
-            mutbl: Mutability::Not,
             category: AssigneeExpr::Not,
         }
     }
@@ -1017,7 +1014,62 @@ impl Visitor for SemanticAnalyzer {
         &mut self,
         expr: &crate::ast::expr::UnaryExpr,
     ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+        let res = self.visit_expr(&expr.1)?;
+        match res {
+            Some(ExprResult {
+                type_id,
+                category: _,
+            }) => {
+                let ty = self.get_type_by_id(type_id);
+                match expr.0 {
+                    UnOp::Deref => {
+                        if let ResolvedTy::Ref(t, multb) = ty {
+                            Ok(Some(ExprResult {
+                                category: AssigneeExpr::Yes(PlaceValueExpr::Place(*multb)),
+                                type_id: self.intern_type(t.as_ref().clone()),
+                            }))
+                        } else {
+                            Err(SemanticError::UnDereferenceable)
+                        }
+                    }
+                    UnOp::Not => {
+                        let ty = if let ResolvedTy::Ref(t, _) = ty {
+                            t.as_ref()
+                        } else {
+                            ty
+                        };
+                        if *ty == ResolvedTy::bool()
+                            || *ty == ResolvedTy::integer()
+                            || *ty == ResolvedTy::i32()
+                            || *ty == ResolvedTy::u32()
+                        {
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ty.clone()),
+                                category: AssigneeExpr::Not,
+                            }))
+                        } else {
+                            Err(SemanticError::NoImplementation)
+                        }
+                    }
+                    UnOp::Neg => {
+                        let ty = if let ResolvedTy::Ref(t, _) = ty {
+                            t.as_ref()
+                        } else {
+                            ty
+                        };
+                        if *ty == ResolvedTy::i32() || *ty == ResolvedTy::integer() {
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ResolvedTy::i32()),
+                                category: AssigneeExpr::Not,
+                            }))
+                        } else {
+                            Err(SemanticError::NoImplementation)
+                        }
+                    }
+                }
+            }
+            None => Ok(None),
+        }
     }
 
     fn visit_lit_expr(
@@ -1052,7 +1104,6 @@ impl Visitor for SemanticAnalyzer {
                     }
                     _ => return Err(SemanticError::Unimplemented),
                 },
-                mutbl: Mutability::Not,
                 category: AssigneeExpr::Not,
             })),
         }
@@ -1117,18 +1168,19 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect => {
                 self.add_scope(self.current_ast_id, ScopeKind::Lambda)?;
             }
-            AnalyzeStage::Definition => {},
-            AnalyzeStage::Body => {},
+            AnalyzeStage::Definition => {}
+            AnalyzeStage::Body => {}
         }
 
         self.enter_scope(self.current_ast_id)?;
+        let mut ret = None;
         for stmt in &expr.stmts {
-            
+            ret = self.visit_stmt(stmt)?;
         }
         self.exit_scope()?;
 
         self.current_ast_id = old_ast_id;
-        todo!()
+        Ok(ret)
     }
 
     fn visit_assign_expr(
