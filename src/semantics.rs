@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     ast::{
         Crate, Ident, Mutability, NodeId, Symbol,
-        expr::{Expr, LitKind, UnOp},
+        expr::{BinOp, BinaryExpr, Expr, LitKind, UnOp},
         item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem,
@@ -32,6 +32,7 @@ pub enum SemanticError {
     UnknownSuffix,
     NoImplementation,
     UnDereferenceable,
+    IncompatibleCast,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,6 +81,22 @@ impl ResolvedTy {
 
     pub fn ref_str() -> Self {
         Self::Ref(Box::new(Self::str()), Mutability::Not)
+    }
+
+    pub fn string() -> Self {
+        Self::BulitIn(Symbol("String".to_string()), Vec::new())
+    }
+
+    pub fn try_deref(&self) -> &Self {
+        if let ResolvedTy::Ref(resolved, _) = self {
+            resolved.as_ref()
+        } else {
+            self
+        }
+    }
+
+    pub fn is_number_type(&self) -> bool {
+        *self == Self::integer() || *self == Self::i32() || *self == Self::u32()
     }
 }
 
@@ -465,16 +482,13 @@ impl SemanticAnalyzer {
     }
 
     fn is_builtin_type(&self, ident: &Symbol, arg_num: usize) -> bool {
-        const BUILTINS: [(&str, usize); 9] = [
+        const BUILTINS: [(&str, usize); 6] = [
             ("bool", 0),
             ("u32", 0),
             ("i32", 0),
             ("char", 0),
             ("str", 0),
             ("String", 0),
-            ("Option", 1),
-            ("Box", 1),
-            ("Result", 2),
         ];
 
         for (bs, n) in BUILTINS {
@@ -1005,9 +1019,99 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_binary_expr(
         &mut self,
-        expr: &crate::ast::expr::BinaryExpr,
+        BinaryExpr(bin_op, expr1, expr2): &BinaryExpr,
     ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+        let res1 = self.visit_expr(expr1)?;
+        let res2 = self.visit_expr(expr2)?;
+
+        match (res1, res2) {
+            (Some(res1), Some(res2)) => {
+                let ty1 = self.get_type_by_id(res1.type_id).try_deref();
+                let ty2 = self.get_type_by_id(res2.type_id).try_deref();
+
+                match bin_op {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
+                        if !ty1.is_number_type() || !ty2.is_number_type() {
+                            return Err(SemanticError::NoImplementation);
+                        }
+                        let ret_ty = if *ty1 == ResolvedTy::integer() {
+                            ty2
+                        } else if *ty2 == ResolvedTy::integer() || *ty1 == *ty2 {
+                            ty1
+                        } else {
+                            return Err(SemanticError::NoImplementation);
+                        };
+
+                        Ok(Some(ExprResult {
+                            type_id: self.intern_type(ret_ty.clone()),
+                            category: AssigneeExpr::Not,
+                        }))
+                    }
+                    BinOp::And | BinOp::Or => {
+                        if *ty1 == ResolvedTy::bool() && *ty2 == ResolvedTy::bool() {
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ResolvedTy::bool()),
+                                category: AssigneeExpr::Not,
+                            }))
+                        } else {
+                            Err(SemanticError::NoImplementation)
+                        }
+                    }
+                    BinOp::BitXor | BinOp::BitAnd | BinOp::BitOr => {
+                        if *ty1 == ResolvedTy::bool() && *ty2 == ResolvedTy::bool() {
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ResolvedTy::bool()),
+                                category: AssigneeExpr::Not,
+                            }))
+                        } else if ty1.is_number_type() && ty2.is_number_type() {
+                            let ret_ty = if *ty1 == ResolvedTy::integer() {
+                                ty2
+                            } else if *ty2 == ResolvedTy::integer() || *ty1 == *ty2 {
+                                ty1
+                            } else {
+                                return Err(SemanticError::NoImplementation);
+                            };
+
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ret_ty.clone()),
+                                category: AssigneeExpr::Not,
+                            }))
+                        } else {
+                            Err(SemanticError::NoImplementation)
+                        }
+                    }
+                    BinOp::Shl | BinOp::Shr => {
+                        if ty1.is_number_type() && ty2.is_number_type() {
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ty1.clone()),
+                                category: AssigneeExpr::Not,
+                            }))
+                        } else {
+                            Err(SemanticError::NoImplementation)
+                        }
+                    }
+                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Ge | BinOp::Gt => {
+                        if (matches!(ty1, ResolvedTy::BulitIn(_, _))
+                            && matches!(ty2, ResolvedTy::BulitIn(_, _))
+                            && *ty1 == *ty2)
+                            || ((*ty1 == ResolvedTy::str() || *ty1 == ResolvedTy::string())
+                                && (*ty2 == ResolvedTy::str() || *ty2 == ResolvedTy::string()))
+                            || (*ty1 == ResolvedTy::integer() && ty2.is_number_type())
+                            || (*ty2 == ResolvedTy::integer() && ty1.is_number_type())
+                        {
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ResolvedTy::bool()),
+                                category: AssigneeExpr::Not,
+                            }))
+                        } else {
+                            Err(SemanticError::NoImplementation)
+                        }
+                    }
+                }
+            }
+            (None, Some(_)) | (Some(_), None) => panic!("Impossible!"),
+            (None, None) => Ok(None),
+        }
     }
 
     fn visit_unary_expr(
@@ -1023,6 +1127,7 @@ impl Visitor for SemanticAnalyzer {
                 let ty = self.get_type_by_id(type_id);
                 match expr.0 {
                     UnOp::Deref => {
+                        // 在 rust 中，貌似任意 value expr 都可以取其 ref，并且再解引用后可以得到 place value
                         if let ResolvedTy::Ref(t, multb) = ty {
                             Ok(Some(ExprResult {
                                 category: AssigneeExpr::Yes(PlaceValueExpr::Place(*multb)),
@@ -1033,11 +1138,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                     UnOp::Not => {
-                        let ty = if let ResolvedTy::Ref(t, _) = ty {
-                            t.as_ref()
-                        } else {
-                            ty
-                        };
+                        let ty = ty.try_deref();
                         if *ty == ResolvedTy::bool()
                             || *ty == ResolvedTy::integer()
                             || *ty == ResolvedTy::i32()
@@ -1052,11 +1153,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                     UnOp::Neg => {
-                        let ty = if let ResolvedTy::Ref(t, _) = ty {
-                            t.as_ref()
-                        } else {
-                            ty
-                        };
+                        let ty = ty.try_deref();
                         if *ty == ResolvedTy::i32() || *ty == ResolvedTy::integer() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::i32()),
@@ -1113,7 +1210,29 @@ impl Visitor for SemanticAnalyzer {
         &mut self,
         expr: &crate::ast::expr::CastExpr,
     ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+        let res = self.visit_expr(&expr.0)?;
+        match res {
+            Some(ExprResult { type_id, category }) => {
+                let expr_ty = self.get_type_by_id(type_id);
+                let target_ty = self.resolve_ty(&expr.1)?;
+
+                if (*expr_ty == ResolvedTy::i32()
+                    || *expr_ty == ResolvedTy::u32()
+                    || *expr_ty == ResolvedTy::integer()
+                    || *expr_ty == ResolvedTy::char()
+                    || *expr_ty == ResolvedTy::bool())
+                    && (target_ty == ResolvedTy::i32() || target_ty == ResolvedTy::u32())
+                {
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(target_ty),
+                        category: AssigneeExpr::Not,
+                    }))
+                } else {
+                    Err(SemanticError::IncompatibleCast)
+                }
+            }
+            None => Ok(None),
+        }
     }
 
     fn visit_let_expr(
@@ -1236,7 +1355,20 @@ impl Visitor for SemanticAnalyzer {
         &mut self,
         expr: &crate::ast::expr::AddrOfExpr,
     ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+        match self.visit_expr(&expr.1)? {
+            Some(ExprResult {
+                type_id,
+                category: _,
+            }) => {
+                let ty = self.get_type_by_id(type_id);
+                let ret_ty = ResolvedTy::Ref(Box::new(ty.clone()), expr.0);
+                Ok(Some(ExprResult {
+                    type_id: self.intern_type(ret_ty),
+                    category: AssigneeExpr::Not,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     fn visit_break_expr(
