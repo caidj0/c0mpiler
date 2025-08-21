@@ -14,14 +14,14 @@ use crate::{
         },
         pat::IdentPat,
         stmt::{LocalKind, StmtKind},
-        ty::{self, MutTy, PathTy, RefTy, Ty, TyKind},
+        ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
 };
 
 macro_rules! no_assignee {
     ($id:expr) => {
-        if matches!($id, AssigneeExpr::Only) {
+        if matches!($id, ExprCategory::Only) {
             return Err(SemanticError::AssigneeOnlyExpr);
         }
     };
@@ -43,6 +43,8 @@ pub enum SemanticError {
     UnDereferenceable,
     IncompatibleCast,
     AssigneeOnlyExpr,
+    TypeMismatch,
+    ConflictAssignee,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -209,22 +211,16 @@ pub struct Scope {
 }
 
 #[derive(Debug)]
-pub enum PlaceValueExpr {
+pub enum ExprCategory {
     Place(Mutability),
-    Value,
-}
-
-#[derive(Debug)]
-pub enum AssigneeExpr {
-    Yes(PlaceValueExpr),
-    Not,
+    Not, // 也就是 Value Expr
     Only,
 }
 
 #[derive(Debug)]
 pub struct ExprResult {
     pub type_id: TypeId,
-    pub category: AssigneeExpr,
+    pub category: ExprCategory,
 }
 
 #[derive(Debug)]
@@ -252,7 +248,8 @@ pub struct SemanticAnalyzer {
 impl SemanticAnalyzer {
     pub fn new() -> Self {
         let mut type_table: TypeTable = TypeTable::default();
-        type_table.intern(ResolvedTy::unit());
+        type_table.intern(ResolvedTy::unit()); // Unit -> 0
+        type_table.intern(ResolvedTy::Any); // Any -> 1
 
         Self {
             type_table,
@@ -634,10 +631,14 @@ impl SemanticAnalyzer {
         TypeId(0)
     }
 
+    fn any_type() -> TypeId {
+        TypeId(1)
+    }
+
     fn unit_expr_result() -> ExprResult {
         ExprResult {
             type_id: Self::unit_type(),
-            category: AssigneeExpr::Not,
+            category: ExprCategory::Not,
         }
     }
 
@@ -655,6 +656,48 @@ impl SemanticAnalyzer {
         return Err(SemanticError::ConstEvalError(
             ConstEvalError::NotSupportedExpr,
         ));
+    }
+
+    // 尝试统一传入的 type （主要是为了 integer）
+    fn utilize_ty(&mut self, types: Vec<TypeId>) -> Result<TypeId, SemanticError> {
+        let types: Vec<TypeId> = types
+            .into_iter()
+            .filter(|x| *x != Self::any_type())
+            .collect();
+
+        if types.is_empty() {
+            return Ok(Self::any_type());
+        }
+
+        let mut ret_ty = self.get_type_by_id(*types.first().unwrap());
+        for x in types {
+            let t = self.get_type_by_id(x);
+            if *ret_ty != *t {
+                if *ret_ty == ResolvedTy::integer() && t.is_number_type() {
+                    ret_ty = t;
+                } else {
+                    return Err(SemanticError::TypeMismatch);
+                }
+            }
+        }
+
+        Ok(self.intern_type(ret_ty.clone()))
+    }
+
+    fn utilize_category(cats: Vec<ExprCategory>) -> Result<ExprCategory, SemanticError> {
+        let has_only = cats.iter().any(|x| matches!(x, ExprCategory::Only));
+        let has_value = cats.iter().any(|x| matches!(x, ExprCategory::Not));
+        let has_immut = cats
+            .iter()
+            .any(|x| matches!(x, ExprCategory::Place(Mutability::Not)));
+
+        match (has_only, has_value, has_immut) {
+            (true, true, _) | (true, false, true) => Err(SemanticError::ConflictAssignee),
+            (true, false, false) => Ok(ExprCategory::Only),
+            (false, true, _) => Ok(ExprCategory::Not),
+            (false, false, true) => Ok(ExprCategory::Place(Mutability::Not)),
+            (false, false, false) => Ok(ExprCategory::Place(Mutability::Mut)),
+        }
     }
 }
 
@@ -1040,9 +1083,38 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_array_expr(&mut self, expr: &crate::ast::expr::ArrayExpr) -> Self::ExprRes {
-        
+        let expr_res = expr
+            .0
+            .iter()
+            .map(|x| self.visit_expr(x))
+            .collect::<Result<Vec<Option<ExprResult>>, SemanticError>>()?;
 
-        todo!()
+        if matches!(
+            self.stage,
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition
+        ) {
+            debug_assert!(expr_res.iter().all(|x| x.is_none()));
+            return Ok(None);
+        }
+
+        let (types, cats): (Vec<_>, Vec<_>) = expr_res
+            .into_iter()
+            .map(|x| {
+                let ExprResult { type_id, category } = x.unwrap();
+                (type_id, category)
+            })
+            .unzip();
+
+        let unified_type_id = self.utilize_ty(types)?;
+        let unified_ty = self.get_type_by_id(unified_type_id);
+        let cat = Self::utilize_category(cats)?;
+
+        let ret_ty = ResolvedTy::Array(Box::new(unified_ty.clone()), expr.0.len() as u32);
+
+        Ok(Some(ExprResult {
+            type_id: self.intern_type(ret_ty),
+            category: cat,
+        }))
     }
 
     fn visit_const_block_expr(&mut self, expr: &crate::ast::expr::ConstBlockExpr) -> Self::ExprRes {
@@ -1058,15 +1130,14 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_tup_expr(&mut self, expr: &crate::ast::expr::TupExpr) -> Self::ExprRes {
-        match self.stage {
-            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
-            AnalyzeStage::Body => {
-                if expr.0.is_empty() {
-                    Ok(Some(Self::unit_expr_result()))
-                } else {
-                    Err(SemanticError::Unimplemented)
-                }
-            }
+        match &expr.0[..] {
+            [] => Ok(if matches!(self.stage, AnalyzeStage::Body) {
+                Some(Self::unit_expr_result())
+            } else {
+                None
+            }),
+            [e] => self.visit_expr(e),
+            _ => Err(SemanticError::Unimplemented),
         }
     }
 
@@ -1100,14 +1171,14 @@ impl Visitor for SemanticAnalyzer {
 
                         Ok(Some(ExprResult {
                             type_id: self.intern_type(ret_ty.clone()),
-                            category: AssigneeExpr::Not,
+                            category: ExprCategory::Not,
                         }))
                     }
                     BinOp::And | BinOp::Or => {
                         if *ty1 == ResolvedTy::bool() && *ty2 == ResolvedTy::bool() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::bool()),
-                                category: AssigneeExpr::Not,
+                                category: ExprCategory::Not,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -1117,7 +1188,7 @@ impl Visitor for SemanticAnalyzer {
                         if *ty1 == ResolvedTy::bool() && *ty2 == ResolvedTy::bool() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::bool()),
-                                category: AssigneeExpr::Not,
+                                category: ExprCategory::Not,
                             }))
                         } else if ty1.is_number_type() && ty2.is_number_type() {
                             let ret_ty = if *ty1 == ResolvedTy::integer() {
@@ -1130,7 +1201,7 @@ impl Visitor for SemanticAnalyzer {
 
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ret_ty.clone()),
-                                category: AssigneeExpr::Not,
+                                category: ExprCategory::Not,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -1140,7 +1211,7 @@ impl Visitor for SemanticAnalyzer {
                         if ty1.is_number_type() && ty2.is_number_type() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ty1.clone()),
-                                category: AssigneeExpr::Not,
+                                category: ExprCategory::Not,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -1157,7 +1228,7 @@ impl Visitor for SemanticAnalyzer {
                         {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::bool()),
-                                category: AssigneeExpr::Not,
+                                category: ExprCategory::Not,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -1181,7 +1252,7 @@ impl Visitor for SemanticAnalyzer {
                         // 在 rust 中，貌似任意 value expr 都可以取其 ref，并且再解引用后可以得到 place value
                         if let ResolvedTy::Ref(t, multb) = ty {
                             Ok(Some(ExprResult {
-                                category: AssigneeExpr::Yes(PlaceValueExpr::Place(*multb)),
+                                category: ExprCategory::Place(*multb),
                                 type_id: self.intern_type(t.as_ref().clone()),
                             }))
                         } else {
@@ -1197,7 +1268,7 @@ impl Visitor for SemanticAnalyzer {
                         {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ty.clone()),
-                                category: AssigneeExpr::Not,
+                                category: ExprCategory::Not,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -1208,7 +1279,7 @@ impl Visitor for SemanticAnalyzer {
                         if *ty == ResolvedTy::i32() || *ty == ResolvedTy::integer() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::i32()),
-                                category: AssigneeExpr::Not,
+                                category: ExprCategory::Not,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -1248,7 +1319,7 @@ impl Visitor for SemanticAnalyzer {
                     }
                     _ => return Err(SemanticError::Unimplemented),
                 },
-                category: AssigneeExpr::Not,
+                category: ExprCategory::Not,
             })),
         }
     }
@@ -1271,7 +1342,7 @@ impl Visitor for SemanticAnalyzer {
                 {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(target_ty),
-                        category: AssigneeExpr::Not,
+                        category: ExprCategory::Not,
                     }))
                 } else {
                     Err(SemanticError::IncompatibleCast)
@@ -1356,7 +1427,7 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
             AnalyzeStage::Body => Ok(Some(ExprResult {
                 type_id: self.intern_type(ResolvedTy::Any),
-                category: AssigneeExpr::Only,
+                category: ExprCategory::Only,
             })),
         }
     }
@@ -1372,7 +1443,7 @@ impl Visitor for SemanticAnalyzer {
                 let ret_ty = ResolvedTy::Ref(Box::new(ty.clone()), expr.0);
                 Ok(Some(ExprResult {
                     type_id: self.intern_type(ret_ty),
-                    category: AssigneeExpr::Not,
+                    category: ExprCategory::Not,
                 }))
             }
             None => Ok(None),
