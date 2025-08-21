@@ -12,8 +12,9 @@ use crate::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem,
         },
-        stmt::StmtKind,
-        ty::{MutTy, PathTy, RefTy, Ty, TyKind},
+        pat::IdentPat,
+        stmt::{LocalKind, StmtKind},
+        ty::{self, MutTy, PathTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
 };
@@ -228,7 +229,7 @@ pub struct ExprResult {
 
 #[derive(Debug)]
 pub struct PatResult {
-    pub binding: Vec<(Symbol, TypeId, Mutability)>,
+    pub bindings: Vec<(Symbol, TypeId, Mutability)>,
 }
 
 #[derive(Debug)]
@@ -331,11 +332,7 @@ impl SemanticAnalyzer {
     fn add_value(&mut self, ident: Symbol, var: Variable) -> Result<(), SemanticError> {
         let s = self.get_scope_mut();
 
-        if s.values.contains_key(&ident) {
-            return Err(SemanticError::MultiDefined);
-        }
-
-        s.values.insert(ident, var);
+        s.values.insert(ident, var); // 允许变量遮蔽
 
         Ok(())
     }
@@ -988,18 +985,63 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_let_stmt(&mut self, stmt: &crate::ast::stmt::LocalStmt) -> Result<(), SemanticError> {
-        match self.stage {
-            AnalyzeStage::SymbolCollect => {}
-            AnalyzeStage::Definition => {
-                // TODO: 先做 Expr
-                todo!()
+        let expected_ty = match &stmt.ty {
+            Some(ty) => self.resolve_ty(&ty)?,
+            None => return Err(SemanticError::Unimplemented),
+        };
+
+        let expected_ty_id = self.intern_type(expected_ty.clone());
+
+        match &stmt.kind {
+            LocalKind::Decl => {
+                // 从下面复制上来的，因为不用检查变量是否初始化
+                let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
+                for (symbol, type_id, mutbl) in pat_res.bindings {
+                    self.add_value(
+                        symbol,
+                        Variable {
+                            ty: type_id,
+                            mutbl: mutbl,
+                            kind: VariableKind::Inited,
+                        },
+                    )?;
+                }
             }
-            AnalyzeStage::Body => {}
+            LocalKind::Init(expr) => {
+                let res = self.visit_expr(&expr)?;
+                match res {
+                    Some(ExprResult { type_id, category }) => {
+                        no_assignee!(category);
+                        let flag = if expected_ty_id == type_id {
+                            true
+                        } else {
+                            let expr_ty = self.get_type_by_id(type_id);
+                            expected_ty.is_number_type() && (*expr_ty == ResolvedTy::integer())
+                        };
+                        if flag {
+                            let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
+                            for (symbol, type_id, mutbl) in pat_res.bindings {
+                                self.add_value(
+                                    symbol,
+                                    Variable {
+                                        ty: type_id,
+                                        mutbl: mutbl,
+                                        kind: VariableKind::Inited,
+                                    },
+                                )?;
+                            }
+                        }
+                    }
+                    None => {}
+                }
+            }
         }
         Ok(())
     }
 
     fn visit_array_expr(&mut self, expr: &crate::ast::expr::ArrayExpr) -> Self::ExprRes {
+        
+
         todo!()
     }
 
@@ -1359,23 +1401,42 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_wild_pat(
         &mut self,
-        expr: &crate::ast::pat::WildPat,
-        expected_ty: TypeId,
+        _pat: &crate::ast::pat::WildPat,
+        _expected_ty: TypeId,
     ) -> Self::PatRes {
-        todo!()
+        Ok(PatResult {
+            bindings: Vec::new(),
+        })
     }
 
     fn visit_ident_pat(
         &mut self,
-        expr: &crate::ast::pat::IdentPat,
+        IdentPat(mode, ident, guarder): &IdentPat,
         expected_ty: TypeId,
     ) -> Self::PatRes {
-        todo!()
+        if guarder.is_some() {
+            return Err(SemanticError::Unimplemented);
+        }
+
+        let (target_ty, mutbl) = match mode.0 {
+            crate::ast::ByRef::Yes(mutability) => {
+                let t = ResolvedTy::Ref(
+                    Box::new(self.get_type_by_id(expected_ty).clone()),
+                    mutability,
+                );
+                (self.intern_type(t), Mutability::Not)
+            }
+            crate::ast::ByRef::No => (expected_ty, mode.1),
+        };
+
+        let bindings = vec![(ident.symbol.clone(), target_ty, mutbl)];
+
+        Ok(PatResult { bindings })
     }
 
     fn visit_struct_pat(
         &mut self,
-        _expr: &crate::ast::pat::StructPat,
+        _pat: &crate::ast::pat::StructPat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
         Err(SemanticError::Unimplemented)
@@ -1383,7 +1444,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_or_pat(
         &mut self,
-        _expr: &crate::ast::pat::OrPat,
+        _pat: &crate::ast::pat::OrPat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
         Err(SemanticError::Unimplemented)
@@ -1391,7 +1452,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_path_pat(
         &mut self,
-        expr: &crate::ast::pat::PathPat,
+        pat: &crate::ast::pat::PathPat,
         expected_ty: TypeId,
     ) -> Self::PatRes {
         todo!()
@@ -1399,7 +1460,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_tuple_pat(
         &mut self,
-        _expr: &crate::ast::pat::TuplePat,
+        _pat: &crate::ast::pat::TuplePat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
         Err(SemanticError::Unimplemented)
@@ -1407,7 +1468,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_ref_pat(
         &mut self,
-        expr: &crate::ast::pat::RefPat,
+        pat: &crate::ast::pat::RefPat,
         expected_ty: TypeId,
     ) -> Self::PatRes {
         todo!()
@@ -1415,7 +1476,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_lit_pat(
         &mut self,
-        expr: &crate::ast::pat::LitPat,
+        pat: &crate::ast::pat::LitPat,
         expected_ty: TypeId,
     ) -> Self::PatRes {
         todo!()
@@ -1423,7 +1484,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_range_pat(
         &mut self,
-        _expr: &crate::ast::pat::RangePat,
+        _pat: &crate::ast::pat::RangePat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
         Err(SemanticError::Unimplemented)
@@ -1431,7 +1492,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_slice_pat(
         &mut self,
-        _expr: &crate::ast::pat::SlicePat,
+        _pat: &crate::ast::pat::SlicePat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
         Err(SemanticError::Unimplemented)
@@ -1439,7 +1500,7 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_rest_pat(
         &mut self,
-        _expr: &crate::ast::pat::RestPat,
+        _pat: &crate::ast::pat::RestPat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
         Err(SemanticError::Unimplemented)

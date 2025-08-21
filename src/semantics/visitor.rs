@@ -119,15 +119,15 @@ pub trait Visitor {
             PatKind::Rest(rest_pat) => self.visit_rest_pat(rest_pat, expected_ty),
         }
     }
-    fn visit_wild_pat(&mut self, expr: &WildPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_ident_pat(&mut self, expr: &IdentPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_struct_pat(&mut self, expr: &StructPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_or_pat(&mut self, expr: &OrPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_path_pat(&mut self, expr: &PathPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_tuple_pat(&mut self, expr: &TuplePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_ref_pat(&mut self, expr: &RefPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_lit_pat(&mut self, expr: &LitPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_range_pat(&mut self, expr: &RangePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_slice_pat(&mut self, expr: &SlicePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_rest_pat(&mut self, expr: &RestPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_wild_pat(&mut self, pat: &WildPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_ident_pat(&mut self, pat: &IdentPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_struct_pat(&mut self, pat: &StructPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_or_pat(&mut self, pat: &OrPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_path_pat(&mut self, pat: &PathPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_tuple_pat(&mut self, pat: &TuplePat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_ref_pat(&mut self, pat: &RefPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_lit_pat(&mut self, pat: &LitPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_range_pat(&mut self, pat: &RangePat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_slice_pat(&mut self, pat: &SlicePat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_rest_pat(&mut self, pat: &RestPat, expected_ty: TypeId) -> Self::PatRes;
 }
