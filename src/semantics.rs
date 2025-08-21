@@ -18,6 +18,14 @@ use crate::{
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
 };
 
+macro_rules! no_assignee {
+    ($id:expr) => {
+        if matches!($id, AssigneeExpr::Only) {
+            return Err(SemanticError::AssigneeOnlyExpr);
+        }
+    };
+}
+
 #[derive(Debug)]
 pub enum SemanticError {
     Unimplemented,
@@ -33,6 +41,7 @@ pub enum SemanticError {
     NoImplementation,
     UnDereferenceable,
     IncompatibleCast,
+    AssigneeOnlyExpr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -48,6 +57,7 @@ pub enum ResolvedTy {
     Tup(Vec<ResolvedTy>),
     Fn(Vec<ResolvedTy>, Box<ResolvedTy>),
     Infer,
+    Any, // for underscore
 }
 
 impl ResolvedTy {
@@ -207,6 +217,7 @@ pub enum PlaceValueExpr {
 pub enum AssigneeExpr {
     Yes(PlaceValueExpr),
     Not,
+    Only,
 }
 
 #[derive(Debug)]
@@ -1026,6 +1037,9 @@ impl Visitor for SemanticAnalyzer {
 
         match (res1, res2) {
             (Some(res1), Some(res2)) => {
+                no_assignee!(res1.category);
+                no_assignee!(res2.category);
+
                 let ty1 = self.get_type_by_id(res1.type_id).try_deref();
                 let ty2 = self.get_type_by_id(res2.type_id).try_deref();
 
@@ -1120,10 +1134,8 @@ impl Visitor for SemanticAnalyzer {
     ) -> Result<Option<ExprResult>, SemanticError> {
         let res = self.visit_expr(&expr.1)?;
         match res {
-            Some(ExprResult {
-                type_id,
-                category: _,
-            }) => {
+            Some(ExprResult { type_id, category }) => {
+                no_assignee!(category);
                 let ty = self.get_type_by_id(type_id);
                 match expr.0 {
                     UnOp::Deref => {
@@ -1174,8 +1186,7 @@ impl Visitor for SemanticAnalyzer {
         expr: &crate::ast::expr::LitExpr,
     ) -> Result<Option<ExprResult>, SemanticError> {
         match self.stage {
-            AnalyzeStage::SymbolCollect => Ok(None),
-            AnalyzeStage::Definition => Ok(None),
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
             AnalyzeStage::Body => Ok(Some(ExprResult {
                 type_id: match expr.kind {
                     LitKind::Bool => self.intern_type(ResolvedTy::bool()),
@@ -1213,6 +1224,8 @@ impl Visitor for SemanticAnalyzer {
         let res = self.visit_expr(&expr.0)?;
         match res {
             Some(ExprResult { type_id, category }) => {
+                no_assignee!(category);
+
                 let expr_ty = self.get_type_by_id(type_id);
                 let target_ty = self.resolve_ty(&expr.1)?;
 
@@ -1283,17 +1296,21 @@ impl Visitor for SemanticAnalyzer {
     ) -> Result<Option<ExprResult>, SemanticError> {
         let old_ast_id = self.current_ast_id;
         self.current_ast_id = expr.id;
+        let mut ret;
         match self.stage {
             AnalyzeStage::SymbolCollect => {
                 self.add_scope(self.current_ast_id, ScopeKind::Lambda)?;
+                ret = None
             }
-            AnalyzeStage::Definition => {}
-            AnalyzeStage::Body => {}
+            AnalyzeStage::Definition => {
+                ret = None;
+            }
+            AnalyzeStage::Body => ret = Some(Self::unit_expr_result()),
         }
 
         self.enter_scope(self.current_ast_id)?;
-        let mut ret = None;
         for stmt in &expr.stmts {
+            // parser 保证只有最后一条 stmt 有可能不是 unit type
             ret = self.visit_stmt(stmt)?;
         }
         self.exit_scope()?;
@@ -1339,9 +1356,15 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_underscore_expr(
         &mut self,
-        expr: &crate::ast::expr::UnderscoreExpr,
+        _: &crate::ast::expr::UnderscoreExpr,
     ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+        match self.stage {
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
+            AnalyzeStage::Body => Ok(Some(ExprResult {
+                type_id: self.intern_type(ResolvedTy::Any),
+                category: AssigneeExpr::Only,
+            })),
+        }
     }
 
     fn visit_path_expr(
@@ -1356,10 +1379,7 @@ impl Visitor for SemanticAnalyzer {
         expr: &crate::ast::expr::AddrOfExpr,
     ) -> Result<Option<ExprResult>, SemanticError> {
         match self.visit_expr(&expr.1)? {
-            Some(ExprResult {
-                type_id,
-                category: _,
-            }) => {
+            Some(ExprResult { type_id, category }) => {
                 let ty = self.get_type_by_id(type_id);
                 let ret_ty = ResolvedTy::Ref(Box::new(ty.clone()), expr.0);
                 Ok(Some(ExprResult {

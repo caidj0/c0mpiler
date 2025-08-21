@@ -1,13 +1,13 @@
 use c0mpiler::{
     ast::{Crate, Eatable},
     lexer::{Lexer, TokenBuffer},
+    semantics::SemanticAnalyzer,
 };
 
 fn main() {
     let test_str = r###"
 fn main() {
-    1 + 1
-    abcde
+    1;
 }
 "###;
     let lexer = Lexer::new(test_str);
@@ -17,13 +17,13 @@ fn main() {
     let krate = Crate::eat(&mut iter);
     match krate {
         Ok(ast) => {
-            println!("{ast:#?}");
-            // let mut semantic = SemanticAnalyzer::new();
-            // let result = semantic.visit(&ast);
-            // match result {
-            //     Ok(_) => println!("{:#?}", semantic),
-            //     Err(err) => println!("{:#?}", err),
-            // }
+            // println!("{ast:#?}");
+            let mut semantic = SemanticAnalyzer::new();
+            let result = semantic.visit(&ast);
+            match result {
+                Ok(_) => println!("{:#?}", semantic),
+                Err(err) => println!("{:#?}", err),
+            }
         }
         Err(err) => {
             println!("{err:#?}");
