@@ -3,7 +3,7 @@ use crate::{
         ASTError, ASTErrorKind, ASTResult, Eatable, Ident, NodeId, OptionEatable, Span,
         expr::{AnonConst, BlockExpr, Expr},
         generic::{GenericBounds, Generics},
-        pat::Pat,
+        pat::{Pat, PatKind, RefPat},
         path::Path,
         ty::{Ty, TyKind},
     },
@@ -175,21 +175,17 @@ impl Eatable for Param {
 
         let pat = Pat::eat_no_alt(iter)?;
 
-        let ty = if iter.peek()?.token_type != TokenType::Colon {
-            if pat.is_self() {
-                Ty::implicit_self(iter)
-            } else {
-                return Err(ASTError {
-                    kind: ASTErrorKind::MisMatch {
-                        expected: stringify!($e).to_owned(),
-                        actual: format!("{:?}", iter.peek()?.token_type),
-                    },
-                    pos: iter.peek()?.pos.clone(),
-                });
-            }
+        let (pat, ty) = if iter.peek()?.token_type != TokenType::Colon {
+            Pat::to_self_pat_ty(pat, iter).ok_or(ASTError {
+                kind: ASTErrorKind::MisMatch {
+                    expected: stringify!($e).to_owned(),
+                    actual: format!("{:?}", iter.peek()?.token_type),
+                },
+                pos: iter.peek()?.pos.clone(),
+            })?
         } else {
             iter.advance();
-            Ty::eat(iter)?
+            (pat, Ty::eat(iter)?)
         };
 
         Ok(Self {

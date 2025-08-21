@@ -1,8 +1,10 @@
 use crate::{
     ast::{
         ASTError, ASTResult, BindingMode, Eatable, Ident, Mutability, NodeId, OptionEatable, Span,
+        Symbol,
         expr::{Expr, ExprKind, LitExpr, PathExpr, UnaryExpr},
         path::{Path, PathSegment, QSelf},
+        ty::{MutTy, RefTy, Ty},
     },
     is_keyword, kind_check,
     lexer::{Token, TokenIter},
@@ -18,24 +20,47 @@ pub struct Pat {
 }
 
 impl Pat {
-    pub fn is_self(&self) -> bool {
-        match &self.kind {
-            PatKind::Path(PathPat(_, Path { segments, span: _ })) => {
-                if let [
-                    PathSegment {
-                        ident: Ident { symbol, span: _ },
-                        args: _,
-                    },
-                ] = &segments[..]
-                {
-                    symbol.is_self()
+    pub fn to_self_pat_ty(
+        Pat { kind, id, span }: Pat,
+        iter: &mut crate::lexer::TokenIter,
+    ) -> Option<(Pat, Ty)> {
+        match &kind {
+            PatKind::Path(path_pat) => {
+                if path_pat.is_self() {
+                    Some((Pat { kind, id, span }, Ty::implicit_self(iter)))
                 } else {
-                    false
+                    None
                 }
             }
-            PatKind::Ref(ref_pat) => ref_pat.0.is_self(),
-            PatKind::Ident(IdentPat(_, Ident { symbol, span: _ }, _)) => symbol.is_self(),
-            _ => false,
+            PatKind::Ref(ref_pat) => {
+                if ref_pat.is_ref_self() {
+                    Some((
+                        Pat {
+                            kind: PatKind::Ident(IdentPat(
+                                BindingMode(super::ByRef::No, Mutability::Not),
+                                Ident {
+                                    symbol: Symbol::self_symbol(),
+                                    span: span.clone(),
+                                },
+                                None,
+                            )),
+                            id,
+                            span: span.clone(),
+                        },
+                        Ty {
+                            kind: super::ty::TyKind::Ref(RefTy(MutTy {
+                                ty: Box::new(Ty::implicit_self(iter)),
+                                mutbl: ref_pat.1,
+                            })),
+                            id: iter.assign_id(),
+                            span,
+                        },
+                    ))
+                } else {
+                    None
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -162,6 +187,15 @@ impl Eatable for PathPat {
     }
 }
 
+impl PathPat {
+    pub fn is_self(&self) -> bool {
+        match &self {
+            PathPat(None, path) => path.is_self(),
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RefPat(pub Box<Pat>, pub Mutability);
 
@@ -172,6 +206,15 @@ impl Eatable for RefPat {
         let pat = Pat::eat_no_range(iter)?;
 
         Ok(Self(Box::new(pat), m))
+    }
+}
+
+impl RefPat {
+    pub fn is_ref_self(&self) -> bool {
+        match &self.0.kind {
+            PatKind::Path(path_pat) => path_pat.is_self(),
+            _ => false,
+        }
     }
 }
 

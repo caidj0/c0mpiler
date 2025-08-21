@@ -278,6 +278,18 @@ impl Symbol {
     pub fn is_self(&self) -> bool {
         self.0 == "self"
     }
+
+    pub fn is_big_self(&self) -> bool {
+        self.0 == "Self"
+    }
+
+    pub fn self_symbol() -> Self {
+        Self("self".to_owned())
+    }
+
+    pub fn big_self_symbol() -> Self {
+        Self("Self".to_owned())
+    }
 }
 
 #[derive(Debug, Clone)]

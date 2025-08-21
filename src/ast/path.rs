@@ -9,6 +9,15 @@ pub struct Path {
     pub span: Span,
 }
 
+impl Path {
+    pub fn is_self(&self) -> bool {
+        self.segments.len() == 1 && {
+            let first = self.segments.first().unwrap();
+            first.args.is_none() && first.ident.symbol.is_self()
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct PathSegment {
     pub ident: Ident,
