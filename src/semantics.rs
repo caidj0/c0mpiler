@@ -227,6 +227,11 @@ pub struct ExprResult {
 }
 
 #[derive(Debug)]
+pub struct PatResult {
+    pub binding: Vec<(Symbol, TypeId, Mutability)>,
+}
+
+#[derive(Debug)]
 pub enum AnalyzeStage {
     SymbolCollect,
     Definition,
@@ -657,6 +662,10 @@ impl SemanticAnalyzer {
 }
 
 impl Visitor for SemanticAnalyzer {
+    type DefaultRes = Result<(), SemanticError>;
+    type ExprRes = Result<Option<ExprResult>, SemanticError>;
+    type PatRes = Result<PatResult, SemanticError>;
+
     fn visit_crate(&mut self, krate: &Crate) -> Result<(), SemanticError> {
         if matches!(self.stage, AnalyzeStage::SymbolCollect) {
             self.scopes.insert(
@@ -955,10 +964,7 @@ impl Visitor for SemanticAnalyzer {
         Err(SemanticError::Unimplemented)
     }
 
-    fn visit_stmt(
-        &mut self,
-        stmt: &crate::ast::stmt::Stmt,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Self::ExprRes {
         match &stmt.kind {
             StmtKind::Let(local_stmt) => {
                 self.visit_let_stmt(local_stmt)?;
@@ -993,45 +999,39 @@ impl Visitor for SemanticAnalyzer {
         Ok(())
     }
 
-    fn visit_array_expr(
-        &mut self,
-        expr: &crate::ast::expr::ArrayExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_array_expr(&mut self, expr: &crate::ast::expr::ArrayExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_const_block_expr(
-        &mut self,
-        expr: &crate::ast::expr::ConstBlockExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_const_block_expr(&mut self, expr: &crate::ast::expr::ConstBlockExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_call_expr(
-        &mut self,
-        expr: &crate::ast::expr::CallExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_call_expr(&mut self, expr: &crate::ast::expr::CallExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_method_call_expr(
-        &mut self,
-        expr: &crate::ast::expr::MethodCallExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_method_call_expr(&mut self, expr: &crate::ast::expr::MethodCallExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_tup_expr(
-        &mut self,
-        expr: &crate::ast::expr::TupExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+    fn visit_tup_expr(&mut self, expr: &crate::ast::expr::TupExpr) -> Self::ExprRes {
+        match self.stage {
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
+            AnalyzeStage::Body => {
+                if expr.0.is_empty() {
+                    Ok(Some(Self::unit_expr_result()))
+                } else {
+                    Err(SemanticError::Unimplemented)
+                }
+            }
+        }
     }
 
     fn visit_binary_expr(
         &mut self,
         BinaryExpr(bin_op, expr1, expr2): &BinaryExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    ) -> Self::ExprRes {
         let res1 = self.visit_expr(expr1)?;
         let res2 = self.visit_expr(expr2)?;
 
@@ -1128,10 +1128,7 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_unary_expr(
-        &mut self,
-        expr: &crate::ast::expr::UnaryExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_unary_expr(&mut self, expr: &crate::ast::expr::UnaryExpr) -> Self::ExprRes {
         let res = self.visit_expr(&expr.1)?;
         match res {
             Some(ExprResult { type_id, category }) => {
@@ -1181,10 +1178,7 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_lit_expr(
-        &mut self,
-        expr: &crate::ast::expr::LitExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_lit_expr(&mut self, expr: &crate::ast::expr::LitExpr) -> Self::ExprRes {
         match self.stage {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
             AnalyzeStage::Body => Ok(Some(ExprResult {
@@ -1217,10 +1211,7 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_cast_expr(
-        &mut self,
-        expr: &crate::ast::expr::CastExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_cast_expr(&mut self, expr: &crate::ast::expr::CastExpr) -> Self::ExprRes {
         let res = self.visit_expr(&expr.0)?;
         match res {
             Some(ExprResult { type_id, category }) => {
@@ -1248,52 +1239,31 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_let_expr(
-        &mut self,
-        expr: &crate::ast::expr::LetExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_let_expr(&mut self, _: &crate::ast::expr::LetExpr) -> Self::ExprRes {
+        Err(SemanticError::Unimplemented)
+    }
+
+    fn visit_if_expr(&mut self, expr: &crate::ast::expr::IfExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_if_expr(
-        &mut self,
-        expr: &crate::ast::expr::IfExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_while_expr(&mut self, expr: &crate::ast::expr::WhileExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_while_expr(
-        &mut self,
-        expr: &crate::ast::expr::WhileExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_for_loop_expr(&mut self, _: &crate::ast::expr::ForLoopExpr) -> Self::ExprRes {
+        Err(SemanticError::Unimplemented)
+    }
+
+    fn visit_loop_expr(&mut self, expr: &crate::ast::expr::LoopExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_for_loop_expr(
-        &mut self,
-        expr: &crate::ast::expr::ForLoopExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+    fn visit_match_expr(&mut self, _: &crate::ast::expr::MatchExpr) -> Self::ExprRes {
+        Err(SemanticError::Unimplemented)
     }
 
-    fn visit_loop_expr(
-        &mut self,
-        expr: &crate::ast::expr::LoopExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
-    }
-
-    fn visit_match_expr(
-        &mut self,
-        expr: &crate::ast::expr::MatchExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
-    }
-
-    fn visit_block_expr(
-        &mut self,
-        expr: &crate::ast::expr::BlockExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_block_expr(&mut self, expr: &crate::ast::expr::BlockExpr) -> Self::ExprRes {
         let old_ast_id = self.current_ast_id;
         self.current_ast_id = expr.id;
         let mut ret;
@@ -1319,45 +1289,27 @@ impl Visitor for SemanticAnalyzer {
         Ok(ret)
     }
 
-    fn visit_assign_expr(
-        &mut self,
-        expr: &crate::ast::expr::AssignExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_assign_expr(&mut self, expr: &crate::ast::expr::AssignExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_assign_op_expr(
-        &mut self,
-        expr: &crate::ast::expr::AssignOpExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_assign_op_expr(&mut self, expr: &crate::ast::expr::AssignOpExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_field_expr(
-        &mut self,
-        expr: &crate::ast::expr::FieldExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_field_expr(&mut self, expr: &crate::ast::expr::FieldExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_index_expr(
-        &mut self,
-        expr: &crate::ast::expr::IndexExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_index_expr(&mut self, expr: &crate::ast::expr::IndexExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_range_expr(
-        &mut self,
-        expr: &crate::ast::expr::RangeExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
-        todo!()
+    fn visit_range_expr(&mut self, _: &crate::ast::expr::RangeExpr) -> Self::ExprRes {
+        Err(SemanticError::Unimplemented)
     }
 
-    fn visit_underscore_expr(
-        &mut self,
-        _: &crate::ast::expr::UnderscoreExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_underscore_expr(&mut self, _: &crate::ast::expr::UnderscoreExpr) -> Self::ExprRes {
         match self.stage {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
             AnalyzeStage::Body => Ok(Some(ExprResult {
@@ -1367,17 +1319,11 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_path_expr(
-        &mut self,
-        expr: &crate::ast::expr::PathExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_path_expr(&mut self, expr: &crate::ast::expr::PathExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_addr_of_expr(
-        &mut self,
-        expr: &crate::ast::expr::AddrOfExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_addr_of_expr(&mut self, expr: &crate::ast::expr::AddrOfExpr) -> Self::ExprRes {
         match self.visit_expr(&expr.1)? {
             Some(ExprResult { type_id, category }) => {
                 let ty = self.get_type_by_id(type_id);
@@ -1391,45 +1337,111 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_break_expr(
-        &mut self,
-        expr: &crate::ast::expr::BreakExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_break_expr(&mut self, expr: &crate::ast::expr::BreakExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_continue_expr(
-        &mut self,
-        expr: &crate::ast::expr::ContinueExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_continue_expr(&mut self, expr: &crate::ast::expr::ContinueExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_ret_expr(
-        &mut self,
-        expr: &crate::ast::expr::RetExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_ret_expr(&mut self, expr: &crate::ast::expr::RetExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_struct_expr(
-        &mut self,
-        expr: &crate::ast::expr::StructExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_struct_expr(&mut self, expr: &crate::ast::expr::StructExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_repeat_expr(
-        &mut self,
-        expr: &crate::ast::expr::RepeatExpr,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    fn visit_repeat_expr(&mut self, expr: &crate::ast::expr::RepeatExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_pat(
+    fn visit_wild_pat(
         &mut self,
-        pat: &crate::ast::pat::Pat,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+        expr: &crate::ast::pat::WildPat,
+        expected_ty: TypeId,
+    ) -> Self::PatRes {
         todo!()
+    }
+
+    fn visit_ident_pat(
+        &mut self,
+        expr: &crate::ast::pat::IdentPat,
+        expected_ty: TypeId,
+    ) -> Self::PatRes {
+        todo!()
+    }
+
+    fn visit_struct_pat(
+        &mut self,
+        _expr: &crate::ast::pat::StructPat,
+        _expected_ty: TypeId,
+    ) -> Self::PatRes {
+        Err(SemanticError::Unimplemented)
+    }
+
+    fn visit_or_pat(
+        &mut self,
+        _expr: &crate::ast::pat::OrPat,
+        _expected_ty: TypeId,
+    ) -> Self::PatRes {
+        Err(SemanticError::Unimplemented)
+    }
+
+    fn visit_path_pat(
+        &mut self,
+        expr: &crate::ast::pat::PathPat,
+        expected_ty: TypeId,
+    ) -> Self::PatRes {
+        todo!()
+    }
+
+    fn visit_tuple_pat(
+        &mut self,
+        _expr: &crate::ast::pat::TuplePat,
+        _expected_ty: TypeId,
+    ) -> Self::PatRes {
+        Err(SemanticError::Unimplemented)
+    }
+
+    fn visit_ref_pat(
+        &mut self,
+        expr: &crate::ast::pat::RefPat,
+        expected_ty: TypeId,
+    ) -> Self::PatRes {
+        todo!()
+    }
+
+    fn visit_lit_pat(
+        &mut self,
+        expr: &crate::ast::pat::LitPat,
+        expected_ty: TypeId,
+    ) -> Self::PatRes {
+        todo!()
+    }
+
+    fn visit_range_pat(
+        &mut self,
+        _expr: &crate::ast::pat::RangePat,
+        _expected_ty: TypeId,
+    ) -> Self::PatRes {
+        Err(SemanticError::Unimplemented)
+    }
+
+    fn visit_slice_pat(
+        &mut self,
+        _expr: &crate::ast::pat::SlicePat,
+        _expected_ty: TypeId,
+    ) -> Self::PatRes {
+        Err(SemanticError::Unimplemented)
+    }
+
+    fn visit_rest_pat(
+        &mut self,
+        _expr: &crate::ast::pat::RestPat,
+        _expected_ty: TypeId,
+    ) -> Self::PatRes {
+        Err(SemanticError::Unimplemented)
     }
 }
