@@ -7,12 +7,13 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     ast::{
         Crate, Ident, Mutability, NodeId, Symbol,
-        expr::{BinOp, BinaryExpr, Expr, LitKind, UnOp},
+        expr::{BinOp, BinaryExpr, Expr, LitKind, PathExpr, UnOp},
         item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem,
         },
         pat::IdentPat,
+        path::{Path, PathSegment},
         stmt::{LocalKind, StmtKind},
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
@@ -447,19 +448,26 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_type_mut(&mut self, ident: &Symbol) -> Result<(NodeId, &mut TypeInfo), SemanticError> {
+    fn search_type_mut(
+        &mut self,
+        ident: &Symbol,
+    ) -> Result<(NodeId, &mut TypeInfo), SemanticError> {
         self.get_type_from_mut(ident, self.current_scope)
     }
 
-    fn get_type(&self, ident: &Symbol) -> Result<(NodeId, &TypeInfo), SemanticError> {
+    fn search_type(&self, ident: &Symbol) -> Result<(NodeId, &TypeInfo), SemanticError> {
         self.get_type_from(ident, self.current_scope)
     }
 
-    fn get_value_mut(&mut self, ident: &Symbol) -> Result<(NodeId, &mut Variable), SemanticError> {
+    fn search_value_mut(
+        &mut self,
+        ident: &Symbol,
+    ) -> Result<(NodeId, &mut Variable), SemanticError> {
         self.get_value_from_mut(ident, self.current_scope)
     }
 
-    fn get_value(&self, ident: &Symbol) -> Result<(NodeId, &Variable), SemanticError> {
+    // 返回值为 (Scope Id, 变量类型)
+    fn search_value(&self, ident: &Symbol) -> Result<(NodeId, &Variable), SemanticError> {
         self.get_value_from(ident, self.current_scope)
     }
 
@@ -569,7 +577,7 @@ impl SemanticAnalyzer {
                     }
                     return Err(SemanticError::InvaildPath);
                 }
-                match self.get_type(s) {
+                match self.search_type(s) {
                     Ok((id, _)) => {
                         let mut full_name = self.get_prefix_name_from(id);
                         full_name.push(s.clone());
@@ -855,7 +863,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     })
                     .collect::<Result<Vec<_>, SemanticError>>()?;
-                self.get_type_mut(&ident.symbol)?.1.kind = TypeKind::Enum { fields };
+                self.search_type_mut(&ident.symbol)?.1.kind = TypeKind::Enum { fields };
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -892,7 +900,7 @@ impl Visitor for SemanticAnalyzer {
                     }
                     crate::ast::item::VariantData::Unit => Vec::new(),
                 };
-                self.get_type_mut(&ident.symbol)?.1.kind = TypeKind::Struct { fields }
+                self.search_type_mut(&ident.symbol)?.1.kind = TypeKind::Struct { fields }
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -964,7 +972,8 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                 }
-                self.get_type_mut(&ident.symbol)?.1.kind = TypeKind::Trait { methods, constants };
+                self.search_type_mut(&ident.symbol)?.1.kind =
+                    TypeKind::Trait { methods, constants };
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -1432,8 +1441,47 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_path_expr(&mut self, expr: &crate::ast::expr::PathExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_path_expr(&mut self, PathExpr(qself, path): &PathExpr) -> Self::ExprRes {
+        if qself.is_some() {
+            return Err(SemanticError::Unimplemented);
+        }
+
+        if matches!(self.stage, AnalyzeStage::Body) {
+            // 在没有 module 时，path expr 应该只可能为 value 或 ty::value 格式
+            match &path.segments[..] {
+                [value_seg] => {
+                    let (_scope_id, var) = self.search_value(&value_seg.ident.symbol)?;
+
+                    Ok(Some(ExprResult {
+                        type_id: var.ty,
+                        category: ExprCategory::Place(var.mutbl),
+                    }))
+                }
+                [type_seg, value_seg] => {
+                    let ty = self.resolve_ty(&Ty {
+                        kind: TyKind::Path(PathTy(
+                            None,
+                            Path {
+                                segments: vec![PathSegment {
+                                    ident: type_seg.ident.clone(),
+                                    args: None,
+                                }],
+                                span: path.span.clone(),
+                            },
+                        )),
+                        id: 0,
+                        span: path.span.clone(),
+                    })?;
+
+                    
+
+                    todo!()
+                }
+                _ => return Err(SemanticError::InvaildPath),
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     fn visit_addr_of_expr(&mut self, expr: &crate::ast::expr::AddrOfExpr) -> Self::ExprRes {
