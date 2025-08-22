@@ -179,7 +179,7 @@ pub struct ImplInfo {
     pub self_ty: TypeId,
     pub for_trait: Option<Vec<Symbol>>,
     pub methods: Vec<FnSig>,
-    pub constant: (Symbol, TypeId),
+    pub constants: Vec<Constant>,
 }
 
 #[derive(Debug)]
@@ -368,7 +368,7 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn get_type_from(
+    fn search_type_from(
         &self,
         ident: &Symbol,
         mut id: NodeId,
@@ -392,7 +392,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_type_from_mut(
+    fn search_type_from_mut(
         &mut self,
         ident: &Symbol,
         mut id: NodeId,
@@ -425,7 +425,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_value_from(
+    fn search_value_from(
         &self,
         ident: &Symbol,
         mut id: NodeId,
@@ -449,7 +449,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_value_from_mut(
+    fn search_value_from_mut(
         &mut self,
         ident: &Symbol,
         mut id: NodeId,
@@ -530,17 +530,6 @@ impl SemanticAnalyzer {
     }
 
     fn get_type_fields(&mut self, id: TypeId) -> Result<Vec<(Symbol, Variable)>, SemanticError> {
-        let len_fn = (
-            Symbol("len".to_string()),
-            Variable {
-                ty: self.intern_type(ResolvedTy::Fn(
-                    vec![ResolvedTy::ref_implicit_self()],
-                    Box::new(ResolvedTy::u32()),
-                )),
-                mutbl: Mutability::Not,
-                kind: VariableKind::Const,
-            },
-        );
         let ty = self.get_type_by_id(id);
 
         let mut ret = Vec::new();
@@ -550,58 +539,101 @@ impl SemanticAnalyzer {
                 let ty = ty.clone();
                 ret.append(&mut self.get_builtin_methods(&ty))
             }
-            ResolvedTy::Named(_) => {
-                todo!() // For struct...
+            ResolvedTy::Named(symbols) => {
+                let info = self.get_type_info(symbols);
+                match &info.kind {
+                    TypeKind::Placeholder => panic!("Impossible!"),
+                    TypeKind::Struct { fields } => {
+                        for (ident, field_id) in fields {
+                            ret.push((
+                                ident.symbol.clone(),
+                                Variable {
+                                    ty: *field_id,
+                                    mutbl: Mutability::Mut,
+                                    kind: VariableKind::Inited,
+                                },
+                            ));
+                        }
+                    }
+                    TypeKind::Enum { fields: _ } => {}
+                    TypeKind::Trait {
+                        methods,
+                        constants: _,
+                    } => {
+                        self.add_methods_to_vec(&mut ret, methods);
+                    }
+                }
             }
             ResolvedTy::Ref(resolved_ty, _) => {
                 let derefed_id = self.intern_type(resolved_ty.as_ref().clone());
                 ret.append(&mut self.get_type_fields(derefed_id)?);
                 // 会不断尝试 deref
             }
-            ResolvedTy::Array(_, _) => {
-                ret.push(len_fn);
+            ResolvedTy::Array(_, _) | ResolvedTy::Slice(_) => {
+                ret.push((
+                    Symbol("len".to_string()),
+                    Variable {
+                        ty: self.intern_type(ResolvedTy::Fn(
+                            vec![ResolvedTy::ref_implicit_self()],
+                            Box::new(ResolvedTy::u32()),
+                        )),
+                        mutbl: Mutability::Not,
+                        kind: VariableKind::Const,
+                    },
+                ));
             }
-            ResolvedTy::Slice(_) => {
-                ret.push(len_fn);
-            }
-            ResolvedTy::Tup(_) => {}
-            ResolvedTy::Fn(_, _) => {}
-            ResolvedTy::Infer => {}
-            ResolvedTy::Any => {}
             ResolvedTy::ImplicitSelf => {
                 ret.append(&mut self.get_type_fields(self.get_self_type()?)?);
             }
+            ResolvedTy::Tup(_) | ResolvedTy::Fn(_, _) | ResolvedTy::Infer | ResolvedTy::Any => {}
         }
 
         if let Some(impls) = self.impls.get(&id) {
             for x in impls {
                 debug_assert_eq!(x.self_ty, id);
-                for method in &x.methods {
-                    let method_ty = self.get_type_by_id(method.type_id);
-                    match method_ty {
-                        ResolvedTy::Fn(params, _) => {
-                            if let Some(first) = params.first()
-                                && first.is_implicit_self()
-                            {
-                                ret.push((
-                                    method.name.clone(),
-                                    Variable {
-                                        ty: method.type_id,
-                                        mutbl: Mutability::Not,
-                                        kind: VariableKind::Const,
-                                    },
-                                ));
-                            }
-                        }
-                        _ => panic!("Impossible!"),
-                    }
-                }
+                self.add_methods_to_vec(&mut ret, &x.methods);
             }
         }
 
         Ok(ret)
     }
 
+    fn add_methods_to_vec(&self, ret: &mut Vec<(Symbol, Variable)>, methods: &[FnSig]) {
+        for method in methods {
+            let method_ty = self.get_type_by_id(method.type_id);
+            match method_ty {
+                ResolvedTy::Fn(params, _) => {
+                    if let Some(first) = params.first()
+                        && first.is_implicit_self()
+                    {
+                        ret.push((
+                            method.name.clone(),
+                            Variable {
+                                ty: method.type_id,
+                                mutbl: Mutability::Not,
+                                kind: VariableKind::Const,
+                            },
+                        ));
+                    }
+                }
+                _ => panic!("Impossible!"),
+            }
+        }
+    }
+
+    fn add_fn_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, methods: &[FnSig]) {
+        for method in methods {
+            ret.push((method.name.clone(), method.type_id));
+        }
+    }
+
+    fn add_const_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, constants: &[Constant]) {
+        for constant in constants {
+            ret.push((constant.name.clone(), constant.ty));
+        }
+    }
+
+    // item 包含 method
     fn get_type_items(&mut self, id: TypeId) -> Result<Vec<(Symbol, TypeId)>, SemanticError> {
         let ty = self.get_type_by_id(id);
 
@@ -609,44 +641,83 @@ impl SemanticAnalyzer {
 
         match ty {
             ResolvedTy::BulitIn(_, _) => {
-                let ty = ty.clone();
-                ret.append(&mut self.get_builtin_methods(&ty))
-            },
-            ResolvedTy::Named(symbols) => todo!(),
-            ResolvedTy::Ref(resolved_ty, mutability) => todo!(),
-            ResolvedTy::Array(resolved_ty, _) => todo!(),
-            ResolvedTy::Slice(resolved_ty) => todo!(),
-            ResolvedTy::Tup(items) => todo!(),
-            ResolvedTy::Fn(items, resolved_ty) => todo!(),
-            ResolvedTy::Infer => todo!(),
-            ResolvedTy::ImplicitSelf => todo!(),
-            ResolvedTy::Any => todo!(),
+                todo!()
+            }
+            ResolvedTy::Named(symbols) => {
+                let info = self.get_type_info(symbols);
+                match &info.kind {
+                    TypeKind::Placeholder => panic!("Impossible!"),
+                    TypeKind::Struct { fields: _ } => {}
+                    TypeKind::Enum { fields } => {
+                        for ident in fields {
+                            ret.push((ident.symbol.clone(), id));
+                        }
+                    }
+                    TypeKind::Trait { methods, constants } => {
+                        self.add_fn_item_to_vec(&mut ret, methods);
+                        self.add_const_item_to_vec(&mut ret, constants);
+                    }
+                }
+            }
+            ResolvedTy::Array(_, _) | ResolvedTy::Slice(_) => {
+                ret.push((
+                    Symbol("len".to_string()),
+                    self.intern_type(ResolvedTy::Fn(
+                        vec![ResolvedTy::ref_implicit_self()],
+                        Box::new(ResolvedTy::u32()),
+                    )),
+                ));
+            }
+            ResolvedTy::ImplicitSelf => {
+                ret.append(&mut self.get_type_items(self.get_self_type()?)?);
+            }
+            ResolvedTy::Ref(_, _)
+            | ResolvedTy::Tup(_)
+            | ResolvedTy::Fn(_, _)
+            | ResolvedTy::Infer
+            | ResolvedTy::Any => {}
         }
-        
-        todo!()
+
+        if let Some(impls) = self.impls.get(&id) {
+            for x in impls {
+                debug_assert_eq!(x.self_ty, id);
+                self.add_fn_item_to_vec(&mut ret, &x.methods);
+                self.add_const_item_to_vec(&mut ret, &x.constants);
+            }
+        }
+
+        Ok(ret)
     }
 
     fn search_type_mut(
         &mut self,
         ident: &Symbol,
     ) -> Result<(NodeId, &mut TypeInfo), SemanticError> {
-        self.get_type_from_mut(ident, self.current_scope)
+        self.search_type_from_mut(ident, self.current_scope)
     }
 
     fn search_type(&self, ident: &Symbol) -> Result<(NodeId, &TypeInfo), SemanticError> {
-        self.get_type_from(ident, self.current_scope)
+        self.search_type_from(ident, self.current_scope)
     }
 
     fn search_value_mut(
         &mut self,
         ident: &Symbol,
     ) -> Result<(NodeId, &mut Variable), SemanticError> {
-        self.get_value_from_mut(ident, self.current_scope)
+        self.search_value_from_mut(ident, self.current_scope)
     }
 
     // 返回值为 (Scope Id, 变量类型)
     fn search_value(&self, ident: &Symbol) -> Result<(NodeId, &Variable), SemanticError> {
-        self.get_value_from(ident, self.current_scope)
+        self.search_value_from(ident, self.current_scope)
+    }
+
+    fn get_type_info(&self, symbols: &[Symbol]) -> &TypeInfo {
+        debug_assert!(symbols.len() >= 2);
+        let scope_symbol = &symbols[symbols.len() - 2];
+        let scope_id: NodeId = scope_symbol.0.strip_prefix("$").unwrap().parse().unwrap();
+        let scope = self.scopes.get(&scope_id).unwrap();
+        scope.types.get(symbols.last().unwrap()).unwrap()
     }
 
     pub fn visit(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
