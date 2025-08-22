@@ -93,6 +93,14 @@ impl ResolvedTy {
         Self::BulitIn(Symbol("u32".to_string()), Vec::new())
     }
 
+    pub fn isize() -> Self {
+        Self::BulitIn(Symbol("isize".to_string()), Vec::new())
+    }
+
+    pub fn usize() -> Self {
+        Self::BulitIn(Symbol("usize".to_string()), Vec::new())
+    }
+
     pub fn str() -> Self {
         Self::BulitIn(Symbol("str".to_string()), Vec::new())
     }
@@ -105,6 +113,18 @@ impl ResolvedTy {
         Self::BulitIn(Symbol("String".to_string()), Vec::new())
     }
 
+    pub fn implicit_self() -> Self {
+        Self::ImplicitSelf
+    }
+
+    pub fn ref_implicit_self() -> Self {
+        Self::Ref(Box::new(Self::implicit_self()), Mutability::Not)
+    }
+
+    pub fn ref_mut_implicit_self() -> Self {
+        Self::Ref(Box::new(Self::implicit_self()), Mutability::Mut)
+    }
+
     pub fn try_deref(&self) -> &Self {
         if let ResolvedTy::Ref(resolved, _) = self {
             resolved.as_ref()
@@ -114,7 +134,15 @@ impl ResolvedTy {
     }
 
     pub fn is_number_type(&self) -> bool {
-        *self == Self::integer() || *self == Self::i32() || *self == Self::u32()
+        *self == Self::integer()
+            || *self == Self::i32()
+            || *self == Self::u32()
+            || *self == Self::usize()
+            || *self == Self::isize()
+    }
+
+    pub fn is_implicit_self(&self) -> bool {
+        matches!(self.try_deref(), ResolvedTy::ImplicitSelf)
     }
 }
 
@@ -151,13 +179,13 @@ pub struct ImplInfo {
     pub self_ty: TypeId,
     pub for_trait: Option<Vec<Symbol>>,
     pub methods: Vec<FnSig>,
+    pub constant: (Symbol, TypeId),
 }
 
 #[derive(Debug)]
 pub struct FnSig {
     pub name: Symbol,
-    pub params: Vec<TypeId>,
-    pub ret: TypeId,
+    pub type_id: TypeId,
     pub is_placeholder: bool,
 }
 
@@ -453,15 +481,60 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_type_fields(&mut self, id: TypeId) -> Vec<(Symbol, Variable)> {
+    fn get_builtin_methods(&mut self, ty: &ResolvedTy) -> Vec<(Symbol, Variable)> {
+        let mut ret = Vec::new();
+
+        if *ty == ResolvedTy::u32() || *ty == ResolvedTy::usize() {
+            ret.push((
+                Symbol("to_string".to_string()),
+                Variable {
+                    ty: self.intern_type(ResolvedTy::Fn(
+                        vec![ResolvedTy::ref_implicit_self()],
+                        Box::new(ResolvedTy::string()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Const,
+                },
+            ));
+        }
+
+        if *ty == ResolvedTy::string() {
+            ret.push((
+                Symbol("as_str".to_string()),
+                Variable {
+                    ty: self.intern_type(ResolvedTy::Fn(
+                        vec![ResolvedTy::ref_implicit_self()],
+                        Box::new(ResolvedTy::ref_str()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Const,
+                },
+            ))
+        }
+
+        if *ty == ResolvedTy::string() || *ty == ResolvedTy::str() {
+            ret.push((
+                Symbol("len".to_string()),
+                Variable {
+                    ty: self.intern_type(ResolvedTy::Fn(
+                        vec![ResolvedTy::ref_implicit_self()],
+                        Box::new(ResolvedTy::u32()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Const,
+                },
+            ))
+        }
+
+        ret
+    }
+
+    fn get_type_fields(&mut self, id: TypeId) -> Result<Vec<(Symbol, Variable)>, SemanticError> {
         let len_fn = (
             Symbol("len".to_string()),
             Variable {
                 ty: self.intern_type(ResolvedTy::Fn(
-                    vec![ResolvedTy::Ref(
-                        Box::new(ResolvedTy::ImplicitSelf),
-                        Mutability::Not,
-                    )],
+                    vec![ResolvedTy::ref_implicit_self()],
                     Box::new(ResolvedTy::u32()),
                 )),
                 mutbl: Mutability::Not,
@@ -469,25 +542,87 @@ impl SemanticAnalyzer {
             },
         );
         let ty = self.get_type_by_id(id);
+
+        let mut ret = Vec::new();
+
         match ty {
-            ResolvedTy::BulitIn(symbol, items) => todo!(),
-            ResolvedTy::Named(symbols) => todo!(),
-            ResolvedTy::Ref(resolved_ty, mutability) => todo!(),
+            ResolvedTy::BulitIn(_, _) => {
+                let ty = ty.clone();
+                ret.append(&mut self.get_builtin_methods(&ty))
+            }
+            ResolvedTy::Named(_) => {
+                todo!() // For struct...
+            }
+            ResolvedTy::Ref(resolved_ty, _) => {
+                let derefed_id = self.intern_type(resolved_ty.as_ref().clone());
+                ret.append(&mut self.get_type_fields(derefed_id)?);
+                // 会不断尝试 deref
+            }
             ResolvedTy::Array(_, _) => {
-                vec![len_fn]
+                ret.push(len_fn);
             }
             ResolvedTy::Slice(_) => {
-                vec![len_fn]
+                ret.push(len_fn);
             }
-            ResolvedTy::Tup(items) => vec![],
-            ResolvedTy::Fn(items, resolved_ty) => vec![],
-            ResolvedTy::Infer => todo!(),
-            ResolvedTy::Any => todo!(),
-            ResolvedTy::ImplicitSelf => todo!(),
+            ResolvedTy::Tup(_) => {}
+            ResolvedTy::Fn(_, _) => {}
+            ResolvedTy::Infer => {}
+            ResolvedTy::Any => {}
+            ResolvedTy::ImplicitSelf => {
+                ret.append(&mut self.get_type_fields(self.get_self_type()?)?);
+            }
         }
+
+        if let Some(impls) = self.impls.get(&id) {
+            for x in impls {
+                debug_assert_eq!(x.self_ty, id);
+                for method in &x.methods {
+                    let method_ty = self.get_type_by_id(method.type_id);
+                    match method_ty {
+                        ResolvedTy::Fn(params, _) => {
+                            if let Some(first) = params.first()
+                                && first.is_implicit_self()
+                            {
+                                ret.push((
+                                    method.name.clone(),
+                                    Variable {
+                                        ty: method.type_id,
+                                        mutbl: Mutability::Not,
+                                        kind: VariableKind::Const,
+                                    },
+                                ));
+                            }
+                        }
+                        _ => panic!("Impossible!"),
+                    }
+                }
+            }
+        }
+
+        Ok(ret)
     }
 
-    fn get_type_items(&self, id: TypeId) -> Vec<(Symbol, TypeId)> {
+    fn get_type_items(&mut self, id: TypeId) -> Result<Vec<(Symbol, TypeId)>, SemanticError> {
+        let ty = self.get_type_by_id(id);
+
+        let mut ret = Vec::new();
+
+        match ty {
+            ResolvedTy::BulitIn(_, _) => {
+                let ty = ty.clone();
+                ret.append(&mut self.get_builtin_methods(&ty))
+            },
+            ResolvedTy::Named(symbols) => todo!(),
+            ResolvedTy::Ref(resolved_ty, mutability) => todo!(),
+            ResolvedTy::Array(resolved_ty, _) => todo!(),
+            ResolvedTy::Slice(resolved_ty) => todo!(),
+            ResolvedTy::Tup(items) => todo!(),
+            ResolvedTy::Fn(items, resolved_ty) => todo!(),
+            ResolvedTy::Infer => todo!(),
+            ResolvedTy::ImplicitSelf => todo!(),
+            ResolvedTy::Any => todo!(),
+        }
+        
         todo!()
     }
 
@@ -543,10 +678,12 @@ impl SemanticAnalyzer {
     }
 
     fn is_builtin_type(&self, ident: &Symbol, arg_num: usize) -> bool {
-        const BUILTINS: [(&str, usize); 6] = [
+        const BUILTINS: [(&str, usize); 8] = [
             ("bool", 0),
             ("u32", 0),
             ("i32", 0),
+            ("usize", 0),
+            ("isize", 0),
             ("char", 0),
             ("str", 0),
             ("String", 0),
@@ -666,7 +803,7 @@ impl SemanticAnalyzer {
             TyKind::TraitObject(_) => Err(SemanticError::Unimplemented),
             TyKind::ImplTrait(_) => Err(SemanticError::Unimplemented),
             TyKind::Infer(_) => Ok(ResolvedTy::Infer),
-            TyKind::ImplicitSelf => Ok(self.get_type_by_id(self.get_self_type()?).clone()),
+            TyKind::ImplicitSelf => Ok(ResolvedTy::ImplicitSelf),
         }
     }
 
@@ -1020,13 +1157,11 @@ impl Visitor for SemanticAnalyzer {
                                 FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
                                 FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
                             };
-                            let params_id =
-                                param_tys.into_iter().map(|x| self.intern_type(x)).collect();
-                            let ret_id = self.intern_type(ret_ty);
+                            let fn_type = ResolvedTy::Fn(param_tys, Box::new(ret_ty));
+                            let fn_type_id = self.intern_type(fn_type);
                             methods.push(FnSig {
                                 name: ident.symbol.clone(),
-                                params: params_id,
-                                ret: ret_id,
+                                type_id: fn_type_id,
                                 is_placeholder: body.is_none(),
                             });
                         }
