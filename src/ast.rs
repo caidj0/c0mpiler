@@ -267,6 +267,15 @@ impl Eatable for Mutability {
     }
 }
 
+impl Mutability {
+    pub fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (Mutability::Mut, Mutability::Mut) => Mutability::Mut,
+            _ => Mutability::Not,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Symbol(pub String);
 

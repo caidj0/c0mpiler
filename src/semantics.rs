@@ -125,12 +125,24 @@ impl ResolvedTy {
         Self::Ref(Box::new(Self::implicit_self()), Mutability::Mut)
     }
 
-    pub fn try_deref(&self) -> &Self {
-        if let ResolvedTy::Ref(resolved, _) = self {
-            resolved.as_ref()
+    pub fn try_deref(&self) -> (&Self, Mutability) {
+        if let ResolvedTy::Ref(resolved, mutbl) = self {
+            (resolved.as_ref(), *mutbl)
         } else {
-            self
+            (self, Mutability::Mut)
         }
+    }
+
+    pub fn deref_all(&self) -> (&Self, Mutability) {
+        let mut ret_ty = self;
+        let mut ret_mut = Mutability::Mut;
+
+        while let ResolvedTy::Ref(resolved, mutbl) = self {
+            ret_ty = &resolved;
+            ret_mut = ret_mut.merge(*mutbl)
+        }
+
+        (ret_ty, ret_mut)
     }
 
     pub fn is_number_type(&self) -> bool {
@@ -142,7 +154,7 @@ impl ResolvedTy {
     }
 
     pub fn is_implicit_self(&self) -> bool {
-        matches!(self.try_deref(), ResolvedTy::ImplicitSelf)
+        matches!(self.try_deref().0, ResolvedTy::ImplicitSelf)
     }
 }
 
@@ -1432,8 +1444,8 @@ impl Visitor for SemanticAnalyzer {
                 no_assignee!(res1.category);
                 no_assignee!(res2.category);
 
-                let ty1 = self.get_type_by_id(res1.type_id).try_deref();
-                let ty2 = self.get_type_by_id(res2.type_id).try_deref();
+                let ty1 = self.get_type_by_id(res1.type_id).try_deref().0;
+                let ty2 = self.get_type_by_id(res2.type_id).try_deref().0;
 
                 match bin_op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
@@ -1540,7 +1552,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                     UnOp::Not => {
-                        let ty = ty.try_deref();
+                        let ty = ty.try_deref().0;
                         if *ty == ResolvedTy::bool()
                             || *ty == ResolvedTy::integer()
                             || *ty == ResolvedTy::i32()
@@ -1555,7 +1567,7 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                     UnOp::Neg => {
-                        let ty = ty.try_deref();
+                        let ty = ty.try_deref().0;
                         if *ty == ResolvedTy::i32() || *ty == ResolvedTy::integer() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::i32()),
@@ -1696,7 +1708,36 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_index_expr(&mut self, expr: &crate::ast::expr::IndexExpr) -> Self::ExprRes {
-        todo!()
+        let res1 = self.visit_expr(&expr.0)?;
+        let res2 = self.visit_expr(&expr.1)?;
+
+        match (res1, res2) {
+            (Some(res1), Some(res2)) => {
+                let res1_mut = match res1.category {
+                    ExprCategory::Place(mutability) => mutability,
+                    ExprCategory::Not => Mutability::Mut,
+                    ExprCategory::Only => return Err(SemanticError::AssigneeOnlyExpr),
+                };
+                no_assignee!(res2.category);
+                let (ty1, mut1) = self.get_type_by_id(res1.type_id).deref_all();
+                let ty2 = self.get_type_by_id(res2.type_id);
+
+                if *ty2 != ResolvedTy::usize() {
+                    return Err(SemanticError::TypeMismatch);
+                }
+
+                if let ResolvedTy::Array(ele_ty, _) | ResolvedTy::Slice(ele_ty) = ty1 {
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(ele_ty.as_ref().clone()),
+                        category: ExprCategory::Place(res1_mut.merge(mut1)),
+                    }))
+                } else {
+                    Err(SemanticError::TypeMismatch)
+                }
+            }
+            (None, None) => Ok(None),
+            (None, Some(_)) | (Some(_), None) => panic!("Impossible"),
+        }
     }
 
     fn visit_range_expr(&mut self, _: &crate::ast::expr::RangeExpr) -> Self::ExprRes {
@@ -1745,13 +1786,17 @@ impl Visitor for SemanticAnalyzer {
                         span: path.span.clone(),
                     })?;
                     let type_id = self.intern_type(ty);
-                    let info = match &ty {
-                        ResolvedTy::BulitIn(symbol, items) => todo!(),
-                        ResolvedTy::Named(symbols) => todo!(),
-                        _ => None,
-                    };
+                    let values = self.get_type_items(type_id)?;
+                    for (symbol, id) in &values {
+                        if *symbol == value_seg.ident.symbol {
+                            return Ok(Some(ExprResult {
+                                type_id: *id,
+                                category: ExprCategory::Not,
+                            }));
+                        }
+                    }
 
-                    todo!()
+                    Err(SemanticError::UnknownVariable)
                 }
                 _ => return Err(SemanticError::InvaildPath),
             }
