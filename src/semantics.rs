@@ -10,7 +10,9 @@ use std::{
 use crate::{
     ast::{
         Crate, Ident, Mutability, NodeId, Symbol,
-        expr::{BinOp, BinaryExpr, Expr, LitKind, PathExpr, UnOp},
+        expr::{
+            BinOp, BinaryExpr, CallExpr, Expr, FieldExpr, LitKind, MethodCallExpr, PathExpr, UnOp,
+        },
         item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem,
@@ -31,6 +33,16 @@ macro_rules! no_assignee {
     };
 }
 
+macro_rules! get_mutbl {
+    ($id:expr) => {
+        match $id {
+            ExprCategory::Only => return Err(SemanticError::AssigneeOnlyExpr),
+            ExprCategory::Place(mutbl) => mutbl,
+            ExprCategory::Not => Mutability::Mut,
+        }
+    };
+}
+
 #[derive(Debug)]
 pub enum SemanticError {
     Unimplemented,
@@ -40,6 +52,7 @@ pub enum SemanticError {
     InvaildPath,
     UnknownType,
     UnknownVariable,
+    UnknownField,
     InvaildScope,
     FnWithoutBody,
     UnknownSuffix,
@@ -49,6 +62,9 @@ pub enum SemanticError {
     AssigneeOnlyExpr,
     TypeMismatch,
     ConflictAssignee,
+    NonFunctionCall,
+    NonMethodCall,
+    MismatchArgNum,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -493,64 +509,50 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_builtin_methods(&mut self, ty: &ResolvedTy) -> Vec<(Symbol, Variable)> {
+    fn get_builtin_methods(&mut self, ty: &ResolvedTy) -> Vec<(Symbol, TypeId)> {
         let mut ret = Vec::new();
 
         if *ty == ResolvedTy::u32() || *ty == ResolvedTy::usize() {
             ret.push((
                 Symbol("to_string".to_string()),
-                Variable {
-                    ty: self.intern_type(ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_implicit_self()],
-                        Box::new(ResolvedTy::string()),
-                    )),
-                    mutbl: Mutability::Not,
-                    kind: VariableKind::Const,
-                },
+                self.intern_type(ResolvedTy::Fn(
+                    vec![ResolvedTy::ref_implicit_self()],
+                    Box::new(ResolvedTy::string()),
+                )),
             ));
         }
 
         if *ty == ResolvedTy::string() {
             ret.push((
                 Symbol("as_str".to_string()),
-                Variable {
-                    ty: self.intern_type(ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_implicit_self()],
-                        Box::new(ResolvedTy::ref_str()),
-                    )),
-                    mutbl: Mutability::Not,
-                    kind: VariableKind::Const,
-                },
+                self.intern_type(ResolvedTy::Fn(
+                    vec![ResolvedTy::ref_implicit_self()],
+                    Box::new(ResolvedTy::ref_str()),
+                )),
             ))
         }
 
         if *ty == ResolvedTy::string() || *ty == ResolvedTy::str() {
             ret.push((
                 Symbol("len".to_string()),
-                Variable {
-                    ty: self.intern_type(ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_implicit_self()],
-                        Box::new(ResolvedTy::u32()),
-                    )),
-                    mutbl: Mutability::Not,
-                    kind: VariableKind::Const,
-                },
+                self.intern_type(ResolvedTy::Fn(
+                    vec![ResolvedTy::ref_implicit_self()],
+                    Box::new(ResolvedTy::u32()),
+                )),
             ))
         }
 
         ret
     }
 
+    // fields 不包括 method
     fn get_type_fields(&mut self, id: TypeId) -> Result<Vec<(Symbol, Variable)>, SemanticError> {
         let ty = self.get_type_by_id(id);
 
         let mut ret = Vec::new();
 
         match ty {
-            ResolvedTy::BulitIn(_, _) => {
-                let ty = ty.clone();
-                ret.append(&mut self.get_builtin_methods(&ty))
-            }
+            ResolvedTy::BulitIn(_, _) => {}
             ResolvedTy::Named(symbols) => {
                 let info = self.get_type_info(symbols);
                 match &info.kind {
@@ -569,11 +571,9 @@ impl SemanticAnalyzer {
                     }
                     TypeKind::Enum { fields: _ } => {}
                     TypeKind::Trait {
-                        methods,
+                        methods: _,
                         constants: _,
-                    } => {
-                        self.add_methods_to_vec(&mut ret, methods);
-                    }
+                    } => {}
                 }
             }
             ResolvedTy::Ref(resolved_ty, _) => {
@@ -600,52 +600,11 @@ impl SemanticAnalyzer {
             ResolvedTy::Tup(_) | ResolvedTy::Fn(_, _) | ResolvedTy::Infer | ResolvedTy::Any => {}
         }
 
-        if let Some(impls) = self.impls.get(&id) {
-            for x in impls {
-                debug_assert_eq!(x.self_ty, id);
-                self.add_methods_to_vec(&mut ret, &x.methods);
-            }
-        }
-
         Ok(ret)
     }
 
-    fn add_methods_to_vec(&self, ret: &mut Vec<(Symbol, Variable)>, methods: &[FnSig]) {
-        for method in methods {
-            let method_ty = self.get_type_by_id(method.type_id);
-            match method_ty {
-                ResolvedTy::Fn(params, _) => {
-                    if let Some(first) = params.first()
-                        && first.is_implicit_self()
-                    {
-                        ret.push((
-                            method.name.clone(),
-                            Variable {
-                                ty: method.type_id,
-                                mutbl: Mutability::Not,
-                                kind: VariableKind::Const,
-                            },
-                        ));
-                    }
-                }
-                _ => panic!("Impossible!"),
-            }
-        }
-    }
-
-    fn add_fn_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, methods: &[FnSig]) {
-        for method in methods {
-            ret.push((method.name.clone(), method.type_id));
-        }
-    }
-
-    fn add_const_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, constants: &[Constant]) {
-        for constant in constants {
-            ret.push((constant.name.clone(), constant.ty));
-        }
-    }
-
-    // item 包含 method
+    // item 包含 method，
+    // TODO：处理不同 Trait 重名的情况
     fn get_type_items(&mut self, id: TypeId) -> Result<Vec<(Symbol, TypeId)>, SemanticError> {
         let ty = self.get_type_by_id(id);
 
@@ -653,7 +612,8 @@ impl SemanticAnalyzer {
 
         match ty {
             ResolvedTy::BulitIn(_, _) => {
-                todo!()
+                let ty = ty.clone();
+                ret.append(&mut self.get_builtin_methods(&ty));
             }
             ResolvedTy::Named(symbols) => {
                 let info = self.get_type_info(symbols);
@@ -699,6 +659,18 @@ impl SemanticAnalyzer {
         }
 
         Ok(ret)
+    }
+
+    fn add_fn_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, methods: &[FnSig]) {
+        for method in methods {
+            ret.push((method.name.clone(), method.type_id));
+        }
+    }
+
+    fn add_const_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, constants: &[Constant]) {
+        for constant in constants {
+            ret.push((constant.name.clone(), constant.ty));
+        }
     }
 
     fn search_type_mut(
@@ -800,6 +772,24 @@ impl SemanticAnalyzer {
         self.get_self_type_from(self.current_scope)
     }
 
+    fn resolve_implicit_self<'a>(&self, ty: &ResolvedTy) -> Result<ResolvedTy, SemanticError> {
+        match ty {
+            ResolvedTy::Ref(resolved_ty, mutability) => {
+                if matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf) {
+                    Ok(ResolvedTy::Ref(
+                        Box::new(self.get_type_by_id(self.get_self_type()?).clone()),
+                        *mutability,
+                    ))
+                } else {
+                    Err(SemanticError::TypeMismatch)
+                }
+            }
+            ResolvedTy::ImplicitSelf => Ok(self.get_type_by_id(self.get_self_type()?).clone()),
+            _ => Err(SemanticError::TypeMismatch),
+        }
+    }
+
+    // 这个函数不会展开隐式 self（为了保留函数参数中的 self）
     fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
         match &ty.kind {
             TyKind::Slice(slice_ty) => {
@@ -1411,12 +1401,128 @@ impl Visitor for SemanticAnalyzer {
         todo!()
     }
 
-    fn visit_call_expr(&mut self, expr: &crate::ast::expr::CallExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_call_expr(&mut self, CallExpr(expr, params): &CallExpr) -> Self::ExprRes {
+        let res = self.visit_expr(expr)?;
+        let params_res = params
+            .iter()
+            .map(|x| self.visit_expr(x))
+            .collect::<Result<Vec<_>, SemanticError>>()?;
+
+        match res {
+            Some(res) => {
+                no_assignee!(res.category);
+                let params_res = params_res.into_iter().collect::<Option<Vec<_>>>().unwrap();
+                for x in &params_res {
+                    no_assignee!(x.category);
+                }
+
+                let ty = self.get_type_by_id(res.type_id);
+                if let ResolvedTy::Fn(required, ret_ty) = ty {
+                    if required.len() != params_res.len() {
+                        return Err(SemanticError::MismatchArgNum);
+                    }
+
+                    for (income, target) in params_res.into_iter().zip(required.iter()) {
+                        no_assignee!(income.category);
+                        let income_ty = self.get_type_by_id(income.type_id);
+                        let target_ty = if target.is_implicit_self() {
+                            &self.resolve_implicit_self(target)?
+                        } else {
+                            target
+                        };
+
+                        // 有没有 auto deref 的情况？
+                        if income_ty != target_ty {
+                            return Err(SemanticError::TypeMismatch);
+                        }
+                    }
+
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(ret_ty.as_ref().clone()),
+                        category: ExprCategory::Not,
+                    }))
+                } else {
+                    Err(SemanticError::NonFunctionCall)
+                }
+            }
+            None => {
+                debug_assert!(params_res.iter().all(|x| x.is_none()));
+                Ok(None)
+            }
+        }
     }
 
-    fn visit_method_call_expr(&mut self, expr: &crate::ast::expr::MethodCallExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_method_call_expr(
+        &mut self,
+        MethodCallExpr {
+            seg,
+            receiver,
+            args,
+            span,
+        }: &MethodCallExpr,
+    ) -> Self::ExprRes {
+        let res = self.visit_expr(&receiver)?;
+        let params_res = args
+            .iter()
+            .map(|x| self.visit_expr(x))
+            .collect::<Result<Vec<_>, SemanticError>>()?;
+
+        match res {
+            Some(ExprResult { type_id, category }) => {
+                no_assignee!(category);
+                let ident = &seg.ident;
+                if seg.args.is_some() {
+                    return Err(SemanticError::Unimplemented);
+                }
+
+                let mut opt_ty = Some(self.get_type_by_id(type_id).clone());
+                let mut ref_flag = false;
+                let mut mutbl = get_mutbl!(category);
+
+                while let Some(ty) = &opt_ty {
+                    let ty_id = self.intern_type(ty.clone());
+                    let items = self.get_type_items(ty_id)?;
+                    if let Some((_, fn_id)) =
+                        items.iter().find(|(symbol, _)| *symbol == ident.symbol)
+                    {
+                        let fn_ty = self.get_type_by_id(*fn_id);
+
+                        if let ResolvedTy::Fn(required, ret) = fn_ty {
+                            let first = required.first().ok_or(SemanticError::MismatchArgNum)?;
+                            match first {
+                                ResolvedTy::Ref(resolved_ty, mutability) => if !matches!(resolved_ty, ResolvedTy::ImplicitSelf) || ,
+                                ResolvedTy::ImplicitSelf => {
+                                    if ref_flag {
+                                        return Err(SemanticError::TypeMismatch)
+                                    }
+                                },
+                                _ => return Err(SemanticError::NonMethodCall)
+                            }
+
+                        } else {
+                            return Err(SemanticError::NonMethodCall);
+                        }
+
+                        // TODO
+                    }
+
+                    opt_ty = match ty {
+                        ResolvedTy::Ref(resolved_ty, mutability) => {
+                            ref_flag = true;
+                            mutbl = mutbl.merge(*mutability);
+                            Some(resolved_ty.as_ref().clone())
+                        }
+                        _ => None,
+                    }
+                }
+
+                todo!()
+            }
+            None => {
+                debug_assert!(params_res.iter().all(|x| x.is_none()));
+                Ok(None)
+            }
+        }
     }
 
     fn visit_tup_expr(&mut self, expr: &crate::ast::expr::TupExpr) -> Self::ExprRes {
@@ -1703,8 +1809,26 @@ impl Visitor for SemanticAnalyzer {
         todo!()
     }
 
-    fn visit_field_expr(&mut self, expr: &crate::ast::expr::FieldExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_field_expr(
+        &mut self,
+        FieldExpr(expr, ident): &crate::ast::expr::FieldExpr,
+    ) -> Self::ExprRes {
+        let res = self.visit_expr(expr)?;
+
+        match res {
+            Some(res) => {
+                let res_mut = get_mutbl!(res.category);
+                let fields = self.get_type_fields(res.type_id)?;
+                match fields.iter().find(|(symbol, _)| *symbol == ident.symbol) {
+                    Some((_, var)) => Ok(Some(ExprResult {
+                        type_id: var.ty,
+                        category: ExprCategory::Place(var.mutbl.merge(res_mut)),
+                    })),
+                    None => Err(SemanticError::UnknownVariable),
+                }
+            }
+            None => Ok(None),
+        }
     }
 
     fn visit_index_expr(&mut self, expr: &crate::ast::expr::IndexExpr) -> Self::ExprRes {
