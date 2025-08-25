@@ -3,6 +3,7 @@ pub mod primitives;
 pub mod visitor;
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     vec,
 };
@@ -65,6 +66,7 @@ pub enum SemanticError {
     NonFunctionCall,
     NonMethodCall,
     MismatchArgNum,
+    ImmutableVar,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -141,21 +143,21 @@ impl ResolvedTy {
         Self::Ref(Box::new(Self::implicit_self()), Mutability::Mut)
     }
 
-    pub fn try_deref(&self) -> (&Self, Mutability) {
+    pub fn try_deref(self) -> (Self, Mutability) {
         if let ResolvedTy::Ref(resolved, mutbl) = self {
-            (resolved.as_ref(), *mutbl)
+            (*resolved, mutbl)
         } else {
             (self, Mutability::Mut)
         }
     }
 
-    pub fn deref_all(&self) -> (&Self, Mutability) {
+    pub fn deref_all(self) -> (Self, Mutability) {
         let mut ret_ty = self;
         let mut ret_mut = Mutability::Mut;
 
-        while let ResolvedTy::Ref(resolved, mutbl) = self {
-            ret_ty = &resolved;
-            ret_mut = ret_mut.merge(*mutbl)
+        while let ResolvedTy::Ref(resolved, mutbl) = ret_ty {
+            ret_ty = *resolved;
+            ret_mut = ret_mut.merge(mutbl)
         }
 
         (ret_ty, ret_mut)
@@ -170,7 +172,50 @@ impl ResolvedTy {
     }
 
     pub fn is_implicit_self(&self) -> bool {
-        matches!(self.try_deref().0, ResolvedTy::ImplicitSelf)
+        match self {
+            ResolvedTy::Ref(resolved_ty, _) => {
+                matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf)
+            }
+            ResolvedTy::ImplicitSelf => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_method(&self) -> bool {
+        match self {
+            ResolvedTy::Fn(tys, _) => match tys.first() {
+                Some(ResolvedTy::ImplicitSelf) => true,
+                Some(ResolvedTy::Ref(inref, _)) => {
+                    matches!(inref.as_ref(), ResolvedTy::ImplicitSelf)
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn method_to_func(&self, self_ty: &Self) -> Self {
+        let mut ret = self.clone();
+        let ResolvedTy::Fn(tys, _) = &mut ret else {
+            panic!("Impossible!");
+        };
+
+        let first = tys.first_mut().unwrap();
+
+        match first {
+            ResolvedTy::Ref(resolved_ty, _) => {
+                debug_assert!(matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf));
+                *resolved_ty = Box::new(self_ty.clone())
+            }
+            ResolvedTy::ImplicitSelf => *first = self_ty.clone(),
+            _ => panic!("Impossible!"),
+        }
+
+        ret
+    }
+
+    pub fn into_ref(self) -> Self {
+        Self::Ref(Box::new(self), Mutability::Not)
     }
 }
 
@@ -299,7 +344,7 @@ pub enum AnalyzeStage {
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
-    type_table: TypeTable,
+    type_table: RefCell<TypeTable>,
     impls: HashMap<TypeId, Vec<ImplInfo>>,
     scopes: HashMap<NodeId, Scope>,
     current_scope: NodeId,
@@ -314,7 +359,7 @@ impl SemanticAnalyzer {
         type_table.intern(ResolvedTy::Any); // Any -> 1
 
         Self {
-            type_table,
+            type_table: RefCell::new(type_table),
             impls: HashMap::default(),
             scopes: HashMap::default(),
             current_scope: 0,
@@ -509,14 +554,24 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_builtin_methods(&mut self, ty: &ResolvedTy) -> Vec<(Symbol, TypeId)> {
+    fn get_builtin_methods(
+        &self,
+        ty: &ResolvedTy,
+        is_methods_call: bool,
+    ) -> Vec<(Symbol, TypeId)> {
         let mut ret = Vec::new();
+
+        let ref_implicit_self = if is_methods_call {
+            ResolvedTy::ref_implicit_self()
+        } else {
+            ty.clone().into_ref()
+        };
 
         if *ty == ResolvedTy::u32() || *ty == ResolvedTy::usize() {
             ret.push((
                 Symbol("to_string".to_string()),
                 self.intern_type(ResolvedTy::Fn(
-                    vec![ResolvedTy::ref_implicit_self()],
+                    vec![ref_implicit_self.clone()],
                     Box::new(ResolvedTy::string()),
                 )),
             ));
@@ -526,7 +581,7 @@ impl SemanticAnalyzer {
             ret.push((
                 Symbol("as_str".to_string()),
                 self.intern_type(ResolvedTy::Fn(
-                    vec![ResolvedTy::ref_implicit_self()],
+                    vec![ref_implicit_self.clone()],
                     Box::new(ResolvedTy::ref_str()),
                 )),
             ))
@@ -536,7 +591,7 @@ impl SemanticAnalyzer {
             ret.push((
                 Symbol("len".to_string()),
                 self.intern_type(ResolvedTy::Fn(
-                    vec![ResolvedTy::ref_implicit_self()],
+                    vec![ref_implicit_self.clone()],
                     Box::new(ResolvedTy::u32()),
                 )),
             ))
@@ -546,12 +601,12 @@ impl SemanticAnalyzer {
     }
 
     // fields 不包括 method
-    fn get_type_fields(&mut self, id: TypeId) -> Result<Vec<(Symbol, Variable)>, SemanticError> {
+    fn get_type_fields(&self, id: TypeId) -> Result<Vec<(Symbol, Variable)>, SemanticError> {
         let ty = self.get_type_by_id(id);
 
         let mut ret = Vec::new();
 
-        match ty {
+        match &ty {
             ResolvedTy::BulitIn(_, _) => {}
             ResolvedTy::Named(symbols) => {
                 let info = self.get_type_info(symbols);
@@ -605,15 +660,19 @@ impl SemanticAnalyzer {
 
     // item 包含 method，
     // TODO：处理不同 Trait 重名的情况
-    fn get_type_items(&mut self, id: TypeId) -> Result<Vec<(Symbol, TypeId)>, SemanticError> {
-        let ty = self.get_type_by_id(id);
+    fn get_type_items(
+        &self,
+        id: TypeId,
+        is_methods_call: bool,
+    ) -> Result<Vec<(Symbol, TypeId)>, SemanticError> {
+        let ty = self.get_type_by_id(id).clone();
 
         let mut ret = Vec::new();
 
-        match ty {
+        match &ty {
             ResolvedTy::BulitIn(_, _) => {
                 let ty = ty.clone();
-                ret.append(&mut self.get_builtin_methods(&ty));
+                ret.append(&mut self.get_builtin_methods(&ty, is_methods_call));
             }
             ResolvedTy::Named(symbols) => {
                 let info = self.get_type_info(symbols);
@@ -621,13 +680,17 @@ impl SemanticAnalyzer {
                     TypeKind::Placeholder => panic!("Impossible!"),
                     TypeKind::Struct { fields: _ } => {}
                     TypeKind::Enum { fields } => {
-                        for ident in fields {
-                            ret.push((ident.symbol.clone(), id));
+                        if !is_methods_call {
+                            for ident in fields {
+                                ret.push((ident.symbol.clone(), id));
+                            }
                         }
                     }
                     TypeKind::Trait { methods, constants } => {
-                        self.add_fn_item_to_vec(&mut ret, methods);
-                        self.add_const_item_to_vec(&mut ret, constants);
+                        self.add_fn_item_to_vec(&mut ret, methods, &ty, is_methods_call);
+                        if !is_methods_call {
+                            self.add_const_item_to_vec(&mut ret, constants);
+                        }
                     }
                 }
             }
@@ -635,13 +698,17 @@ impl SemanticAnalyzer {
                 ret.push((
                     Symbol("len".to_string()),
                     self.intern_type(ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_implicit_self()],
+                        vec![if is_methods_call {
+                            ResolvedTy::ref_implicit_self()
+                        } else {
+                            ty.clone().into_ref()
+                        }],
                         Box::new(ResolvedTy::u32()),
                     )),
                 ));
             }
             ResolvedTy::ImplicitSelf => {
-                ret.append(&mut self.get_type_items(self.get_self_type()?)?);
+                ret.append(&mut self.get_type_items(self.get_self_type()?, is_methods_call)?);
             }
             ResolvedTy::Ref(_, _)
             | ResolvedTy::Tup(_)
@@ -653,17 +720,33 @@ impl SemanticAnalyzer {
         if let Some(impls) = self.impls.get(&id) {
             for x in impls {
                 debug_assert_eq!(x.self_ty, id);
-                self.add_fn_item_to_vec(&mut ret, &x.methods);
-                self.add_const_item_to_vec(&mut ret, &x.constants);
+                self.add_fn_item_to_vec(&mut ret, &x.methods, &ty, is_methods_call);
+                if !is_methods_call {
+                    self.add_const_item_to_vec(&mut ret, &x.constants);
+                }
             }
         }
 
         Ok(ret)
     }
 
-    fn add_fn_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, methods: &[FnSig]) {
+    fn add_fn_item_to_vec(
+        &self,
+        ret: &mut Vec<(Symbol, TypeId)>,
+        methods: &[FnSig],
+        self_ty: &ResolvedTy,
+        only_methods: bool,
+    ) {
         for method in methods {
-            ret.push((method.name.clone(), method.type_id));
+            let ty = self.get_type_by_id(method.type_id);
+            match (only_methods, ty.is_method()) {
+                (true, true) | (false, false) => ret.push((method.name.clone(), method.type_id)),
+                (true, false) => {}
+                (false, true) => ret.push((
+                    method.name.clone(),
+                    self.intern_type(ty.method_to_func(self_ty)),
+                )),
+            }
         }
     }
 
@@ -880,12 +963,12 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn intern_type(&mut self, ty: ResolvedTy) -> TypeId {
-        self.type_table.intern(ty)
+    fn intern_type(&self, ty: ResolvedTy) -> TypeId {
+        self.type_table.borrow_mut().intern(ty)
     }
 
-    fn get_type_by_id(&self, id: TypeId) -> &ResolvedTy {
-        self.type_table.get(id)
+    fn get_type_by_id(&self, id: TypeId) -> ResolvedTy {
+        self.type_table.borrow().get(id).clone()
     }
 
     fn unit_type() -> TypeId {
@@ -920,7 +1003,7 @@ impl SemanticAnalyzer {
     }
 
     // 尝试统一传入的 type （主要是为了 integer）
-    fn utilize_ty(&mut self, types: Vec<TypeId>) -> Result<TypeId, SemanticError> {
+    fn utilize_ty(&self, types: Vec<TypeId>) -> Result<TypeId, SemanticError> {
         let types: Vec<TypeId> = types
             .into_iter()
             .filter(|x| *x != Self::any_type())
@@ -933,8 +1016,8 @@ impl SemanticAnalyzer {
         let mut ret_ty = self.get_type_by_id(*types.first().unwrap());
         for x in types {
             let t = self.get_type_by_id(x);
-            if *ret_ty != *t {
-                if *ret_ty == ResolvedTy::integer() && t.is_number_type() {
+            if ret_ty != t {
+                if ret_ty == ResolvedTy::integer() && t.is_number_type() {
                     ret_ty = t;
                 } else {
                     return Err(SemanticError::TypeMismatch);
@@ -1339,7 +1422,7 @@ impl Visitor for SemanticAnalyzer {
                             true
                         } else {
                             let expr_ty = self.get_type_by_id(type_id);
-                            expected_ty.is_number_type() && (*expr_ty == ResolvedTy::integer())
+                            expected_ty.is_number_type() && (expr_ty == ResolvedTy::integer())
                         };
                         if flag {
                             let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
@@ -1423,16 +1506,11 @@ impl Visitor for SemanticAnalyzer {
                     }
 
                     for (income, target) in params_res.into_iter().zip(required.iter()) {
-                        no_assignee!(income.category);
+                        debug_assert!(!target.is_implicit_self());
                         let income_ty = self.get_type_by_id(income.type_id);
-                        let target_ty = if target.is_implicit_self() {
-                            &self.resolve_implicit_self(target)?
-                        } else {
-                            target
-                        };
 
                         // 有没有 auto deref 的情况？
-                        if income_ty != target_ty {
+                        if income_ty != *target {
                             return Err(SemanticError::TypeMismatch);
                         }
                     }
@@ -1470,6 +1548,10 @@ impl Visitor for SemanticAnalyzer {
         match res {
             Some(ExprResult { type_id, category }) => {
                 no_assignee!(category);
+                let params_res = params_res.into_iter().collect::<Option<Vec<_>>>().unwrap();
+                for x in &params_res {
+                    no_assignee!(x.category);
+                }
                 let ident = &seg.ident;
                 if seg.args.is_some() {
                     return Err(SemanticError::Unimplemented);
@@ -1481,29 +1563,54 @@ impl Visitor for SemanticAnalyzer {
 
                 while let Some(ty) = &opt_ty {
                     let ty_id = self.intern_type(ty.clone());
-                    let items = self.get_type_items(ty_id)?;
+                    let items = self.get_type_items(
+                        ty_id,
+                        true, /* 此处保证 items 中均为 Fn Variant 且首个参数为 self */
+                    )?;
                     if let Some((_, fn_id)) =
                         items.iter().find(|(symbol, _)| *symbol == ident.symbol)
                     {
                         let fn_ty = self.get_type_by_id(*fn_id);
 
-                        if let ResolvedTy::Fn(required, ret) = fn_ty {
-                            let first = required.first().ok_or(SemanticError::MismatchArgNum)?;
-                            match first {
-                                ResolvedTy::Ref(resolved_ty, mutability) => if !matches!(resolved_ty, ResolvedTy::ImplicitSelf) || ,
-                                ResolvedTy::ImplicitSelf => {
-                                    if ref_flag {
-                                        return Err(SemanticError::TypeMismatch)
-                                    }
-                                },
-                                _ => return Err(SemanticError::NonMethodCall)
-                            }
+                        let ResolvedTy::Fn(required, ret) = fn_ty else {
+                            panic!("Impossible!")
+                        };
 
-                        } else {
-                            return Err(SemanticError::NonMethodCall);
+                        if required.len() != params_res.len() + 1 {
+                            return Err(SemanticError::MismatchArgNum);
                         }
 
-                        // TODO
+                        // 检查 self
+                        match required.first().unwrap() {
+                            ResolvedTy::Ref(_, target_mut) => match (target_mut, mutbl) {
+                                (Mutability::Mut, Mutability::Not) => {
+                                    return Err(SemanticError::ImmutableVar);
+                                }
+                                _ => {}
+                            },
+                            ResolvedTy::ImplicitSelf => {
+                                if ref_flag {
+                                    return Err(SemanticError::TypeMismatch);
+                                }
+                            }
+                            _ => panic!("Impossible"),
+                        }
+
+                        // 检查其他参数
+                        for (income, target) in params_res.iter().zip(required[1..].iter()) {
+                            debug_assert!(!target.is_implicit_self());
+                            let income_ty = self.get_type_by_id(income.type_id);
+
+                            if income_ty != *target {
+                                return Err(SemanticError::TypeMismatch);
+                            }
+                        }
+
+                        // 返回
+                        return Ok(Some(ExprResult {
+                            type_id: self.intern_type(ret.as_ref().clone()),
+                            category: ExprCategory::Not,
+                        }));
                     }
 
                     opt_ty = match ty {
@@ -1516,7 +1623,7 @@ impl Visitor for SemanticAnalyzer {
                     }
                 }
 
-                todo!()
+                Err(SemanticError::NonMethodCall)
             }
             None => {
                 debug_assert!(params_res.iter().all(|x| x.is_none()));
@@ -1558,9 +1665,9 @@ impl Visitor for SemanticAnalyzer {
                         if !ty1.is_number_type() || !ty2.is_number_type() {
                             return Err(SemanticError::NoImplementation);
                         }
-                        let ret_ty = if *ty1 == ResolvedTy::integer() {
+                        let ret_ty = if ty1 == ResolvedTy::integer() {
                             ty2
-                        } else if *ty2 == ResolvedTy::integer() || *ty1 == *ty2 {
+                        } else if ty2 == ResolvedTy::integer() || ty1 == ty2 {
                             ty1
                         } else {
                             return Err(SemanticError::NoImplementation);
@@ -1572,7 +1679,7 @@ impl Visitor for SemanticAnalyzer {
                         }))
                     }
                     BinOp::And | BinOp::Or => {
-                        if *ty1 == ResolvedTy::bool() && *ty2 == ResolvedTy::bool() {
+                        if ty1 == ResolvedTy::bool() && ty2 == ResolvedTy::bool() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::bool()),
                                 category: ExprCategory::Not,
@@ -1582,15 +1689,15 @@ impl Visitor for SemanticAnalyzer {
                         }
                     }
                     BinOp::BitXor | BinOp::BitAnd | BinOp::BitOr => {
-                        if *ty1 == ResolvedTy::bool() && *ty2 == ResolvedTy::bool() {
+                        if ty1 == ResolvedTy::bool() && ty2 == ResolvedTy::bool() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::bool()),
                                 category: ExprCategory::Not,
                             }))
                         } else if ty1.is_number_type() && ty2.is_number_type() {
-                            let ret_ty = if *ty1 == ResolvedTy::integer() {
+                            let ret_ty = if ty1 == ResolvedTy::integer() {
                                 ty2
-                            } else if *ty2 == ResolvedTy::integer() || *ty1 == *ty2 {
+                            } else if ty2 == ResolvedTy::integer() || ty1 == ty2 {
                                 ty1
                             } else {
                                 return Err(SemanticError::NoImplementation);
@@ -1617,11 +1724,11 @@ impl Visitor for SemanticAnalyzer {
                     BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Ge | BinOp::Gt => {
                         if (matches!(ty1, ResolvedTy::BulitIn(_, _))
                             && matches!(ty2, ResolvedTy::BulitIn(_, _))
-                            && *ty1 == *ty2)
-                            || ((*ty1 == ResolvedTy::str() || *ty1 == ResolvedTy::string())
-                                && (*ty2 == ResolvedTy::str() || *ty2 == ResolvedTy::string()))
-                            || (*ty1 == ResolvedTy::integer() && ty2.is_number_type())
-                            || (*ty2 == ResolvedTy::integer() && ty1.is_number_type())
+                            && ty1 == ty2)
+                            || ((ty1 == ResolvedTy::str() || ty1 == ResolvedTy::string())
+                                && (ty2 == ResolvedTy::str() || ty2 == ResolvedTy::string()))
+                            || (ty1 == ResolvedTy::integer() && ty2.is_number_type())
+                            || (ty2 == ResolvedTy::integer() && ty1.is_number_type())
                         {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::bool()),
@@ -1650,7 +1757,7 @@ impl Visitor for SemanticAnalyzer {
                         // 在 rust 中，貌似任意 value expr 都可以取其 ref，并且再解引用后可以得到 place value
                         if let ResolvedTy::Ref(t, multb) = ty {
                             Ok(Some(ExprResult {
-                                category: ExprCategory::Place(*multb),
+                                category: ExprCategory::Place(multb),
                                 type_id: self.intern_type(t.as_ref().clone()),
                             }))
                         } else {
@@ -1659,10 +1766,10 @@ impl Visitor for SemanticAnalyzer {
                     }
                     UnOp::Not => {
                         let ty = ty.try_deref().0;
-                        if *ty == ResolvedTy::bool()
-                            || *ty == ResolvedTy::integer()
-                            || *ty == ResolvedTy::i32()
-                            || *ty == ResolvedTy::u32()
+                        if ty == ResolvedTy::bool()
+                            || ty == ResolvedTy::integer()
+                            || ty == ResolvedTy::i32()
+                            || ty == ResolvedTy::u32()
                         {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ty.clone()),
@@ -1674,7 +1781,7 @@ impl Visitor for SemanticAnalyzer {
                     }
                     UnOp::Neg => {
                         let ty = ty.try_deref().0;
-                        if *ty == ResolvedTy::i32() || *ty == ResolvedTy::integer() {
+                        if ty == ResolvedTy::i32() || ty == ResolvedTy::integer() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::i32()),
                                 category: ExprCategory::Not,
@@ -1732,11 +1839,11 @@ impl Visitor for SemanticAnalyzer {
                 let expr_ty = self.get_type_by_id(type_id);
                 let target_ty = self.resolve_ty(&expr.1)?;
 
-                if (*expr_ty == ResolvedTy::i32()
-                    || *expr_ty == ResolvedTy::u32()
-                    || *expr_ty == ResolvedTy::integer()
-                    || *expr_ty == ResolvedTy::char()
-                    || *expr_ty == ResolvedTy::bool())
+                if (expr_ty == ResolvedTy::i32()
+                    || expr_ty == ResolvedTy::u32()
+                    || expr_ty == ResolvedTy::integer()
+                    || expr_ty == ResolvedTy::char()
+                    || expr_ty == ResolvedTy::bool())
                     && (target_ty == ResolvedTy::i32() || target_ty == ResolvedTy::u32())
                 {
                     Ok(Some(ExprResult {
@@ -1846,7 +1953,7 @@ impl Visitor for SemanticAnalyzer {
                 let (ty1, mut1) = self.get_type_by_id(res1.type_id).deref_all();
                 let ty2 = self.get_type_by_id(res2.type_id);
 
-                if *ty2 != ResolvedTy::usize() {
+                if ty2 != ResolvedTy::usize() {
                     return Err(SemanticError::TypeMismatch);
                 }
 
@@ -1910,7 +2017,7 @@ impl Visitor for SemanticAnalyzer {
                         span: path.span.clone(),
                     })?;
                     let type_id = self.intern_type(ty);
-                    let values = self.get_type_items(type_id)?;
+                    let values = self.get_type_items(type_id, false)?;
                     for (symbol, id) in &values {
                         if *symbol == value_seg.ident.symbol {
                             return Ok(Some(ExprResult {
