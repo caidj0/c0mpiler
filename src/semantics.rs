@@ -10,12 +10,19 @@ use std::{
 
 use crate::{
     ast::{
+        Crate, Ident, Mutability, NodeId, Symbol,
         expr::{
-            BinOp, BinaryExpr, BlockExpr, CallExpr, Expr, FieldExpr, IfExpr, LitKind, LoopExpr, MethodCallExpr, PathExpr, RepeatExpr, RetExpr, UnOp, WhileExpr
-        }, item::{
+            BinOp, BinaryExpr, BlockExpr, CallExpr, Expr, FieldExpr, IfExpr, LitKind, LoopExpr,
+            MethodCallExpr, PathExpr, RepeatExpr, RetExpr, StructExpr, StructRest, UnOp, WhileExpr,
+        },
+        item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem,
-        }, pat::IdentPat, path::{Path, PathSegment}, stmt::{LocalKind, StmtKind}, ty::{MutTy, PathTy, RefTy, Ty, TyKind}, Crate, Ident, Mutability, NodeId, Symbol
+        },
+        pat::IdentPat,
+        path::{Path, PathSegment},
+        stmt::{LocalKind, StmtKind},
+        ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
 };
@@ -64,6 +71,9 @@ pub enum SemanticError {
     NoLoopScope,
     BreakWithValue,
     NoFnScope,
+    NotStructType,
+    MultiSpecifiedField,
+    NonProvidedField,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1006,12 +1016,7 @@ impl SemanticAnalyzer {
                     return Err(SemanticError::InvaildPath);
                 }
                 match self.search_type(s) {
-                    Ok((id, _)) => {
-                        let mut full_name = self.get_prefix_name_from(id);
-                        full_name.push(s.clone());
-
-                        Ok(ResolvedTy::Named(full_name))
-                    }
+                    Ok((id, _)) => Ok(self.resolve_ty_in_scope_by_symbol(s, id)),
                     Err(err) => {
                         if self.is_builtin_type(
                             &seg.ident.symbol,
@@ -1053,6 +1058,13 @@ impl SemanticAnalyzer {
             TyKind::Infer(_) => Ok(ResolvedTy::Infer),
             TyKind::ImplicitSelf => Ok(ResolvedTy::ImplicitSelf),
         }
+    }
+
+    fn resolve_ty_in_scope_by_symbol(&self, s: &Symbol, id: usize) -> ResolvedTy {
+        let mut full_name = self.get_prefix_name_from(id);
+        full_name.push(s.clone());
+
+        ResolvedTy::Named(full_name)
     }
 
     fn intern_type(&self, ty: ResolvedTy) -> TypeId {
@@ -2310,8 +2322,84 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
-    fn visit_struct_expr(&mut self, expr: &crate::ast::expr::StructExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_struct_expr(
+        &mut self,
+        StructExpr {
+            qself,
+            path,
+            fields,
+            rest,
+        }: &StructExpr,
+    ) -> Self::ExprRes {
+        if qself.is_some() || !matches!(rest, StructRest::None) {
+            return Err(SemanticError::Unimplemented);
+        };
+
+        let exp_fields = fields
+            .iter()
+            .map(|x| -> Result<(Symbol, Option<ExprResult>), SemanticError> {
+                Ok((x.ident.symbol.clone(), self.visit_expr(&x.expr)?))
+            })
+            .collect::<Result<Vec<_>, SemanticError>>()?;
+
+        if path.segments.len() > 1 {
+            return Err(SemanticError::Unimplemented);
+        }
+        let first = path.segments.first().unwrap();
+        if first.args.is_some() {
+            return Err(SemanticError::Unimplemented);
+        }
+        let (id, struct_info) = self.search_type(&first.ident.symbol)?;
+        match &struct_info.kind {
+            TypeKind::Placeholder => panic!("Impossible"),
+            TypeKind::Struct { fields } => match self.stage {
+                AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
+                AnalyzeStage::Body => {
+                    let exp_fields = exp_fields
+                        .into_iter()
+                        .map(|(s, e)| match e {
+                            Some(e) => Some((s, e)),
+                            None => None,
+                        })
+                        .collect::<Option<Vec<_>>>()
+                        .unwrap();
+
+                    for (_, res) in &exp_fields {
+                        no_assignee!(res.category);
+                    }
+
+                    let mut dic: HashMap<Symbol, ExprResult> = HashMap::new();
+
+                    for x in exp_fields.into_iter() {
+                        if let Some(_) = dic.insert(x.0, x.1) {
+                            return Err(SemanticError::MultiSpecifiedField);
+                        }
+                    }
+
+                    for (field_ident, field_type_id) in fields {
+                        if let Some(res) = dic.get(&field_ident.symbol) {
+                            let res_ty = self.get_type_by_id(res.type_id);
+                            let field_ty = self.get_type_by_id(*field_type_id);
+                            if !res_ty.can_trans_to_target_type(&field_ty) {
+                                return Err(SemanticError::TypeMismatch);
+                            }
+                        }
+                    }
+
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(
+                            self.resolve_ty_in_scope_by_symbol(&first.ident.symbol, id),
+                        ),
+                        category: ExprCategory::Not,
+                    }))
+                }
+            },
+            TypeKind::Enum { fields: _ }
+            | TypeKind::Trait {
+                methods: _,
+                constants: _,
+            } => Err(SemanticError::NotStructType),
+        }
     }
 
     fn visit_repeat_expr(&mut self, RepeatExpr(expr, const_expr): &RepeatExpr) -> Self::ExprRes {
