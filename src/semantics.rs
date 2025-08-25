@@ -10,18 +10,12 @@ use std::{
 
 use crate::{
     ast::{
-        Crate, Ident, Mutability, NodeId, Symbol,
         expr::{
-            BinOp, BinaryExpr, CallExpr, Expr, FieldExpr, LitKind, MethodCallExpr, PathExpr, UnOp,
-        },
-        item::{
+            BinOp, BinaryExpr, BlockExpr, CallExpr, Expr, FieldExpr, IfExpr, LitKind, LoopExpr, MethodCallExpr, PathExpr, RepeatExpr, RetExpr, UnOp, WhileExpr
+        }, item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem,
-        },
-        pat::IdentPat,
-        path::{Path, PathSegment},
-        stmt::{LocalKind, StmtKind},
-        ty::{MutTy, PathTy, RefTy, Ty, TyKind},
+        }, pat::IdentPat, path::{Path, PathSegment}, stmt::{LocalKind, StmtKind}, ty::{MutTy, PathTy, RefTy, Ty, TyKind}, Crate, Ident, Mutability, NodeId, Symbol
     },
     semantics::{const_eval::ConstEvalError, visitor::Visitor},
 };
@@ -67,6 +61,9 @@ pub enum SemanticError {
     NonMethodCall,
     MismatchArgNum,
     ImmutableVar,
+    NoLoopScope,
+    BreakWithValue,
+    NoFnScope,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -217,6 +214,68 @@ impl ResolvedTy {
     pub fn into_ref(self) -> Self {
         Self::Ref(Box::new(self), Mutability::Not)
     }
+
+    // 包括相等类型 + 其他情况
+    pub fn can_trans_to_target_type(&self, target: &Self) -> bool {
+        if self == target {
+            return true;
+        }
+
+        match (self, target) {
+            (ResolvedTy::BulitIn(symbol1, args1), ResolvedTy::BulitIn(symbol2, args2)) => {
+                let arg_same = args1.iter().zip(args2.iter()).all(|(x, y)| x == y);
+                if arg_same && symbol1 == symbol2 {
+                    true
+                } else {
+                    if *self == ResolvedTy::integer() && target.is_number_type() {
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+            (ResolvedTy::Named(_), ResolvedTy::Named(_)) => false,
+            (
+                ResolvedTy::Ref(resolved_ty1, mutability1),
+                ResolvedTy::Ref(resolved_ty2, mutability2),
+            ) => match (mutability1, mutability2) {
+                (Mutability::Not, Mutability::Mut) => false,
+                _ => resolved_ty1.can_trans_to_target_type(&resolved_ty2),
+            },
+            (ResolvedTy::Array(resolved_ty1, len1), ResolvedTy::Array(resolved_ty2, len2)) => {
+                if len1 == len2 {
+                    resolved_ty1.can_trans_to_target_type(&resolved_ty2)
+                } else {
+                    false
+                }
+            }
+            (ResolvedTy::Slice(resolved_ty1), ResolvedTy::Slice(resolved_ty2)) => {
+                resolved_ty1.can_trans_to_target_type(&resolved_ty2)
+            }
+            (ResolvedTy::Tup(items1), ResolvedTy::Tup(items2)) => {
+                if items1.len() != items2.len() {
+                    return false;
+                }
+                for (x, y) in items1.iter().zip(items2.iter()) {
+                    if !x.can_trans_to_target_type(y) {
+                        return false;
+                    }
+                }
+                true
+            }
+            (ResolvedTy::Fn(_, _), ResolvedTy::Fn(_, _)) => {
+                unimplemented!()
+            }
+            (ResolvedTy::Infer, ResolvedTy::Infer) => {
+                unimplemented!()
+            }
+            (ResolvedTy::ImplicitSelf, ResolvedTy::ImplicitSelf) => {
+                panic!("Impossible")
+            }
+            (ResolvedTy::Any, _) => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -305,6 +364,8 @@ pub enum ScopeKind {
     Trait(TypeId),
     Impl(TypeId),
     Fn { ret_ty: TypeId },
+    Loop { ret_ty: Option<TypeId> },
+    CycleExceptLoop,
 }
 
 #[derive(Debug)]
@@ -374,6 +435,41 @@ impl SemanticAnalyzer {
 
     fn get_scope(&self) -> &Scope {
         self.scopes.get(&self.current_scope).unwrap()
+    }
+
+    fn get_cycle_scope_mut(&mut self) -> Result<&mut Scope, SemanticError> {
+        let mut id = self.current_scope;
+
+        loop {
+            let scope = self.scopes.get(&id).unwrap();
+            match scope.kind {
+                ScopeKind::Lambda => {}
+                ScopeKind::Root
+                | ScopeKind::Trait(_)
+                | ScopeKind::Impl(_)
+                | ScopeKind::Fn { ret_ty: _ } => return Err(SemanticError::NoLoopScope),
+                ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {
+                    return Ok(self.scopes.get_mut(&id).unwrap());
+                }
+            }
+            id = scope.father;
+        }
+    }
+
+    fn get_fn_scope(&self) -> Result<&Scope, SemanticError> {
+        let mut id = self.current_scope;
+
+        loop {
+            let scope = self.scopes.get(&id).unwrap();
+            match scope.kind {
+                ScopeKind::Lambda | ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {}
+                ScopeKind::Root | ScopeKind::Trait(_) | ScopeKind::Impl(_) => {
+                    return Err(SemanticError::NoFnScope);
+                }
+                ScopeKind::Fn { ret_ty: _ } => return Ok(scope),
+            }
+            id = scope.father;
+        }
     }
 
     fn add_scope(&mut self, id: NodeId, kind: ScopeKind) -> Result<(), SemanticError> {
@@ -554,11 +650,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn get_builtin_methods(
-        &self,
-        ty: &ResolvedTy,
-        is_methods_call: bool,
-    ) -> Vec<(Symbol, TypeId)> {
+    fn get_builtin_methods(&self, ty: &ResolvedTy, is_methods_call: bool) -> Vec<(Symbol, TypeId)> {
         let mut ret = Vec::new();
 
         let ref_implicit_self = if is_methods_call {
@@ -1043,6 +1135,54 @@ impl SemanticAnalyzer {
             (false, false, false) => Ok(ExprCategory::Place(Mutability::Mut)),
         }
     }
+
+    fn visit_block_expr_with_kind(
+        &mut self,
+        expr: &BlockExpr,
+        kind: ScopeKind,
+    ) -> Result<Option<ExprResult>, SemanticError> {
+        let old_ast_id = self.current_ast_id;
+        self.current_ast_id = expr.id;
+        let mut ret;
+        match self.stage {
+            AnalyzeStage::SymbolCollect => {
+                self.add_scope(self.current_ast_id, kind)?;
+                ret = None
+            }
+            AnalyzeStage::Definition => {
+                ret = None;
+            }
+            AnalyzeStage::Body => ret = Some(Self::unit_expr_result()),
+        }
+
+        self.enter_scope(self.current_ast_id)?;
+        for stmt in &expr.stmts {
+            // parser 阶段就保证只有最后一条 stmt 有可能不是 unit type
+            ret = self.visit_stmt(stmt)?;
+        }
+
+        if let Some(ret_res) = &mut ret {
+            match &self.get_scope().kind {
+                ScopeKind::Loop { ret_ty } => {
+                    if ret_res.type_id != Self::unit_type() {
+                        return Err(SemanticError::TypeMismatch);
+                    }
+                    if let Some(ret_ty) = ret_ty {
+                        ret_res.type_id = *ret_ty;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        self.exit_scope()?;
+
+        self.current_ast_id = old_ast_id;
+        Ok(ret.map(|x| ExprResult {
+            type_id: x.type_id,
+            category: ExprCategory::Not,
+        }))
+    }
 }
 
 impl Visitor for SemanticAnalyzer {
@@ -1139,12 +1279,12 @@ impl Visitor for SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                self.add_scope(self.current_ast_id, ScopeKind::Fn { ret_ty: TypeId(0) });
+                self.add_scope(self.current_ast_id, ScopeKind::Fn { ret_ty: TypeId(0) })?;
             }
             AnalyzeStage::Definition => {}
             AnalyzeStage::Body => {}
         }
-        self.enter_scope(self.current_ast_id);
+        self.enter_scope(self.current_ast_id)?;
         match self.stage {
             AnalyzeStage::SymbolCollect => {}
             AnalyzeStage::Definition => {
@@ -1181,7 +1321,7 @@ impl Visitor for SemanticAnalyzer {
         if let Some(b) = body {
             self.visit_block_expr(b)?;
         }
-        self.exit_scope();
+        self.exit_scope()?;
         Ok(())
     }
 
@@ -1862,20 +2002,74 @@ impl Visitor for SemanticAnalyzer {
         Err(SemanticError::Unimplemented)
     }
 
-    fn visit_if_expr(&mut self, expr: &crate::ast::expr::IfExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_if_expr(&mut self, IfExpr(condition, take, els): &IfExpr) -> Self::ExprRes {
+        let con_res = self.visit_expr(&condition)?;
+        let take_res = self.visit_block_expr(&take)?;
+        let els_res = match els {
+            Some(els) => self.visit_expr(els)?,
+            None => None,
+        };
+
+        match (con_res, take_res) {
+            (Some(con_res), Some(take_res)) => {
+                no_assignee!(con_res.category);
+                no_assignee!(take_res.category);
+
+                let con_ty = self.get_type_by_id(con_res.type_id);
+                if con_ty != ResolvedTy::bool() {
+                    return Err(SemanticError::TypeMismatch);
+                }
+
+                if let Some(els_res) = els_res {
+                    no_assignee!(els_res.category);
+                    Ok(Some(ExprResult {
+                        type_id: self.utilize_ty(vec![take_res.type_id, els_res.type_id])?,
+                        category: ExprCategory::Not,
+                    }))
+                } else {
+                    if take_res.type_id == Self::unit_type() {
+                        Ok(Some(Self::unit_expr_result()))
+                    } else {
+                        Err(SemanticError::TypeMismatch)
+                    }
+                }
+            }
+            (None, None) => Ok(None),
+            _ => panic!("Impossible"),
+        }
     }
 
-    fn visit_while_expr(&mut self, expr: &crate::ast::expr::WhileExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_while_expr(&mut self, WhileExpr(condition, body): &WhileExpr) -> Self::ExprRes {
+        let con_res = self.visit_expr(&condition)?;
+        let body_res = self.visit_block_expr_with_kind(&body, ScopeKind::CycleExceptLoop)?;
+
+        match (con_res, body_res) {
+            (Some(con_res), Some(body_res)) => {
+                no_assignee!(con_res.category);
+                no_assignee!(body_res.category);
+
+                let con_ty = self.get_type_by_id(con_res.type_id);
+                if con_ty != ResolvedTy::bool() {
+                    return Err(SemanticError::TypeMismatch);
+                }
+
+                if body_res.type_id == Self::unit_type() {
+                    Ok(Some(Self::unit_expr_result()))
+                } else {
+                    Err(SemanticError::TypeMismatch)
+                }
+            }
+            (None, None) => Ok(None),
+            _ => panic!("Impossible"),
+        }
     }
 
     fn visit_for_loop_expr(&mut self, _: &crate::ast::expr::ForLoopExpr) -> Self::ExprRes {
         Err(SemanticError::Unimplemented)
     }
 
-    fn visit_loop_expr(&mut self, expr: &crate::ast::expr::LoopExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_loop_expr(&mut self, LoopExpr(block): &LoopExpr) -> Self::ExprRes {
+        self.visit_block_expr_with_kind(&block, ScopeKind::Loop { ret_ty: None })
     }
 
     fn visit_match_expr(&mut self, _: &crate::ast::expr::MatchExpr) -> Self::ExprRes {
@@ -1883,29 +2077,7 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_block_expr(&mut self, expr: &crate::ast::expr::BlockExpr) -> Self::ExprRes {
-        let old_ast_id = self.current_ast_id;
-        self.current_ast_id = expr.id;
-        let mut ret;
-        match self.stage {
-            AnalyzeStage::SymbolCollect => {
-                self.add_scope(self.current_ast_id, ScopeKind::Lambda)?;
-                ret = None
-            }
-            AnalyzeStage::Definition => {
-                ret = None;
-            }
-            AnalyzeStage::Body => ret = Some(Self::unit_expr_result()),
-        }
-
-        self.enter_scope(self.current_ast_id)?;
-        for stmt in &expr.stmts {
-            // parser 保证只有最后一条 stmt 有可能不是 unit type
-            ret = self.visit_stmt(stmt)?;
-        }
-        self.exit_scope()?;
-
-        self.current_ast_id = old_ast_id;
-        Ok(ret)
+        self.visit_block_expr_with_kind(expr, ScopeKind::Lambda)
     }
 
     fn visit_assign_expr(&mut self, expr: &crate::ast::expr::AssignExpr) -> Self::ExprRes {
@@ -2051,22 +2223,98 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_break_expr(&mut self, expr: &crate::ast::expr::BreakExpr) -> Self::ExprRes {
-        todo!()
+        let res = if let Some(expr) = &expr.0 {
+            self.visit_expr(expr)?
+        } else {
+            None
+        };
+
+        match self.stage {
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => {
+                debug_assert!(matches!(res, None));
+                Ok(None)
+            }
+            AnalyzeStage::Body => {
+                let target_scope = self.get_cycle_scope_mut()?;
+
+                match &mut target_scope.kind {
+                    ScopeKind::Loop { ret_ty } => match (res, &ret_ty) {
+                        (None, None) => {}
+                        (None, Some(exist)) => {
+                            if *exist != Self::unit_type() {
+                                return Err(SemanticError::TypeMismatch);
+                            }
+                        }
+                        (Some(new), None) => {
+                            no_assignee!(new.category);
+                            *ret_ty = Some(new.type_id)
+                        }
+                        (Some(new), Some(exist)) => {
+                            no_assignee!(new.category);
+                            if new.type_id != *exist {
+                                return Err(SemanticError::TypeMismatch);
+                            }
+                        }
+                    },
+                    ScopeKind::CycleExceptLoop => {
+                        if expr.0.is_some() {
+                            return Err(SemanticError::BreakWithValue);
+                        }
+                    }
+                    _ => panic!("Impossible"),
+                }
+
+                Ok(Some(Self::unit_expr_result())) // 没有 Never Type，暂时使用 Unit Type 代替
+            }
+        }
     }
 
-    fn visit_continue_expr(&mut self, expr: &crate::ast::expr::ContinueExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_continue_expr(&mut self, _: &crate::ast::expr::ContinueExpr) -> Self::ExprRes {
+        match self.stage {
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition => Ok(None),
+            AnalyzeStage::Body => {
+                self.get_cycle_scope_mut()?;
+                Ok(Some(Self::unit_expr_result()))
+            }
+        }
     }
 
-    fn visit_ret_expr(&mut self, expr: &crate::ast::expr::RetExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_ret_expr(&mut self, RetExpr(expr): &RetExpr) -> Self::ExprRes {
+        let res = if let Some(expr) = expr {
+            self.visit_expr(expr)?
+        } else {
+            match self.stage {
+                AnalyzeStage::Body => Some(Self::unit_expr_result()),
+                _ => None,
+            }
+        };
+
+        match res {
+            Some(res) => {
+                no_assignee!(res.category);
+                let scope = self.get_fn_scope()?;
+                let ScopeKind::Fn { ret_ty: target_id } = scope.kind else {
+                    panic!("Impossible")
+                };
+
+                let ret_ty = self.get_type_by_id(res.type_id);
+                let target_ty = self.get_type_by_id(target_id);
+
+                if !ret_ty.can_trans_to_target_type(&target_ty) {
+                    Err(SemanticError::TypeMismatch)
+                } else {
+                    Ok(Some(Self::unit_expr_result()))
+                }
+            }
+            None => Ok(None),
+        }
     }
 
     fn visit_struct_expr(&mut self, expr: &crate::ast::expr::StructExpr) -> Self::ExprRes {
         todo!()
     }
 
-    fn visit_repeat_expr(&mut self, expr: &crate::ast::expr::RepeatExpr) -> Self::ExprRes {
+    fn visit_repeat_expr(&mut self, RepeatExpr(expr, const_expr): &RepeatExpr) -> Self::ExprRes {
         todo!()
     }
 

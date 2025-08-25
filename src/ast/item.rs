@@ -3,7 +3,7 @@ use crate::{
         ASTError, ASTErrorKind, ASTResult, Eatable, Ident, NodeId, OptionEatable, Span,
         expr::{AnonConst, BlockExpr, Expr},
         generic::{GenericBounds, Generics},
-        pat::{Pat, PatKind, RefPat},
+        pat::Pat,
         path::Path,
         ty::{Ty, TyKind},
     },
