@@ -90,6 +90,7 @@ pub enum SemanticError {
     IncompatibleFn,
     NotAllTraitItemsImplemented,
     MultipleApplicable,
+    LocalVarOutOfFn,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -339,7 +340,7 @@ pub struct ImplInfo {
     pub constants: HashMap<Symbol, Constant>,
 }
 
-enum ImplInfoItem<'a> {
+pub enum ImplInfoItem<'a> {
     Method(&'a FnSig),
     Constant(&'a Constant),
 }
@@ -472,10 +473,12 @@ pub enum AnalyzeStage {
     Body,
 }
 
+type Impls = (ImplInfo, HashMap<FullName, ImplInfo>);
+
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
     type_table: RefCell<TypeTable>,
-    impls: HashMap<TypeId, (ImplInfo, HashMap<FullName, ImplInfo>)>, // (本征 impl, trait impl)
+    impls: HashMap<TypeId, Impls>, // (本征 impl, trait impl)
     scopes: HashMap<NodeId, Scope>,
     current_scope: NodeId,
     stage: AnalyzeStage,
@@ -596,10 +599,19 @@ impl SemanticAnalyzer {
         Ok(self.intern_type(resolved))
     }
 
-    fn add_value(&mut self, ident: Symbol, var: Variable) -> Result<(), SemanticError> {
+    fn add_value(
+        &mut self,
+        ident: Symbol,
+        var: Variable,
+        shadow: bool,
+    ) -> Result<(), SemanticError> {
         let s = self.get_scope_mut();
 
-        s.values.insert(ident, var); // 允许变量遮蔽
+        if !shadow && s.values.contains_key(&ident) {
+            return Err(SemanticError::MultiDefined);
+        }
+
+        s.values.insert(ident, var);
 
         Ok(())
     }
@@ -616,8 +628,8 @@ impl SemanticAnalyzer {
                 return Err(SemanticError::UndefinedScope);
             };
 
-            if scope.types.contains_key(ident) {
-                return Ok((id, scope.types.get(ident).unwrap()));
+            if let Some(info) = scope.types.get(ident) {
+                return Ok((id, info));
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
@@ -665,6 +677,7 @@ impl SemanticAnalyzer {
         &self,
         ident: &Symbol,
         mut id: NodeId,
+        mut inculde_local: bool,
     ) -> Result<(NodeId, &Variable), SemanticError> {
         loop {
             let scope = if let Some(scope) = self.scopes.get(&id) {
@@ -673,90 +686,23 @@ impl SemanticAnalyzer {
                 return Err(SemanticError::UndefinedScope);
             };
 
-            if scope.types.contains_key(ident) {
-                return Ok((id, scope.values.get(ident).unwrap()));
+            if let Some(var) = scope.values.get(ident) {
+                if !inculde_local && matches!(var.kind, VariableKind::Decl | VariableKind::Inited) {
+                    return Err(SemanticError::LocalVarOutOfFn);
+                }
+                return Ok((id, var));
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
                 return Err(SemanticError::UnknownVariable);
             } else {
                 id = scope.father;
+
+                if matches!(scope.kind, ScopeKind::Fn { ret_ty: _ }) {
+                    inculde_local &= false;
+                }
             }
         }
-    }
-
-    fn search_value_from_mut(
-        &mut self,
-        ident: &Symbol,
-        mut id: NodeId,
-    ) -> Result<(NodeId, &mut Variable), SemanticError> {
-        loop {
-            let scope = if let Some(scope) = self.scopes.get_mut(&id) {
-                scope
-            } else {
-                return Err(SemanticError::UndefinedScope);
-            };
-
-            if scope.types.contains_key(ident) {
-                return Ok((
-                    id,
-                    self.scopes
-                        .get_mut(&id)
-                        .unwrap()
-                        .values
-                        .get_mut(ident)
-                        .unwrap(),
-                ));
-            }
-
-            if matches!(scope.kind, ScopeKind::Root) {
-                return Err(SemanticError::UnknownVariable);
-            } else {
-                id = scope.father;
-            }
-        }
-    }
-
-    fn get_builtin_methods(&self, ty: &ResolvedTy, is_methods_call: bool) -> Vec<(Symbol, TypeId)> {
-        let mut ret = Vec::new();
-
-        let ref_implicit_self = if is_methods_call {
-            ResolvedTy::ref_implicit_self()
-        } else {
-            ty.clone().r#ref()
-        };
-
-        if *ty == ResolvedTy::u32() || *ty == ResolvedTy::usize() {
-            ret.push((
-                Symbol("to_string".to_string()),
-                self.intern_type(ResolvedTy::Fn(
-                    vec![ref_implicit_self.clone()],
-                    Box::new(ResolvedTy::string()),
-                )),
-            ));
-        }
-
-        if *ty == ResolvedTy::string() {
-            ret.push((
-                Symbol("as_str".to_string()),
-                self.intern_type(ResolvedTy::Fn(
-                    vec![ref_implicit_self.clone()],
-                    Box::new(ResolvedTy::ref_str()),
-                )),
-            ))
-        }
-
-        if *ty == ResolvedTy::string() || *ty == ResolvedTy::str() {
-            ret.push((
-                Symbol("len".to_string()),
-                self.intern_type(ResolvedTy::Fn(
-                    vec![ref_implicit_self.clone()],
-                    Box::new(ResolvedTy::u32()),
-                )),
-            ))
-        }
-
-        ret
     }
 
     // fields 不包括 method，field 会自动 deref
@@ -813,6 +759,7 @@ impl SemanticAnalyzer {
         }
     }
 
+    // TODO: 添加 builtin
     fn get_type_items_noderef(
         &self,
         id: TypeId,
@@ -821,7 +768,7 @@ impl SemanticAnalyzer {
     ) -> Result<Option<TypeId>, SemanticError> {
         let ty = self.get_type_by_id(id);
 
-        if let Some((inherent_impl, trait_impls)) = self.impls.get(&id) {
+        if let Some((inherent_impl, trait_impls)) = self.get_impl(&id) {
             match inherent_impl.get(name) {
                 Some(ImplInfoItem::Constant(constant)) => {
                     if !is_methods_call {
@@ -900,35 +847,6 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn add_fn_item_to_vec(
-        &self,
-        ret: &mut Vec<(Symbol, TypeId)>,
-        methods: &HashMap<Symbol, FnSig>,
-        self_ty: &ResolvedTy,
-        only_methods: bool,
-    ) {
-        for (symbol, method) in methods {
-            let ty = self.get_type_by_id(method.type_id);
-            match (only_methods, ty.is_method()) {
-                (true, true) | (false, false) => ret.push((symbol.clone(), method.type_id)),
-                (true, false) => {}
-                (false, true) => {
-                    ret.push((symbol.clone(), self.intern_type(ty.method_to_func(self_ty))))
-                }
-            }
-        }
-    }
-
-    fn add_const_item_to_vec(
-        &self,
-        ret: &mut Vec<(Symbol, TypeId)>,
-        constants: &HashMap<Symbol, Constant>,
-    ) {
-        for (symbol, constant) in constants {
-            ret.push((symbol.clone(), constant.ty));
-        }
-    }
-
     fn search_type_mut(
         &mut self,
         ident: &Symbol,
@@ -961,16 +879,10 @@ impl SemanticAnalyzer {
         self.search_type_from(ident, self.current_scope)
     }
 
-    fn search_value_mut(
-        &mut self,
-        ident: &Symbol,
-    ) -> Result<(NodeId, &mut Variable), SemanticError> {
-        self.search_value_from_mut(ident, self.current_scope)
-    }
-
     // 返回值为 (Scope Id, 变量类型)
+    // TODO: 当出了 fn 等 scope 时应看不到之外的局部变量
     fn search_value(&self, ident: &Symbol) -> Result<(NodeId, &Variable), SemanticError> {
-        self.search_value_from(ident, self.current_scope)
+        self.search_value_from(ident, self.current_scope, true)
     }
 
     fn get_type_info(&self, full_name: &FullName) -> &TypeInfo {
@@ -1060,23 +972,6 @@ impl SemanticAnalyzer {
 
     fn get_self_type(&self) -> Result<TypeId, SemanticError> {
         self.get_self_type_from(self.current_scope)
-    }
-
-    fn resolve_implicit_self<'a>(&self, ty: &ResolvedTy) -> Result<ResolvedTy, SemanticError> {
-        match ty {
-            ResolvedTy::Ref(resolved_ty, mutability) => {
-                if matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf) {
-                    Ok(ResolvedTy::Ref(
-                        Box::new(self.get_type_by_id(self.get_self_type()?).clone()),
-                        *mutability,
-                    ))
-                } else {
-                    Err(SemanticError::TypeMismatch)
-                }
-            }
-            ResolvedTy::ImplicitSelf => Ok(self.get_type_by_id(self.get_self_type()?).clone()),
-            _ => Err(SemanticError::TypeMismatch),
-        }
     }
 
     // 这个函数不会展开隐式 self（为了保留函数参数中的 self），但是会展开 Self
@@ -1379,6 +1274,119 @@ impl SemanticAnalyzer {
         }
         Ok((methods, constants))
     }
+
+    fn get_builtin_impl(&self, id: TypeId) -> Option<Impls> {
+        let ty = self.get_type_by_id(id);
+
+        let len_method: ResolvedTy = ResolvedTy::Fn(
+            vec![ResolvedTy::ref_implicit_self()],
+            Box::new(ResolvedTy::usize()),
+        );
+        let len_method_id = self.intern_type(len_method);
+        let len = (
+            Symbol("len".to_string()),
+            FnSig {
+                type_id: len_method_id,
+                is_placeholder: false,
+            },
+        );
+        let to_string_method = ResolvedTy::Fn(
+            vec![ResolvedTy::ref_implicit_self()],
+            Box::new(ResolvedTy::string()),
+        );
+        let to_string_method_id = self.intern_type(to_string_method);
+        let to_string = (
+            Symbol("to_string".to_string()),
+            FnSig {
+                type_id: to_string_method_id,
+                is_placeholder: false,
+            },
+        );
+        let as_str_method = ResolvedTy::Fn(
+            vec![ResolvedTy::ref_implicit_self()],
+            Box::new(ResolvedTy::ref_str()),
+        );
+        let as_str_method_id = self.intern_type(as_str_method);
+        let as_str = (
+            Symbol("as_str".to_string()),
+            FnSig {
+                type_id: as_str_method_id,
+                is_placeholder: false,
+            },
+        );
+
+        match &ty {
+            ResolvedTy::BulitIn(_, _) => {
+                if ty == ResolvedTy::u32() || ty == ResolvedTy::usize() {
+                    Some((
+                        ImplInfo {
+                            self_ty: id,
+                            methods: HashMap::from([to_string]),
+                            constants: HashMap::new(),
+                        },
+                        HashMap::new(),
+                    ))
+                } else if ty == ResolvedTy::string() {
+                    Some((
+                        ImplInfo {
+                            self_ty: id,
+                            methods: HashMap::from([as_str, len]),
+                            constants: HashMap::new(),
+                        },
+                        HashMap::new(),
+                    ))
+                } else if ty == ResolvedTy::str() {
+                    Some((
+                        ImplInfo {
+                            self_ty: id,
+                            methods: HashMap::from([len]),
+                            constants: HashMap::new(),
+                        },
+                        HashMap::new(),
+                    ))
+                } else {
+                    None
+                }
+            }
+            ResolvedTy::Array(_, _) | ResolvedTy::Slice(_) => Some((
+                ImplInfo {
+                    self_ty: id,
+                    methods: HashMap::from([len]),
+                    constants: HashMap::new(),
+                },
+                HashMap::new(),
+            )),
+            ResolvedTy::Ref(_, _)
+            | ResolvedTy::Named(_)
+            | ResolvedTy::Tup(_)
+            | ResolvedTy::Fn(_, _)
+            | ResolvedTy::Infer
+            | ResolvedTy::ImplicitSelf
+            | ResolvedTy::Any => None,
+        }
+    }
+
+    fn get_impl(&self, id: &TypeId) -> Option<&Impls> {
+        self.impls.get(id)
+    }
+
+    fn get_impl_mut(&mut self, id: &TypeId) -> &mut Impls {
+        if !self.impls.contains_key(&id) {
+            self.impls.insert(
+                *id,
+                (
+                    ImplInfo {
+                        self_ty: *id,
+                        methods: HashMap::new(),
+                        constants: HashMap::new(),
+                    },
+                    HashMap::new(),
+                ),
+            );
+        }
+
+        self.impls.get_mut(&id).unwrap()
+    }
 }
 
 impl Visitor for SemanticAnalyzer {
@@ -1457,6 +1465,7 @@ impl Visitor for SemanticAnalyzer {
                             mutbl: Mutability::Not,
                             kind: VariableKind::Constant(value),
                         },
+                        false,
                     )?;
                 }
             }
@@ -1503,6 +1512,7 @@ impl Visitor for SemanticAnalyzer {
                             mutbl: Mutability::Not,
                             kind: VariableKind::Fn,
                         },
+                        false,
                     )?;
                 }
 
@@ -1689,20 +1699,6 @@ impl Visitor for SemanticAnalyzer {
                 let self_ty = self.resolve_ty(&self_ty)?;
                 let self_ty_id = self.intern_type(self_ty);
 
-                if !self.impls.contains_key(&self_ty_id) {
-                    self.impls.insert(
-                        self_ty_id,
-                        (
-                            ImplInfo {
-                                self_ty: self_ty_id,
-                                methods: HashMap::new(),
-                                constants: HashMap::new(),
-                            },
-                            HashMap::new(),
-                        ),
-                    );
-                }
-
                 let (methods, constants) = self.resolve_assoc_items(items, false)?;
 
                 match of_trait {
@@ -1763,7 +1759,7 @@ impl Visitor for SemanticAnalyzer {
                             return Err(SemanticError::NotAllTraitItemsImplemented);
                         }
 
-                        let (_, trait_impls) = self.impls.get_mut(&self_ty_id).unwrap();
+                        let (_, trait_impls) = self.get_impl_mut(&self_ty_id);
 
                         if trait_impls.contains_key(&full_name) {
                             return Err(SemanticError::MultiImplemented);
@@ -1779,7 +1775,7 @@ impl Visitor for SemanticAnalyzer {
                         );
                     }
                     None => {
-                        let (inherent_impl, _) = self.impls.get_mut(&self_ty_id).unwrap();
+                        let (inherent_impl, _) = self.get_impl_mut(&self_ty_id);
 
                         for (symbol, sig) in methods {
                             if inherent_impl.contains_key(&symbol) {
@@ -1855,6 +1851,7 @@ impl Visitor for SemanticAnalyzer {
                                 mutbl: mutbl,
                                 kind: VariableKind::Inited,
                             },
+                            true,
                         )?;
                     }
                 }
@@ -1881,8 +1878,11 @@ impl Visitor for SemanticAnalyzer {
                                         mutbl: mutbl,
                                         kind: VariableKind::Inited,
                                     },
+                                    true,
                                 )?;
                             }
+                            // TODO: binding 时要进行检查：不能遮蔽 const, enum, struct
+                            // binding 还应该检查没有重名，但删减过后的 spec 不会出现重名
                         }
                     }
                     None => {}
