@@ -89,6 +89,7 @@ pub enum SemanticError {
     NotTraitMember,
     IncompatibleFn,
     NotAllTraitItemsImplemented,
+    MultipleApplicable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,7 +98,7 @@ pub struct TypeId(usize);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FullName(Vec<Symbol>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum ResolvedTy {
     BulitIn(Symbol, Vec<ResolvedTy>),
     Named(FullName),
@@ -196,7 +197,7 @@ impl ResolvedTy {
             || *self == Self::isize()
     }
 
-    pub fn is_implicit_self(&self) -> bool {
+    pub fn is_implicit_self_or_ref_implicit_self(&self) -> bool {
         match self {
             ResolvedTy::Ref(resolved_ty, _) => {
                 matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf)
@@ -208,13 +209,10 @@ impl ResolvedTy {
 
     pub fn is_method(&self) -> bool {
         match self {
-            ResolvedTy::Fn(tys, _) => match tys.first() {
-                Some(ResolvedTy::ImplicitSelf) => true,
-                Some(ResolvedTy::Ref(inref, _)) => {
-                    matches!(inref.as_ref(), ResolvedTy::ImplicitSelf)
-                }
-                _ => false,
-            },
+            ResolvedTy::Fn(tys, _) => tys
+                .first()
+                .map(|x| x.is_implicit_self_or_ref_implicit_self())
+                .unwrap_or(false),
             _ => false,
         }
     }
@@ -239,7 +237,7 @@ impl ResolvedTy {
         ret
     }
 
-    pub fn into_ref(self) -> Self {
+    pub fn r#ref(self) -> Self {
         Self::Ref(Box::new(self), Mutability::Not)
     }
 
@@ -341,9 +339,21 @@ pub struct ImplInfo {
     pub constants: HashMap<Symbol, Constant>,
 }
 
+enum ImplInfoItem<'a> {
+    Method(&'a FnSig),
+    Constant(&'a Constant),
+}
+
 impl ImplInfo {
     pub fn contains_key(&self, key: &Symbol) -> bool {
         self.methods.contains_key(key) || self.constants.contains_key(key)
+    }
+
+    pub fn get(&self, key: &Symbol) -> Option<ImplInfoItem> {
+        self.methods
+            .get(key)
+            .map(ImplInfoItem::Method)
+            .or(self.constants.get(key).map(ImplInfoItem::Constant))
     }
 }
 
@@ -387,6 +397,32 @@ pub struct Variable {
     pub ty: TypeId,
     pub mutbl: Mutability,
     pub kind: VariableKind,
+}
+
+#[derive(Debug)]
+pub enum DerefLevel {
+    Not,
+    Deref(Mutability),
+}
+
+impl DerefLevel {
+    pub fn merge(self, other: Self) -> Self {
+        match (self, other) {
+            (DerefLevel::Not, DerefLevel::Not) => DerefLevel::Not,
+            (DerefLevel::Not, DerefLevel::Deref(mutability)) => DerefLevel::Deref(mutability),
+            (DerefLevel::Deref(mutability), DerefLevel::Not) => DerefLevel::Deref(mutability),
+            (DerefLevel::Deref(mutability1), DerefLevel::Deref(mutability2)) => {
+                DerefLevel::Deref(Mutability::merge(mutability1, mutability2))
+            }
+        }
+    }
+
+    pub fn get_mutbl(&self) -> Mutability {
+        match self {
+            DerefLevel::Not => Mutability::Mut,
+            DerefLevel::Deref(mutability) => *mutability,
+        }
+    }
 }
 
 #[derive(Debug, EnumAsInner)]
@@ -687,7 +723,7 @@ impl SemanticAnalyzer {
         let ref_implicit_self = if is_methods_call {
             ResolvedTy::ref_implicit_self()
         } else {
-            ty.clone().into_ref()
+            ty.clone().r#ref()
         };
 
         if *ty == ResolvedTy::u32() || *ty == ResolvedTy::usize() {
@@ -723,28 +759,31 @@ impl SemanticAnalyzer {
         ret
     }
 
-    // fields 不包括 method
-    fn get_type_fields(&self, id: TypeId) -> Result<Vec<(Symbol, Variable)>, SemanticError> {
+    // fields 不包括 method，field 会自动 deref
+    fn get_type_fields(
+        &self,
+        id: TypeId,
+        symbol: &Symbol,
+    ) -> Result<(Variable, DerefLevel), SemanticError> {
         let ty = self.get_type_by_id(id);
 
-        let mut ret = Vec::new();
-
         match &ty {
-            ResolvedTy::BulitIn(_, _) => {}
             ResolvedTy::Named(symbols) => {
                 let info = self.get_type_info(symbols);
                 match &info.kind {
                     TypeKind::Placeholder => panic!("Impossible!"),
                     TypeKind::Struct { fields } => {
                         for (ident, field_id) in fields {
-                            ret.push((
-                                ident.clone(),
-                                Variable {
-                                    ty: *field_id,
-                                    mutbl: Mutability::Mut,
-                                    kind: VariableKind::Inited,
-                                },
-                            ));
+                            if ident == symbol {
+                                return Ok((
+                                    Variable {
+                                        ty: *field_id,
+                                        mutbl: Mutability::Mut,
+                                        kind: VariableKind::Inited,
+                                    },
+                                    DerefLevel::Not,
+                                ));
+                            }
                         }
                     }
                     TypeKind::Enum { fields: _ } => {}
@@ -753,104 +792,112 @@ impl SemanticAnalyzer {
                         constants: _,
                     } => {}
                 }
+
+                Err(SemanticError::NonProvidedField)
             }
-            ResolvedTy::Ref(resolved_ty, _) => {
+            ResolvedTy::Ref(resolved_ty, mutability) => {
                 let derefed_id = self.intern_type(resolved_ty.as_ref().clone());
-                ret.append(&mut self.get_type_fields(derefed_id)?);
-                // 会不断尝试 deref
-            }
-            ResolvedTy::Array(_, _) | ResolvedTy::Slice(_) => {
-                ret.push((
-                    Symbol("len".to_string()),
-                    Variable {
-                        ty: self.intern_type(ResolvedTy::Fn(
-                            vec![ResolvedTy::ref_implicit_self()],
-                            Box::new(ResolvedTy::u32()),
-                        )),
-                        mutbl: Mutability::Not,
-                        kind: VariableKind::Fn,
-                    },
-                ));
-            }
-            ResolvedTy::ImplicitSelf => {
-                ret.append(&mut self.get_type_fields(self.get_self_type()?)?);
-            }
-            ResolvedTy::Tup(_) | ResolvedTy::Fn(_, _) | ResolvedTy::Infer | ResolvedTy::Any => {}
-        }
 
-        Ok(ret)
-    }
+                let (var, deref_level) = self.get_type_fields(derefed_id, symbol)?;
 
-    // item 包含 method
-    // TODO：处理不同 Trait 重名的情况
-    fn get_type_items(
-        &self,
-        id: TypeId,
-        is_methods_call: bool,
-    ) -> Result<Vec<(Symbol, TypeId)>, SemanticError> {
-        let ty = self.get_type_by_id(id).clone();
-
-        let mut ret = Vec::new();
-
-        match &ty {
-            ResolvedTy::BulitIn(_, _) => {
-                let ty = ty.clone();
-                ret.append(&mut self.get_builtin_methods(&ty, is_methods_call));
+                Ok((var, deref_level.merge(DerefLevel::Deref(*mutability))))
             }
-            ResolvedTy::Named(symbols) => {
-                let info = self.get_type_info(symbols);
-                match &info.kind {
-                    TypeKind::Placeholder => panic!("Impossible!"),
-                    TypeKind::Struct { fields: _ } => {}
-                    TypeKind::Enum { fields } => {
-                        if !is_methods_call {
-                            for ident in fields {
-                                ret.push((ident.clone(), id));
-                            }
-                        }
-                    }
-                    TypeKind::Trait { methods, constants } => {
-                        self.add_fn_item_to_vec(&mut ret, methods, &ty, is_methods_call);
-                        if !is_methods_call {
-                            self.add_const_item_to_vec(&mut ret, constants);
-                        }
-                    }
-                }
-            }
-            ResolvedTy::Array(_, _) | ResolvedTy::Slice(_) => {
-                ret.push((
-                    Symbol("len".to_string()),
-                    self.intern_type(ResolvedTy::Fn(
-                        vec![if is_methods_call {
-                            ResolvedTy::ref_implicit_self()
-                        } else {
-                            ty.clone().into_ref()
-                        }],
-                        Box::new(ResolvedTy::u32()),
-                    )),
-                ));
-            }
-            ResolvedTy::ImplicitSelf => {
-                ret.append(&mut self.get_type_items(self.get_self_type()?, is_methods_call)?);
-            }
-            ResolvedTy::Ref(_, _)
+            ResolvedTy::ImplicitSelf => self.get_type_fields(self.get_self_type()?, symbol),
+            ResolvedTy::BulitIn(_, _)
+            | ResolvedTy::Array(_, _)
+            | ResolvedTy::Slice(_)
             | ResolvedTy::Tup(_)
             | ResolvedTy::Fn(_, _)
             | ResolvedTy::Infer
-            | ResolvedTy::Any => {}
+            | ResolvedTy::Any => Err(SemanticError::NonProvidedField),
         }
+    }
 
-        if let Some(impls) = self.impls.get(&id) {
-            for x in impls {
-                debug_assert_eq!(x.self_ty, id);
-                self.add_fn_item_to_vec(&mut ret, &x.methods, &ty, is_methods_call);
-                if !is_methods_call {
-                    self.add_const_item_to_vec(&mut ret, &x.constants);
+    fn get_type_items_noderef(
+        &self,
+        id: TypeId,
+        is_methods_call: bool,
+        name: &Symbol,
+    ) -> Result<Option<TypeId>, SemanticError> {
+        let ty = self.get_type_by_id(id);
+
+        if let Some((inherent_impl, trait_impls)) = self.impls.get(&id) {
+            match inherent_impl.get(name) {
+                Some(ImplInfoItem::Constant(constant)) => {
+                    if !is_methods_call {
+                        return Ok(Some(constant.ty));
+                    }
+                }
+                Some(ImplInfoItem::Method(sig)) => {
+                    let fn_ty = self.get_type_by_id(sig.type_id);
+
+                    match (is_methods_call, fn_ty.is_method()) {
+                        (true, true) => return Ok(Some(sig.type_id)),
+                        (true, false) => {}
+                        (false, true) => {
+                            return Ok(Some(self.intern_type(fn_ty.method_to_func(&ty))));
+                        }
+                        (false, false) => return Ok(Some(sig.type_id)),
+                    }
+                }
+                None => {}
+            }
+
+            let mut candidate = None;
+
+            for (_, trait_impl) in trait_impls {
+                match trait_impl.get(name) {
+                    Some(ImplInfoItem::Constant(constant)) => {
+                        if !is_methods_call {
+                            if candidate.replace(constant.ty).is_some() {
+                                return Err(SemanticError::MultipleApplicable);
+                            }
+                        }
+                    }
+                    Some(ImplInfoItem::Method(sig)) => {
+                        let fn_ty = self.get_type_by_id(sig.type_id);
+
+                        match (is_methods_call, fn_ty.is_method()) {
+                            (true, true) => return Ok(Some(sig.type_id)),
+                            (true, false) => {}
+                            (false, true) => {
+                                return Ok(Some(self.intern_type(fn_ty.method_to_func(&ty))));
+                            }
+                            (false, false) => return Ok(Some(sig.type_id)),
+                        }
+                    }
+                    None => {}
                 }
             }
-        }
 
-        Ok(ret)
+            Ok(candidate)
+        } else {
+            Ok(None)
+        }
+    }
+
+    // item 包含 method
+    fn get_type_items(
+        &self,
+        mut id: TypeId,
+        is_methods_call: bool,
+        name: Symbol,
+    ) -> Result<(TypeId, DerefLevel), SemanticError> {
+        let mut deref_level = DerefLevel::Not;
+
+        loop {
+            if let Some(ret) = self.get_type_items_noderef(id, is_methods_call, &name)? {
+                return Ok((ret, deref_level));
+            }
+            let ty = self.get_type_by_id(id).clone();
+            match ty {
+                ResolvedTy::Ref(resolved_ty, mutability) => {
+                    id = self.intern_type(resolved_ty.as_ref().clone());
+                    deref_level = deref_level.merge(DerefLevel::Deref(mutability))
+                }
+                _ => return Err(SemanticError::NonMethodCall),
+            }
+        }
     }
 
     fn add_fn_item_to_vec(
@@ -1906,7 +1953,7 @@ impl Visitor for SemanticAnalyzer {
                     }
 
                     for (income, target) in params_res.into_iter().zip(required.iter()) {
-                        debug_assert!(!target.is_implicit_self());
+                        debug_assert!(!target.is_implicit_self_or_ref_implicit_self());
                         let income_ty = self.get_type_by_id(income.type_id);
 
                         // 有没有 auto deref 的情况？
@@ -1936,7 +1983,7 @@ impl Visitor for SemanticAnalyzer {
             seg,
             receiver,
             args,
-            span,
+            span: _,
         }: &MethodCallExpr,
     ) -> Self::ExprRes {
         let res = self.visit_expr(&receiver)?;
@@ -1957,73 +2004,47 @@ impl Visitor for SemanticAnalyzer {
                     return Err(SemanticError::Unimplemented);
                 }
 
-                let mut opt_ty = Some(self.get_type_by_id(type_id).clone());
-                let mut ref_flag = false;
-                let mut mutbl = get_mutbl!(category);
+                let (fn_id, devel_level) = self.get_type_items(
+                    type_id,
+                    true, /* 此处保证 items 中均为 Fn Variant 且首个参数为 self */
+                    ident.symbol.clone(),
+                )?;
 
-                while let Some(ty) = &opt_ty {
-                    let ty_id = self.intern_type(ty.clone());
-                    let items = self.get_type_items(
-                        ty_id,
-                        true, /* 此处保证 items 中均为 Fn Variant 且首个参数为 self */
-                    )?;
-                    if let Some((_, fn_id)) =
-                        items.iter().find(|(symbol, _)| *symbol == ident.symbol)
-                    {
-                        let fn_ty = self.get_type_by_id(*fn_id);
+                let fn_ty = self.get_type_by_id(fn_id);
+                let (required_tys, ret_ty) = fn_ty.into_fn().unwrap();
 
-                        let ResolvedTy::Fn(required, ret) = fn_ty else {
-                            panic!("Impossible!")
-                        };
+                if required_tys.len() != params_res.len() + 1 {
+                    return Err(SemanticError::MismatchArgNum);
+                }
 
-                        if required.len() != params_res.len() + 1 {
-                            return Err(SemanticError::MismatchArgNum);
+                match required_tys.first().unwrap() {
+                    ResolvedTy::Ref(_, target_mut) => {
+                        let self_mut = get_mutbl!(category).merge(devel_level.get_mutbl());
+                        if !self_mut.can_trans_to(target_mut) {
+                            return Err(SemanticError::ImmutableVar);
                         }
-
-                        // 检查 self
-                        match required.first().unwrap() {
-                            ResolvedTy::Ref(_, target_mut) => match (target_mut, mutbl) {
-                                (Mutability::Mut, Mutability::Not) => {
-                                    return Err(SemanticError::ImmutableVar);
-                                }
-                                _ => {}
-                            },
-                            ResolvedTy::ImplicitSelf => {
-                                if ref_flag {
-                                    return Err(SemanticError::TypeMismatch);
-                                }
-                            }
-                            _ => panic!("Impossible"),
-                        }
-
-                        // 检查其他参数
-                        for (income, target) in params_res.iter().zip(required[1..].iter()) {
-                            debug_assert!(!target.is_implicit_self());
-                            let income_ty = self.get_type_by_id(income.type_id);
-
-                            if income_ty != *target {
-                                return Err(SemanticError::TypeMismatch);
-                            }
-                        }
-
-                        // 返回
-                        return Ok(Some(ExprResult {
-                            type_id: self.intern_type(ret.as_ref().clone()),
-                            category: ExprCategory::Not,
-                        }));
                     }
-
-                    opt_ty = match ty {
-                        ResolvedTy::Ref(resolved_ty, mutability) => {
-                            ref_flag = true;
-                            mutbl = mutbl.merge(*mutability);
-                            Some(resolved_ty.as_ref().clone())
+                    ResolvedTy::ImplicitSelf => {
+                        if matches!(devel_level, DerefLevel::Deref(_)) {
+                            return Err(SemanticError::UnDereferenceable);
                         }
-                        _ => None,
+                    }
+                    _ => panic!("Impossible"),
+                }
+
+                for (income, target) in params_res.iter().zip(required_tys[1..].iter()) {
+                    debug_assert!(!target.is_implicit_self_or_ref_implicit_self());
+                    let income_ty = self.get_type_by_id(income.type_id);
+
+                    if !income_ty.can_trans_to_target_type(target) {
+                        return Err(SemanticError::TypeMismatch);
                     }
                 }
 
-                Err(SemanticError::NonMethodCall)
+                Ok(Some(ExprResult {
+                    type_id: self.intern_type(ret_ty.as_ref().clone()),
+                    category: ExprCategory::Not,
+                }))
             }
             None => {
                 debug_assert!(params_res.iter().all(|x| x.is_none()));
@@ -2421,14 +2442,12 @@ impl Visitor for SemanticAnalyzer {
         match res {
             Some(res) => {
                 let res_mut = get_mutbl!(res.category);
-                let fields = self.get_type_fields(res.type_id)?;
-                match fields.iter().find(|(symbol, _)| *symbol == ident.symbol) {
-                    Some((_, var)) => Ok(Some(ExprResult {
-                        type_id: var.ty,
-                        category: ExprCategory::Place(var.mutbl.merge(res_mut)),
-                    })),
-                    None => Err(SemanticError::UnknownVariable),
-                }
+                let (field, deref_level) = self.get_type_fields(res.type_id, &ident.symbol)?;
+
+                Ok(Some(ExprResult {
+                    type_id: field.ty,
+                    category: ExprCategory::Place(res_mut.merge(deref_level.get_mutbl())),
+                }))
             }
             None => Ok(None),
         }
@@ -2513,17 +2532,17 @@ impl Visitor for SemanticAnalyzer {
                         span: path.span.clone(),
                     })?;
                     let type_id = self.intern_type(ty);
-                    let values = self.get_type_items(type_id, false)?;
-                    for (symbol, id) in &values {
-                        if *symbol == value_seg.ident.symbol {
-                            return Ok(Some(ExprResult {
-                                type_id: *id,
-                                category: ExprCategory::Not,
-                            }));
-                        }
-                    }
+                    let value =
+                        self.get_type_items_noderef(type_id, false, &value_seg.ident.symbol)?;
 
-                    Err(SemanticError::UnknownVariable)
+                    if let Some(value) = value {
+                        Ok(Some(ExprResult {
+                            type_id: value,
+                            category: ExprCategory::Not,
+                        }))
+                    } else {
+                        Err(SemanticError::UnknownVariable)
+                    }
                 }
                 _ => return Err(SemanticError::InvaildPath),
             }
@@ -2535,6 +2554,7 @@ impl Visitor for SemanticAnalyzer {
     fn visit_addr_of_expr(&mut self, expr: &crate::ast::expr::AddrOfExpr) -> Self::ExprRes {
         match self.visit_expr(&expr.1)? {
             Some(ExprResult { type_id, category }) => {
+                no_assignee!(category);
                 let ty = self.get_type_by_id(type_id);
                 let ret_ty = ResolvedTy::Ref(Box::new(ty.clone()), expr.0);
                 Ok(Some(ExprResult {
@@ -2694,9 +2714,8 @@ impl Visitor for SemanticAnalyzer {
                     }
 
                     Ok(Some(ExprResult {
-                        type_id: self.intern_type(
-                            self.resolve_ty_in_scope_by_symbol(&struct_info.name, id),
-                        ),
+                        type_id: self
+                            .intern_type(self.resolve_ty_in_scope_by_symbol(&struct_info.name, id)),
                         category: ExprCategory::Not,
                     }))
                 }

@@ -274,6 +274,13 @@ impl Mutability {
             _ => Mutability::Not,
         }
     }
+
+    pub fn can_trans_to(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Mutability::Not, Mutability::Mut) => false,
+            _ => true
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
