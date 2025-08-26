@@ -16,6 +16,10 @@ impl Path {
             first.args.is_none() && first.ident.symbol.is_self()
         }
     }
+
+    pub fn get_symbol(&self) -> &Symbol {
+        &self.segments.last().unwrap().ident.symbol
+    }
 }
 
 #[derive(Debug)]
