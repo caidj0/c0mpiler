@@ -8,23 +8,23 @@ use std::{
     vec,
 };
 
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::{
-        Crate, Ident, Mutability, NodeId, Symbol,
         expr::{
-            BinOp, BinaryExpr, BlockExpr, CallExpr, Expr, FieldExpr, IfExpr, LitKind, LoopExpr,
-            MethodCallExpr, PathExpr, RepeatExpr, RetExpr, StructExpr, StructRest, UnOp, WhileExpr,
-        },
-        item::{
+            AssignExpr, AssignOp, AssignOpExpr, BinOp, BinaryExpr, BlockExpr, CallExpr, Expr,
+            FieldExpr, IfExpr, LitKind, LoopExpr, MethodCallExpr, PathExpr, RepeatExpr, RetExpr,
+            StructExpr, StructRest, UnOp, WhileExpr,
+        }, item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
-            StructItem, TraitItem,
-        },
-        pat::IdentPat,
-        path::{Path, PathSegment},
-        stmt::{LocalKind, StmtKind},
-        ty::{MutTy, PathTy, RefTy, Ty, TyKind},
+            StructItem, TraitItem, TraitRef,
+        }, pat::{IdentPat, RefPat}, path::{Path, PathSegment}, stmt::{LocalKind, StmtKind}, ty::{MutTy, PathTy, RefTy, Ty, TyKind}, Crate, Ident, Mutability, NodeId, Symbol
     },
-    semantics::{const_eval::ConstEvalError, visitor::Visitor},
+    semantics::{
+        const_eval::{ConstEvalError, ConstEvalValue},
+        visitor::Visitor,
+    },
 };
 
 macro_rules! no_assignee {
@@ -63,6 +63,7 @@ pub enum SemanticError {
     IncompatibleCast,
     AssigneeOnlyExpr,
     TypeMismatch,
+    PatMismatch,
     ConflictAssignee,
     NonFunctionCall,
     NonMethodCall,
@@ -74,6 +75,9 @@ pub enum SemanticError {
     NotStructType,
     MultiSpecifiedField,
     NonProvidedField,
+    NonAssigneeExpr,
+    NonPlaceExpr,
+    ConstantWithoutBody,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -320,36 +324,40 @@ pub struct TypeInfo {
 pub struct ImplInfo {
     pub self_ty: TypeId,
     pub for_trait: Option<Vec<Symbol>>,
-    pub methods: Vec<FnSig>,
-    pub constants: Vec<Constant>,
+    pub methods: HashMap<Symbol, FnSig>,
+    pub constants: HashMap<Symbol, Constant>,
+}
+
+impl ImplInfo {
+    pub fn contains_key(&self, key: &Symbol) -> bool {
+        self.methods.contains_key(key) || self.constants.contains_key(key)
+    }
 }
 
 #[derive(Debug)]
 pub struct FnSig {
-    pub name: Symbol,
     pub type_id: TypeId,
     pub is_placeholder: bool,
 }
 
 #[derive(Debug)]
 pub struct Constant {
-    pub name: Symbol,
     pub ty: TypeId,
-    pub is_placeholder: bool,
+    pub value: ConstEvalValue,
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum TypeKind {
     Placeholder,
     Struct {
-        fields: Vec<(Ident, TypeId)>,
+        fields: HashMap<Symbol, TypeId>,
     },
     Enum {
-        fields: Vec<Ident>,
+        fields: HashSet<Symbol>,
     },
     Trait {
-        methods: Vec<FnSig>,
-        constants: Vec<Constant>,
+        methods: HashMap<Symbol, FnSig>,
+        constants: HashMap<Symbol, Constant>,
     },
 }
 
@@ -357,7 +365,8 @@ pub enum TypeKind {
 pub enum VariableKind {
     Decl,
     Inited,
-    Const,
+    Fn,
+    Constant(ConstEvalValue),
 }
 
 #[derive(Debug)]
@@ -367,7 +376,7 @@ pub struct Variable {
     pub kind: VariableKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum ScopeKind {
     Lambda,
     Root,
@@ -416,7 +425,7 @@ pub enum AnalyzeStage {
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
     type_table: RefCell<TypeTable>,
-    impls: HashMap<TypeId, Vec<ImplInfo>>,
+    impls: HashMap<TypeId, (ImplInfo, Vec<ImplInfo>)>, // (本征 impl, trait impl)
     scopes: HashMap<NodeId, Scope>,
     current_scope: NodeId,
     stage: AnalyzeStage,
@@ -717,7 +726,7 @@ impl SemanticAnalyzer {
                     TypeKind::Struct { fields } => {
                         for (ident, field_id) in fields {
                             ret.push((
-                                ident.symbol.clone(),
+                                ident.clone(),
                                 Variable {
                                     ty: *field_id,
                                     mutbl: Mutability::Mut,
@@ -747,7 +756,7 @@ impl SemanticAnalyzer {
                             Box::new(ResolvedTy::u32()),
                         )),
                         mutbl: Mutability::Not,
-                        kind: VariableKind::Const,
+                        kind: VariableKind::Fn,
                     },
                 ));
             }
@@ -760,7 +769,7 @@ impl SemanticAnalyzer {
         Ok(ret)
     }
 
-    // item 包含 method，
+    // item 包含 method
     // TODO：处理不同 Trait 重名的情况
     fn get_type_items(
         &self,
@@ -784,7 +793,7 @@ impl SemanticAnalyzer {
                     TypeKind::Enum { fields } => {
                         if !is_methods_call {
                             for ident in fields {
-                                ret.push((ident.symbol.clone(), id));
+                                ret.push((ident.clone(), id));
                             }
                         }
                     }
@@ -835,26 +844,29 @@ impl SemanticAnalyzer {
     fn add_fn_item_to_vec(
         &self,
         ret: &mut Vec<(Symbol, TypeId)>,
-        methods: &[FnSig],
+        methods: &HashMap<Symbol, FnSig>,
         self_ty: &ResolvedTy,
         only_methods: bool,
     ) {
-        for method in methods {
+        for (symbol, method) in methods {
             let ty = self.get_type_by_id(method.type_id);
             match (only_methods, ty.is_method()) {
-                (true, true) | (false, false) => ret.push((method.name.clone(), method.type_id)),
+                (true, true) | (false, false) => ret.push((symbol.clone(), method.type_id)),
                 (true, false) => {}
-                (false, true) => ret.push((
-                    method.name.clone(),
-                    self.intern_type(ty.method_to_func(self_ty)),
-                )),
+                (false, true) => {
+                    ret.push((symbol.clone(), self.intern_type(ty.method_to_func(self_ty))))
+                }
             }
         }
     }
 
-    fn add_const_item_to_vec(&self, ret: &mut Vec<(Symbol, TypeId)>, constants: &[Constant]) {
-        for constant in constants {
-            ret.push((constant.name.clone(), constant.ty));
+    fn add_const_item_to_vec(
+        &self,
+        ret: &mut Vec<(Symbol, TypeId)>,
+        constants: &HashMap<Symbol, Constant>,
+    ) {
+        for (symbol, constant) in constants {
+            ret.push((symbol.clone(), constant.ty));
         }
     }
 
@@ -863,6 +875,9 @@ impl SemanticAnalyzer {
         ident: &Symbol,
     ) -> Result<(NodeId, &mut TypeInfo), SemanticError> {
         self.search_type_from_mut(ident, self.current_scope)
+    }
+
+    fn search_type_by_path(&self, path: &Path) -> Result<(NodeId, &TypeInfo), SemanticError> {
     }
 
     fn search_type(&self, ident: &Symbol) -> Result<(NodeId, &TypeInfo), SemanticError> {
@@ -974,7 +989,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    // 这个函数不会展开隐式 self（为了保留函数参数中的 self）
+    // 这个函数不会展开隐式 self（为了保留函数参数中的 self），但是会展开 Self
     fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
         match &ty.kind {
             TyKind::Slice(slice_ty) => {
@@ -982,7 +997,9 @@ impl SemanticAnalyzer {
             }
             TyKind::Array(array_ty) => Ok(ResolvedTy::Array(
                 Box::new(self.resolve_ty(&array_ty.0)?),
-                array_ty.1.value.as_ref().try_into()?,
+                self.const_eval(&ResolvedTy::usize(), &array_ty.1.value)?
+                    .into_u_size()
+                    .unwrap(),
             )),
             TyKind::Ref(RefTy(MutTy { ty: ty2, mutbl })) => {
                 Ok(ResolvedTy::Ref(Box::new(self.resolve_ty(ty2)?), *mutbl))
@@ -1090,12 +1107,14 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn check_const(&self, ty: &ResolvedTy, expr: &Expr) -> Result<(), SemanticError> {
+    fn const_eval(&self, ty: &ResolvedTy, expr: &Expr) -> Result<ConstEvalValue, SemanticError> {
         if let ResolvedTy::BulitIn(ident, _) = ty {
             match ident.0.as_str() {
                 "u32" => {
-                    let _: u32 = expr.try_into()?;
-                    return Ok(());
+                    return Ok(ConstEvalValue::U32(expr.try_into()?));
+                }
+                "usize" => {
+                    return Ok(ConstEvalValue::USize(expr.try_into()?));
                 }
                 _ => {}
             }
@@ -1195,6 +1214,73 @@ impl SemanticAnalyzer {
             category: ExprCategory::Not,
         }))
     }
+
+    fn is_free_scope(&self) -> bool {
+        !matches!(
+            self.get_scope().kind,
+            ScopeKind::Trait(_) | ScopeKind::Impl(_)
+        )
+    }
+
+    fn resolve_assoc_items(
+        &self,
+        items: &Vec<Box<Item<AssocItemKind>>>,
+    ) -> Result<(HashMap<Symbol, FnSig>, HashMap<Symbol, Constant>), SemanticError> {
+        let mut methods = HashMap::new();
+        let mut constants = HashMap::new();
+        for item in items {
+            match &item.kind {
+                AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
+                    let resloved_ty = self.resolve_ty(&ty)?;
+                    let value = match expr {
+                        Some(e) => self.const_eval(&resloved_ty, e)?,
+                        None => ConstEvalValue::Placeholder,
+                    };
+                    let tyid = self.intern_type(resloved_ty);
+
+                    if methods.contains_key(&ident.symbol) || constants.contains_key(&ident.symbol)
+                    {
+                        return Err(SemanticError::MultiDefined);
+                    }
+
+                    constants.insert(ident.symbol.clone(), Constant { ty: tyid, value });
+                }
+                AssocItemKind::Fn(FnItem {
+                    ident,
+                    generics: _,
+                    sig,
+                    body,
+                }) => {
+                    let param_tys = sig
+                        .decl
+                        .inputs
+                        .iter()
+                        .map(|x| self.resolve_ty(&x.ty))
+                        .collect::<Result<Vec<_>, SemanticError>>()?;
+                    let ret_ty = match &sig.decl.output {
+                        FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
+                        FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
+                    };
+                    let fn_type = ResolvedTy::Fn(param_tys, Box::new(ret_ty));
+                    let fn_type_id = self.intern_type(fn_type);
+
+                    if methods.contains_key(&ident.symbol) || constants.contains_key(&ident.symbol)
+                    {
+                        return Err(SemanticError::MultiDefined);
+                    }
+
+                    methods.insert(
+                        ident.symbol.clone(),
+                        FnSig {
+                            type_id: fn_type_id,
+                            is_placeholder: body.is_none(),
+                        },
+                    );
+                }
+            }
+        }
+        Ok((methods, constants))
+    }
 }
 
 impl Visitor for SemanticAnalyzer {
@@ -1260,19 +1346,22 @@ impl Visitor for SemanticAnalyzer {
             // 目前还是认为 const expr 中只能有简单表达式
             AnalyzeStage::SymbolCollect => {}
             AnalyzeStage::Definition => {
-                let ty = self.resolve_ty(&ty)?;
-                if let Some(e) = expr {
-                    self.check_const(&ty, e)?;
+                if self.is_free_scope() {
+                    let ty = self.resolve_ty(&ty)?;
+                    let value = self.const_eval(
+                        &ty,
+                        expr.as_ref().ok_or(SemanticError::ConstantWithoutBody)?,
+                    )?;
+                    let tyid = self.intern_type(ty);
+                    self.add_value(
+                        ident.symbol.clone(),
+                        Variable {
+                            ty: tyid,
+                            mutbl: Mutability::Not,
+                            kind: VariableKind::Constant(value),
+                        },
+                    )?;
                 }
-                let tyid = self.intern_type(ty);
-                self.add_value(
-                    ident.symbol.clone(),
-                    Variable {
-                        ty: tyid,
-                        mutbl: Mutability::Not,
-                        kind: VariableKind::Const,
-                    },
-                )?;
             }
             AnalyzeStage::Body => {}
         }
@@ -1293,43 +1382,40 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect => {
                 self.add_scope(self.current_ast_id, ScopeKind::Fn { ret_ty: TypeId(0) })?;
             }
-            AnalyzeStage::Definition => {}
-            AnalyzeStage::Body => {}
-        }
-        self.enter_scope(self.current_ast_id)?;
-        match self.stage {
-            AnalyzeStage::SymbolCollect => {}
             AnalyzeStage::Definition => {
-                let param_tys = sig
-                    .decl
-                    .inputs
-                    .iter()
-                    .map(|x| self.resolve_ty(&x.ty))
-                    .collect::<Result<Vec<_>, SemanticError>>()?;
                 let ret_ty = match &sig.decl.output {
                     FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
                     FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
                 };
-                let tyid = self.intern_type(ResolvedTy::Fn(param_tys, Box::new(ret_ty.clone())));
-                self.add_value(
-                    ident.symbol.clone(),
-                    Variable {
-                        ty: tyid,
-                        mutbl: Mutability::Not,
-                        kind: VariableKind::Const,
-                    },
-                )?;
 
-                let ret_ty_id = self.intern_type(ret_ty);
-                match &mut self.get_scope_mut().kind {
-                    ScopeKind::Fn { ret_ty } => *ret_ty = ret_ty_id,
-                    _ => panic!("Impossible!"),
+                if self.is_free_scope() {
+                    let param_tys = sig
+                        .decl
+                        .inputs
+                        .iter()
+                        .map(|x| self.resolve_ty(&x.ty))
+                        .collect::<Result<Vec<_>, SemanticError>>()?;
+                    let tyid =
+                        self.intern_type(ResolvedTy::Fn(param_tys, Box::new(ret_ty.clone())));
+
+                    self.add_value(
+                        ident.symbol.clone(),
+                        Variable {
+                            ty: tyid,
+                            mutbl: Mutability::Not,
+                            kind: VariableKind::Fn,
+                        },
+                    )?;
                 }
 
-                todo!() // TODO impl 和 trait 的 fn 无法直接找到自己，也就是说它们的 scope 没有它们自己，这应该怎么解决
+                self.enter_scope(self.current_ast_id)?;
+                let ret_ty_id = self.intern_type(ret_ty);
+                *self.get_scope_mut().kind.as_fn_mut().unwrap() = ret_ty_id;
+                self.exit_scope()?;
             }
             AnalyzeStage::Body => {}
         }
+        self.enter_scope(self.current_ast_id)?;
         if let Some(b) = body {
             self.visit_block_expr(b)?;
         }
@@ -1351,7 +1437,9 @@ impl Visitor for SemanticAnalyzer {
                     ident.symbol.clone(),
                     TypeInfo {
                         name: ident.symbol.clone(),
-                        kind: TypeKind::Placeholder,
+                        kind: TypeKind::Enum {
+                            fields: HashSet::new(),
+                        },
                     },
                 )?;
             }
@@ -1364,13 +1452,25 @@ impl Visitor for SemanticAnalyzer {
                         {
                             Err(SemanticError::Unimplemented)
                         } else {
-                            Ok(x.ident.clone())
+                            Ok(x.ident.symbol.clone())
                         }
                     })
                     .collect::<Result<Vec<_>, SemanticError>>()?;
-                self.search_type_mut(&ident.symbol)?.1.kind = TypeKind::Enum { fields };
+
+                let vec_len = fields.len();
+                let fields: HashSet<Symbol> = HashSet::from_iter(fields.into_iter());
+                if vec_len != fields.len() {
+                    return Err(SemanticError::MultiDefined);
+                }
+
+                *self
+                    .search_type_mut(&ident.symbol)?
+                    .1
+                    .kind
+                    .as_enum_mut()
+                    .unwrap() = fields;
             }
-            AnalyzeStage::Body => todo!(),
+            AnalyzeStage::Body => {}
         }
         Ok(())
     }
@@ -1385,7 +1485,9 @@ impl Visitor for SemanticAnalyzer {
                     ident.symbol.clone(),
                     TypeInfo {
                         name: ident.symbol.clone(),
-                        kind: TypeKind::Struct { fields: Vec::new() },
+                        kind: TypeKind::Struct {
+                            fields: HashMap::new(),
+                        },
                     },
                 )?;
             }
@@ -1395,7 +1497,11 @@ impl Visitor for SemanticAnalyzer {
                         .iter()
                         .map(|x| {
                             Ok((
-                                x.ident.clone().ok_or(SemanticError::Unimplemented)?,
+                                x.ident
+                                    .as_ref()
+                                    .ok_or(SemanticError::Unimplemented)?
+                                    .symbol
+                                    .clone(),
                                 self.intern_type(self.resolve_ty(&x.ty)?),
                             ))
                         })
@@ -1405,9 +1511,21 @@ impl Visitor for SemanticAnalyzer {
                     }
                     crate::ast::item::VariantData::Unit => Vec::new(),
                 };
-                self.search_type_mut(&ident.symbol)?.1.kind = TypeKind::Struct { fields }
+
+                let vec_len = fields.len();
+                let fields: HashMap<Symbol, TypeId> = HashMap::from_iter(fields.into_iter());
+                if vec_len != fields.len() {
+                    return Err(SemanticError::MultiDefined);
+                }
+
+                *self
+                    .search_type_mut(&ident.symbol)?
+                    .1
+                    .kind
+                    .as_struct_mut()
+                    .unwrap() = fields;
             }
-            AnalyzeStage::Body => todo!(),
+            AnalyzeStage::Body => {} // 先认为 body 阶段什么也不用做，除非在定义 array 长度时做些什么
         }
         Ok(())
     }
@@ -1427,58 +1545,20 @@ impl Visitor for SemanticAnalyzer {
                     ident.symbol.clone(),
                     TypeInfo {
                         name: ident.symbol.clone(),
-                        kind: TypeKind::Placeholder,
+                        kind: TypeKind::Trait {
+                            methods: HashMap::new(),
+                            constants: HashMap::new(),
+                        },
                     },
                 )?;
                 self.add_scope(self.current_ast_id, ScopeKind::Trait(id))?;
             }
             AnalyzeStage::Definition => {
-                let mut methods = Vec::new();
-                let mut constants = Vec::new();
-                for item in items {
-                    match &item.kind {
-                        AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
-                            let resloved_ty = self.resolve_ty(&ty)?;
-                            if let Some(e) = expr {
-                                self.check_const(&resloved_ty, e)?;
-                            }
-                            let tyid = self.intern_type(resloved_ty);
-                            constants.push(Constant {
-                                name: ident.symbol.clone(),
-                                ty: tyid,
-                                is_placeholder: expr.is_none(),
-                            })
-                        }
-                        AssocItemKind::Fn(FnItem {
-                            ident,
-                            generics: _,
-                            sig,
-                            body,
-                        }) => {
-                            let param_tys = sig
-                                .decl
-                                .inputs
-                                .iter()
-                                .map(|x| self.resolve_ty(&x.ty))
-                                .collect::<Result<Vec<_>, SemanticError>>()?;
-                            let ret_ty = match &sig.decl.output {
-                                FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
-                                FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
-                            };
-                            let fn_type = ResolvedTy::Fn(param_tys, Box::new(ret_ty));
-                            let fn_type_id = self.intern_type(fn_type);
-                            methods.push(FnSig {
-                                name: ident.symbol.clone(),
-                                type_id: fn_type_id,
-                                is_placeholder: body.is_none(),
-                            });
-                        }
-                    }
-                }
+                let (methods, constants) = self.resolve_assoc_items(items)?;
                 self.search_type_mut(&ident.symbol)?.1.kind =
                     TypeKind::Trait { methods, constants };
             }
-            AnalyzeStage::Body => todo!(),
+            AnalyzeStage::Body => {} // 应该也什么也不用做？
         }
         self.enter_scope(self.current_ast_id)?;
         for item in items {
@@ -1491,7 +1571,7 @@ impl Visitor for SemanticAnalyzer {
     fn visit_impl_item(
         &mut self,
         ImplItem {
-            generics,
+            generics: _,
             of_trait,
             self_ty,
             items,
@@ -1503,8 +1583,55 @@ impl Visitor for SemanticAnalyzer {
                 self.add_scope(self.current_ast_id, ScopeKind::Impl(TypeId(0)))?;
             }
             AnalyzeStage::Definition => {
-                todo!()
-                // TODO 在这里检查一下实现和 Trait 是否能对应上，同时把 self type 设置好
+                let self_ty = self.resolve_ty(&self_ty)?;
+                let self_ty_id = self.intern_type(self_ty);
+
+                if !self.impls.contains_key(&self_ty_id) {
+                    self.impls.insert(
+                        self_ty_id,
+                        (
+                            ImplInfo {
+                                self_ty: self_ty_id,
+                                for_trait: None,
+                                methods: HashMap::new(),
+                                constants: HashMap::new(),
+                            },
+                            Vec::new(),
+                        ),
+                    );
+                }
+
+                match of_trait {
+                    Some(TraitRef{ path :trait_path}) => {
+                        let (id, info) = self.search_type_by_path(trait_path)?;
+
+                        // 貌似还得为 impl 加一趟🥲
+
+
+                    },
+                    None => {
+                        let (methods, constants) = self.resolve_assoc_items(items)?;
+                        let (inherent_impl, _) = self.impls.get_mut(&self_ty_id).unwrap();
+
+                        for (symbol, sig) in methods {
+                            if inherent_impl.contains_key(&symbol) {
+                                return Err(SemanticError::MultiDefined);
+                            }
+                            inherent_impl.methods.insert(symbol, sig);
+                        }
+
+                        for (symbol, constant) in constants {
+                            if inherent_impl.contains_key(&symbol) {
+                                return Err(SemanticError::MultiDefined);
+                            }
+                            inherent_impl.constants.insert(symbol, constant);
+                        }
+                    }
+                }
+
+                self.enter_scope(self.current_ast_id)?;
+                *self.get_scope_mut().kind.as_impl_mut().unwrap() = self_ty_id;
+                self.exit_scope()?;
             }
             AnalyzeStage::Body => todo!(),
         }
@@ -2092,12 +2219,76 @@ impl Visitor for SemanticAnalyzer {
         self.visit_block_expr_with_kind(expr, ScopeKind::Lambda)
     }
 
-    fn visit_assign_expr(&mut self, expr: &crate::ast::expr::AssignExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_assign_expr(&mut self, AssignExpr(left, right): &AssignExpr) -> Self::ExprRes {
+        let left_res = self.visit_expr(&left)?;
+        let right_res = self.visit_expr(&right)?;
+
+        match (left_res, right_res) {
+            (None, None) => Ok(None),
+            (None, Some(_)) | (Some(_), None) => panic!("Impossible"),
+            (Some(left_res), Some(right_res)) => {
+                match left_res.category {
+                    ExprCategory::Place(Mutability::Not) => {
+                        return Err(SemanticError::ImmutableVar);
+                    }
+                    ExprCategory::Not => return Err(SemanticError::NonAssigneeExpr),
+                    ExprCategory::Only | ExprCategory::Place(Mutability::Mut) => {}
+                }
+                no_assignee!(right_res.category);
+
+                let left_ty = self.get_type_by_id(left_res.type_id);
+                let right_ty = self.get_type_by_id(right_res.type_id);
+                if !right_ty.can_trans_to_target_type(&left_ty) {
+                    return Err(SemanticError::TypeMismatch);
+                }
+
+                Ok(Some(Self::unit_expr_result()))
+            }
+        }
     }
 
-    fn visit_assign_op_expr(&mut self, expr: &crate::ast::expr::AssignOpExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_assign_op_expr(
+        &mut self,
+        AssignOpExpr(op, left, right): &AssignOpExpr,
+    ) -> Self::ExprRes {
+        let left_res = self.visit_expr(&left)?;
+        let right_res = self.visit_expr(&right)?;
+
+        match (left_res, right_res) {
+            (None, None) => Ok(None),
+            (None, Some(_)) | (Some(_), None) => panic!("Impossible"),
+            (Some(left_res), Some(right_res)) => {
+                match left_res.category {
+                    ExprCategory::Place(Mutability::Not) => {
+                        return Err(SemanticError::ImmutableVar);
+                    }
+                    ExprCategory::Only | ExprCategory::Not => {
+                        return Err(SemanticError::NonPlaceExpr);
+                    }
+                    ExprCategory::Place(Mutability::Mut) => {}
+                }
+                no_assignee!(right_res.category);
+
+                let left_ty = self.get_type_by_id(left_res.type_id);
+                let right_ty = self.get_type_by_id(right_res.type_id);
+
+                // TODO：把 visit_binary_expr 抽象一下，和这个一起做
+                match op {
+                    AssignOp::AddAssign => todo!(),
+                    AssignOp::SubAssign => todo!(),
+                    AssignOp::MulAssign => todo!(),
+                    AssignOp::DivAssign => todo!(),
+                    AssignOp::RemAssign => todo!(),
+                    AssignOp::BitXorAssign => todo!(),
+                    AssignOp::BitAndAssign => todo!(),
+                    AssignOp::BitOrAssign => todo!(),
+                    AssignOp::ShlAssign => todo!(),
+                    AssignOp::ShrAssign => todo!(),
+                }
+
+                Ok(Some(Self::unit_expr_result()))
+            }
+        }
     }
 
     fn visit_field_expr(
@@ -2377,7 +2568,7 @@ impl Visitor for SemanticAnalyzer {
                     }
 
                     for (field_ident, field_type_id) in fields {
-                        if let Some(res) = dic.get(&field_ident.symbol) {
+                        if let Some(res) = dic.get(&field_ident) {
                             let res_ty = self.get_type_by_id(res.type_id);
                             let field_ty = self.get_type_by_id(*field_type_id);
                             if !res_ty.can_trans_to_target_type(&field_ty) {
@@ -2403,7 +2594,23 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_repeat_expr(&mut self, RepeatExpr(expr, const_expr): &RepeatExpr) -> Self::ExprRes {
-        todo!()
+        let res = self.visit_expr(expr)?;
+        let size = self.const_eval(&ResolvedTy::usize(), &const_expr.value)?;
+
+        match res {
+            Some(res) => {
+                no_assignee!(res.category);
+
+                Ok(Some(ExprResult {
+                    type_id: self.intern_type(ResolvedTy::Array(
+                        Box::new(self.get_type_by_id(res.type_id)),
+                        size.into_u_size().unwrap(),
+                    )),
+                    category: ExprCategory::Not,
+                }))
+            }
+            None => Ok(None),
+        }
     }
 
     fn visit_wild_pat(
@@ -2473,12 +2680,19 @@ impl Visitor for SemanticAnalyzer {
         Err(SemanticError::Unimplemented)
     }
 
-    fn visit_ref_pat(
-        &mut self,
-        pat: &crate::ast::pat::RefPat,
-        expected_ty: TypeId,
-    ) -> Self::PatRes {
-        todo!()
+    fn visit_ref_pat(&mut self, RefPat(pat, mutbl): &RefPat, expected_ty: TypeId) -> Self::PatRes {
+        let expected_ty = self.get_type_by_id(expected_ty);
+
+        match &expected_ty {
+            ResolvedTy::Ref(resolved_ty, mutability) => {
+                if mutbl == mutability {
+                    self.visit_pat(pat, self.intern_type(resolved_ty.as_ref().clone()))
+                } else {
+                    Err(SemanticError::PatMismatch)
+                }
+            }
+            _ => Err(SemanticError::PatMismatch),
+        }
     }
 
     fn visit_lit_pat(

@@ -1,7 +1,16 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::expr::{Expr, ExprKind, LitExpr, LitKind},
     semantics::SemanticError,
 };
+
+#[derive(Debug, EnumAsInner)]
+pub enum ConstEvalValue {
+    Placeholder,
+    U32(u32),
+    USize(u32),
+}
 
 #[derive(Debug)]
 pub enum ConstEvalError {
