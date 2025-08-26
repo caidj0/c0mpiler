@@ -1,0 +1,209 @@
+use enum_as_inner::EnumAsInner;
+
+use crate::{ast::{Mutability, Symbol}, semantics::utils::FullName};
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
+pub enum ResolvedTy {
+    BulitIn(Symbol, Vec<ResolvedTy>),
+    Named(FullName),
+    Ref(Box<ResolvedTy>, Mutability),
+    Array(Box<ResolvedTy>, u32),
+    Slice(Box<ResolvedTy>),
+    Tup(Vec<ResolvedTy>),
+    Fn(Vec<ResolvedTy>, Box<ResolvedTy>),
+    Infer,
+    ImplicitSelf,
+    Any, // for underscore
+}
+
+impl ResolvedTy {
+    pub fn unit() -> Self {
+        Self::Tup(Vec::new())
+    }
+
+    pub fn bool() -> Self {
+        Self::BulitIn(Symbol("bool".to_string()), Vec::new())
+    }
+
+    pub fn char() -> Self {
+        Self::BulitIn(Symbol("char".to_string()), Vec::new())
+    }
+
+    pub fn integer() -> Self {
+        Self::BulitIn(Symbol("integer".to_string()), Vec::new())
+    }
+
+    pub fn i32() -> Self {
+        Self::BulitIn(Symbol("i32".to_string()), Vec::new())
+    }
+
+    pub fn u32() -> Self {
+        Self::BulitIn(Symbol("u32".to_string()), Vec::new())
+    }
+
+    pub fn isize() -> Self {
+        Self::BulitIn(Symbol("isize".to_string()), Vec::new())
+    }
+
+    pub fn usize() -> Self {
+        Self::BulitIn(Symbol("usize".to_string()), Vec::new())
+    }
+
+    pub fn str() -> Self {
+        Self::BulitIn(Symbol("str".to_string()), Vec::new())
+    }
+
+    pub fn ref_str() -> Self {
+        Self::Ref(Box::new(Self::str()), Mutability::Not)
+    }
+
+    pub fn string() -> Self {
+        Self::BulitIn(Symbol("String".to_string()), Vec::new())
+    }
+
+    pub fn implicit_self() -> Self {
+        Self::ImplicitSelf
+    }
+
+    pub fn ref_implicit_self() -> Self {
+        Self::Ref(Box::new(Self::implicit_self()), Mutability::Not)
+    }
+
+    pub fn ref_mut_implicit_self() -> Self {
+        Self::Ref(Box::new(Self::implicit_self()), Mutability::Mut)
+    }
+
+    pub fn try_deref(self) -> (Self, Mutability) {
+        if let ResolvedTy::Ref(resolved, mutbl) = self {
+            (*resolved, mutbl)
+        } else {
+            (self, Mutability::Mut)
+        }
+    }
+
+    pub fn deref_all(self) -> (Self, Mutability) {
+        let mut ret_ty = self;
+        let mut ret_mut = Mutability::Mut;
+
+        while let ResolvedTy::Ref(resolved, mutbl) = ret_ty {
+            ret_ty = *resolved;
+            ret_mut = ret_mut.merge(mutbl)
+        }
+
+        (ret_ty, ret_mut)
+    }
+
+    pub fn is_number_type(&self) -> bool {
+        *self == Self::integer()
+            || *self == Self::i32()
+            || *self == Self::u32()
+            || *self == Self::usize()
+            || *self == Self::isize()
+    }
+
+    pub fn is_implicit_self_or_ref_implicit_self(&self) -> bool {
+        match self {
+            ResolvedTy::Ref(resolved_ty, _) => {
+                matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf)
+            }
+            ResolvedTy::ImplicitSelf => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_method(&self) -> bool {
+        match self {
+            ResolvedTy::Fn(tys, _) => tys
+                .first()
+                .map(|x| x.is_implicit_self_or_ref_implicit_self())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    pub fn method_to_func(&self, self_ty: &Self) -> Self {
+        let mut ret = self.clone();
+        let ResolvedTy::Fn(tys, _) = &mut ret else {
+            panic!("Impossible!");
+        };
+
+        let first = tys.first_mut().unwrap();
+
+        match first {
+            ResolvedTy::Ref(resolved_ty, _) => {
+                debug_assert!(matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf));
+                *resolved_ty = Box::new(self_ty.clone())
+            }
+            ResolvedTy::ImplicitSelf => *first = self_ty.clone(),
+            _ => panic!("Impossible!"),
+        }
+
+        ret
+    }
+
+    pub fn r#ref(self) -> Self {
+        Self::Ref(Box::new(self), Mutability::Not)
+    }
+
+    // 包括相等类型 + 其他情况
+    pub fn can_trans_to_target_type(&self, target: &Self) -> bool {
+        if self == target {
+            return true;
+        }
+
+        match (self, target) {
+            (ResolvedTy::BulitIn(symbol1, args1), ResolvedTy::BulitIn(symbol2, args2)) => {
+                let arg_same = args1.iter().zip(args2.iter()).all(|(x, y)| x == y);
+                if arg_same && symbol1 == symbol2 {
+                    true
+                } else {
+                    if *self == ResolvedTy::integer() && target.is_number_type() {
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+            (ResolvedTy::Named(_), ResolvedTy::Named(_)) => false,
+            (
+                ResolvedTy::Ref(resolved_ty1, mutability1),
+                ResolvedTy::Ref(resolved_ty2, mutability2),
+            ) => match (mutability1, mutability2) {
+                (Mutability::Not, Mutability::Mut) => false,
+                _ => resolved_ty1.can_trans_to_target_type(&resolved_ty2),
+            },
+            (ResolvedTy::Array(resolved_ty1, len1), ResolvedTy::Array(resolved_ty2, len2)) => {
+                if len1 == len2 {
+                    resolved_ty1.can_trans_to_target_type(&resolved_ty2)
+                } else {
+                    false
+                }
+            }
+            (ResolvedTy::Slice(resolved_ty1), ResolvedTy::Slice(resolved_ty2)) => {
+                resolved_ty1.can_trans_to_target_type(&resolved_ty2)
+            }
+            (ResolvedTy::Tup(items1), ResolvedTy::Tup(items2)) => {
+                if items1.len() != items2.len() {
+                    return false;
+                }
+                for (x, y) in items1.iter().zip(items2.iter()) {
+                    if !x.can_trans_to_target_type(y) {
+                        return false;
+                    }
+                }
+                true
+            }
+            (ResolvedTy::Fn(_, _), ResolvedTy::Fn(_, _)) => {
+                unimplemented!()
+            }
+            (ResolvedTy::Infer, ResolvedTy::Infer) => {
+                unimplemented!()
+            }
+            (ResolvedTy::ImplicitSelf, ResolvedTy::ImplicitSelf) => {
+                panic!("Impossible")
+            }
+            (ResolvedTy::Any, _) => true,
+            _ => false,
+        }
+    }
+}
