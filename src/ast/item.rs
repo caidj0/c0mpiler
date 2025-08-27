@@ -1,3 +1,5 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::{
         ASTError, ASTErrorKind, ASTResult, Eatable, Ident, NodeId, OptionEatable, Span,
@@ -293,7 +295,7 @@ impl Eatable for Variant {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum VariantData {
     Struct { fields: Vec<FieldDef> },
     Tuple(Vec<FieldDef>),

@@ -63,6 +63,8 @@ pub struct SemanticAnalyzer {
     current_scope: NodeId,
     stage: AnalyzeStage,
     current_ast_id: NodeId,
+
+    builtin_impls: BulitInImpls,
 }
 
 impl SemanticAnalyzer {
@@ -71,6 +73,8 @@ impl SemanticAnalyzer {
         type_table.intern(ResolvedTy::unit()); // Unit -> 0
         type_table.intern(ResolvedTy::Any); // Any -> 1
 
+        let builtin_impls = BulitInImpls::new(&mut type_table);
+
         Self {
             type_table: RefCell::new(type_table),
             impls: HashMap::default(),
@@ -78,6 +82,7 @@ impl SemanticAnalyzer {
             current_scope: 0,
             stage: AnalyzeStage::SymbolCollect,
             current_ast_id: 0,
+            builtin_impls,
         }
     }
 
@@ -179,6 +184,7 @@ impl SemanticAnalyzer {
         Ok(self.intern_type(resolved))
     }
 
+    // const 可以遮蔽同一作用域内的 local (function params)
     fn add_value(
         &mut self,
         ident: Symbol,
@@ -187,7 +193,10 @@ impl SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         let s = self.get_scope_mut();
 
-        if !shadow && s.values.contains_key(&ident) {
+        if let Some(exist) = s.values.get(&ident)
+            && !shadow
+            && !var.kind.can_shadow_unconditionally(&exist.kind)
+        {
             return Err(SemanticError::MultiDefined);
         }
 
@@ -257,7 +266,7 @@ impl SemanticAnalyzer {
         &self,
         ident: &Symbol,
         mut id: NodeId,
-        mut inculde_local: bool,
+        mut include_local: bool,
     ) -> Result<(NodeId, &Variable), SemanticError> {
         loop {
             let scope = if let Some(scope) = self.scopes.get(&id) {
@@ -267,7 +276,7 @@ impl SemanticAnalyzer {
             };
 
             if let Some(var) = scope.values.get(ident) {
-                if !inculde_local && matches!(var.kind, VariableKind::Decl | VariableKind::Inited) {
+                if !include_local && matches!(var.kind, VariableKind::Decl | VariableKind::Inited) {
                     return Err(SemanticError::LocalVarOutOfFn);
                 }
                 return Ok((id, var));
@@ -279,7 +288,7 @@ impl SemanticAnalyzer {
                 id = scope.father;
 
                 if matches!(scope.kind, ScopeKind::Fn { ret_ty: _ }) {
-                    inculde_local &= false;
+                    include_local &= false;
                 }
             }
         }
@@ -339,7 +348,6 @@ impl SemanticAnalyzer {
         }
     }
 
-    // TODO: 添加 builtin
     fn get_type_items_noderef(
         &self,
         id: TypeId,
@@ -348,6 +356,7 @@ impl SemanticAnalyzer {
     ) -> Result<Option<TypeId>, SemanticError> {
         let ty = self.get_type_by_id(id);
 
+        // builtin 在 get_impl 中返回
         if let Some((inherent_impl, trait_impls)) = self.get_impl(&id) {
             match inherent_impl.get(name) {
                 Some(ImplInfoItem::Constant(constant)) => {
@@ -460,7 +469,6 @@ impl SemanticAnalyzer {
     }
 
     // 返回值为 (Scope Id, 变量类型)
-    // TODO: 当出了 fn 等 scope 时应看不到之外的局部变量
     fn search_value(&self, ident: &Symbol) -> Result<(NodeId, &Variable), SemanticError> {
         self.search_value_from(ident, self.current_scope, true)
     }
@@ -855,117 +863,76 @@ impl SemanticAnalyzer {
         Ok((methods, constants))
     }
 
-    fn get_builtin_impl(&self, id: TypeId) -> Option<Impls> {
-        let ty = self.get_type_by_id(id);
-
-        let len_method: ResolvedTy = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self()],
-            Box::new(ResolvedTy::usize()),
-        );
-        let len_method_id = self.intern_type(len_method);
-        let len = (
-            Symbol("len".to_string()),
-            FnSig {
-                type_id: len_method_id,
-                is_placeholder: false,
-            },
-        );
-        let to_string_method = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self()],
-            Box::new(ResolvedTy::string()),
-        );
-        let to_string_method_id = self.intern_type(to_string_method);
-        let to_string = (
-            Symbol("to_string".to_string()),
-            FnSig {
-                type_id: to_string_method_id,
-                is_placeholder: false,
-            },
-        );
-        let as_str_method = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self()],
-            Box::new(ResolvedTy::ref_str()),
-        );
-        let as_str_method_id = self.intern_type(as_str_method);
-        let as_str = (
-            Symbol("as_str".to_string()),
-            FnSig {
-                type_id: as_str_method_id,
-                is_placeholder: false,
-            },
-        );
-
-        match &ty {
-            ResolvedTy::BulitIn(_, _) => {
-                if ty == ResolvedTy::u32() || ty == ResolvedTy::usize() {
-                    Some((
-                        ImplInfo {
-                            self_ty: id,
-                            methods: HashMap::from([to_string]),
-                            constants: HashMap::new(),
-                        },
-                        HashMap::new(),
-                    ))
-                } else if ty == ResolvedTy::string() {
-                    Some((
-                        ImplInfo {
-                            self_ty: id,
-                            methods: HashMap::from([as_str, len]),
-                            constants: HashMap::new(),
-                        },
-                        HashMap::new(),
-                    ))
-                } else if ty == ResolvedTy::str() {
-                    Some((
-                        ImplInfo {
-                            self_ty: id,
-                            methods: HashMap::from([len]),
-                            constants: HashMap::new(),
-                        },
-                        HashMap::new(),
-                    ))
-                } else {
-                    None
-                }
-            }
-            ResolvedTy::Array(_, _) | ResolvedTy::Slice(_) => Some((
-                ImplInfo {
-                    self_ty: id,
-                    methods: HashMap::from([len]),
-                    constants: HashMap::new(),
-                },
-                HashMap::new(),
-            )),
-            ResolvedTy::Ref(_, _)
-            | ResolvedTy::Named(_)
-            | ResolvedTy::Tup(_)
-            | ResolvedTy::Fn(_, _)
-            | ResolvedTy::Infer
-            | ResolvedTy::ImplicitSelf
-            | ResolvedTy::Any => None,
-        }
-    }
-
     fn get_impl(&self, id: &TypeId) -> Option<&Impls> {
-        self.impls.get(id)
+        if let Some(i) = self.impls.get(id) {
+            Some(i)
+        } else {
+            let ty = self.get_type_by_id(*id);
+
+            if ty == ResolvedTy::u32() || ty == ResolvedTy::i32() {
+                Some(&self.builtin_impls.u32_and_usize)
+            } else if ty == ResolvedTy::string() {
+                Some(&self.builtin_impls.string)
+            } else if ty == ResolvedTy::str() {
+                Some(&self.builtin_impls.str)
+            } else if ty.is_array() || ty.is_slice() {
+                Some(&self.builtin_impls.array_and_slice)
+            } else {
+                None
+            }
+        }
     }
 
     fn get_impl_mut(&mut self, id: &TypeId) -> &mut Impls {
         if !self.impls.contains_key(&id) {
             self.impls.insert(
                 *id,
-                (
+                self.get_impl(id).cloned().unwrap_or((
                     ImplInfo {
-                        self_ty: *id,
                         methods: HashMap::new(),
                         constants: HashMap::new(),
                     },
                     HashMap::new(),
-                ),
+                )),
             );
         }
 
         self.impls.get_mut(&id).unwrap()
+    }
+
+    fn add_bindings(
+        &mut self,
+        pat_res_es: Vec<PatResult>,
+        kind: VariableKind,
+    ) -> Result<(), SemanticError> {
+        let mut set: HashSet<Symbol> = HashSet::new();
+
+        for pat_res in pat_res_es {
+            for (symbol, type_id, mutbl) in pat_res.bindings {
+                if !set.insert(symbol.clone()) {
+                    return Err(SemanticError::MultiBinding);
+                }
+
+                // bindings 不能遮蔽 const, 即使不同作用域
+                // binding 还应该检查没有重名
+                if let Ok((_, var)) = self.search_value(&symbol)
+                    && var.kind.is_constant()
+                {
+                    return Err(SemanticError::ShadowedConstantByBinding);
+                }
+
+                self.add_value(
+                    symbol,
+                    Variable {
+                        ty: type_id,
+                        mutbl,
+                        kind: kind.clone(),
+                    },
+                    true,
+                )?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1075,13 +1042,26 @@ impl Visitor for SemanticAnalyzer {
                     FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
                 };
 
+                let param_tys = sig
+                    .decl
+                    .inputs
+                    .iter()
+                    .map(|x| self.resolve_ty(&x.ty))
+                    .collect::<Result<Vec<_>, SemanticError>>()?;
+
+                let params_ty_ids = param_tys
+                    .iter()
+                    .map(|x| self.intern_type(x.clone()))
+                    .collect::<Vec<_>>();
+                let bindings = sig
+                    .decl
+                    .inputs
+                    .iter()
+                    .zip(params_ty_ids.into_iter())
+                    .map(|(param, id)| self.visit_pat(&param.pat, id))
+                    .collect::<Result<Vec<_>, SemanticError>>()?;
+
                 if self.is_free_scope() {
-                    let param_tys = sig
-                        .decl
-                        .inputs
-                        .iter()
-                        .map(|x| self.resolve_ty(&x.ty))
-                        .collect::<Result<Vec<_>, SemanticError>>()?;
                     let tyid =
                         self.intern_type(ResolvedTy::Fn(param_tys, Box::new(ret_ty.clone())));
 
@@ -1097,8 +1077,12 @@ impl Visitor for SemanticAnalyzer {
                 }
 
                 self.enter_scope(self.current_ast_id)?;
+
                 let ret_ty_id = self.intern_type(ret_ty);
+                // local 函数参数能被 item 遮蔽，从而应该是在此处添加到 scope 的
+                self.add_bindings(bindings, VariableKind::Inited)?;
                 *self.get_scope_mut().kind.as_fn_mut().unwrap() = ret_ty_id;
+
                 self.exit_scope()?;
             }
             AnalyzeStage::Impl => {}
@@ -1208,12 +1192,23 @@ impl Visitor for SemanticAnalyzer {
                     return Err(SemanticError::MultiDefined);
                 }
 
-                *self
-                    .search_type_mut(&ident.symbol)?
-                    .1
-                    .kind
-                    .as_struct_mut()
-                    .unwrap() = fields;
+                let (id, info) = self.search_type_mut(&ident.symbol)?;
+                *info.kind.as_struct_mut().unwrap() = fields;
+
+                // unit struct 隐式添加了一个 constant
+                if variant_data.is_unit() {
+                    let self_ty = self.resolve_ty_in_scope_by_symbol(&ident.symbol, id);
+                    let self_ty_id = self.intern_type(self_ty);
+                    self.add_value(
+                        ident.symbol.clone(),
+                        Variable {
+                            ty: self_ty_id,
+                            mutbl: Mutability::Not,
+                            kind: VariableKind::Constant(ConstEvalValue::UnitStruct),
+                        },
+                        false,
+                    )?;
+                }
             }
             AnalyzeStage::Impl => {}
             AnalyzeStage::Body => {} // 先认为 body 阶段什么也不用做，除非在定义 array 长度时做些什么
@@ -1348,7 +1343,6 @@ impl Visitor for SemanticAnalyzer {
                         trait_impls.insert(
                             full_name,
                             ImplInfo {
-                                self_ty: self_ty_id,
                                 methods: methods,
                                 constants: constants,
                             },
@@ -1423,17 +1417,7 @@ impl Visitor for SemanticAnalyzer {
                 if matches!(self.stage, AnalyzeStage::Body) {
                     // 从下面复制上来的，因为不用检查变量是否初始化
                     let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
-                    for (symbol, type_id, mutbl) in pat_res.bindings {
-                        self.add_value(
-                            symbol,
-                            Variable {
-                                ty: type_id,
-                                mutbl: mutbl,
-                                kind: VariableKind::Inited,
-                            },
-                            true,
-                        )?;
-                    }
+                    self.add_bindings(vec![pat_res], VariableKind::Inited)?;
                 }
             }
             LocalKind::Init(expr) => {
@@ -1450,19 +1434,7 @@ impl Visitor for SemanticAnalyzer {
                         };
                         if flag {
                             let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
-                            for (symbol, type_id, mutbl) in pat_res.bindings {
-                                self.add_value(
-                                    symbol,
-                                    Variable {
-                                        ty: type_id,
-                                        mutbl: mutbl,
-                                        kind: VariableKind::Inited,
-                                    },
-                                    true,
-                                )?;
-                            }
-                            // TODO: binding 时要进行检查：不能遮蔽 const, enum, struct
-                            // binding 还应该检查没有重名，但删减过后的 spec 不会出现重名
+                            self.add_bindings(vec![pat_res], VariableKind::Inited)?;
                         }
                     }
                     None => {}

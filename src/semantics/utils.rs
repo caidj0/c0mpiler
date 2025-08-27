@@ -41,9 +41,8 @@ pub struct TypeInfo {
     pub kind: TypeKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImplInfo {
-    pub self_ty: TypeId,
     pub methods: HashMap<Symbol, FnSig>,
     pub constants: HashMap<Symbol, Constant>,
 }
@@ -66,13 +65,13 @@ impl ImplInfo {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct FnSig {
     pub type_id: TypeId,
     pub is_placeholder: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Constant {
     pub ty: TypeId,
     pub value: ConstEvalValue,
@@ -93,12 +92,19 @@ pub enum TypeKind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, EnumAsInner)]
 pub enum VariableKind {
     Decl,
     Inited,
     Fn,
     Constant(ConstEvalValue),
+}
+
+impl VariableKind {
+    pub fn can_shadow_unconditionally(&self, shadowed: &Self) -> bool {
+        matches!(self, Self::Constant(_) | Self::Fn)
+            && matches!(shadowed, Self::Decl | Self::Inited)
+    }
 }
 
 #[derive(Debug)]
@@ -182,3 +188,83 @@ pub enum AnalyzeStage {
 }
 
 pub type Impls = (ImplInfo, HashMap<FullName, ImplInfo>);
+
+#[derive(Debug)]
+pub struct BulitInImpls {
+    pub u32_and_usize: Impls,
+    pub string: Impls,
+    pub str: Impls,
+    pub array_and_slice: Impls,
+}
+
+impl BulitInImpls {
+    pub fn new(type_table: &mut TypeTable) -> Self {
+        let len_method: ResolvedTy = ResolvedTy::Fn(
+            vec![ResolvedTy::ref_implicit_self()],
+            Box::new(ResolvedTy::usize()),
+        );
+        let len_method_id = type_table.intern(len_method);
+        let len = (
+            Symbol("len".to_string()),
+            FnSig {
+                type_id: len_method_id,
+                is_placeholder: false,
+            },
+        );
+        let to_string_method = ResolvedTy::Fn(
+            vec![ResolvedTy::ref_implicit_self()],
+            Box::new(ResolvedTy::string()),
+        );
+        let to_string_method_id = type_table.intern(to_string_method);
+        let to_string = (
+            Symbol("to_string".to_string()),
+            FnSig {
+                type_id: to_string_method_id,
+                is_placeholder: false,
+            },
+        );
+        let as_str_method = ResolvedTy::Fn(
+            vec![ResolvedTy::ref_implicit_self()],
+            Box::new(ResolvedTy::ref_str()),
+        );
+        let as_str_method_id = type_table.intern(as_str_method);
+        let as_str = (
+            Symbol("as_str".to_string()),
+            FnSig {
+                type_id: as_str_method_id,
+                is_placeholder: false,
+            },
+        );
+
+        Self {
+            u32_and_usize: (
+                ImplInfo {
+                    methods: HashMap::from([to_string]),
+                    constants: HashMap::new(),
+                },
+                HashMap::new(),
+            ),
+            string: (
+                ImplInfo {
+                    methods: HashMap::from([as_str, len.clone()]),
+                    constants: HashMap::new(),
+                },
+                HashMap::new(),
+            ),
+            str: (
+                ImplInfo {
+                    methods: HashMap::from([len.clone()]),
+                    constants: HashMap::new(),
+                },
+                HashMap::new(),
+            ),
+            array_and_slice: (
+                ImplInfo {
+                    methods: HashMap::from([len.clone()]),
+                    constants: HashMap::new(),
+                },
+                HashMap::new(),
+            ),
+        }
+    }
+}

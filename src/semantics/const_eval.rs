@@ -5,11 +5,12 @@ use crate::{
     semantics::SemanticError,
 };
 
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, Clone, EnumAsInner)]
 pub enum ConstEvalValue {
     Placeholder,
     U32(u32),
     USize(u32),
+    UnitStruct,
 }
 
 #[derive(Debug)]

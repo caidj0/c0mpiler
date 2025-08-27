@@ -40,4 +40,6 @@ pub enum SemanticError {
     NotAllTraitItemsImplemented,
     MultipleApplicable,
     LocalVarOutOfFn,
+    MultiBinding,
+    ShadowedConstantByBinding,
 }
