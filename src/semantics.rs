@@ -165,7 +165,7 @@ impl SemanticAnalyzer {
             return Err(SemanticError::InvaildScope);
         }
 
-        self.current_scope = self.get_scope().id;
+        self.current_scope = self.get_scope().father;
 
         Ok(())
     }
