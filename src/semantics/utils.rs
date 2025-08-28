@@ -144,6 +144,7 @@ impl DerefLevel {
 pub enum ScopeKind {
     Lambda,
     Root,
+    Crate,
     Trait(TypeId),
     Impl(TypeId),
     Fn { ret_ty: TypeId },

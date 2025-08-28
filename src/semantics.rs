@@ -92,12 +92,95 @@ impl SemanticAnalyzer {
         type_table.intern(ResolvedTy::unit()); // Unit -> 0
         type_table.intern(ResolvedTy::Any); // Any -> 1
 
+        let preludes = [
+            (
+                Symbol("print".to_string()),
+                Variable {
+                    ty: type_table.intern(ResolvedTy::Fn(
+                        vec![ResolvedTy::ref_str()],
+                        Box::new(ResolvedTy::unit()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Fn,
+                },
+            ),
+            (
+                Symbol("println".to_string()),
+                Variable {
+                    ty: type_table.intern(ResolvedTy::Fn(
+                        vec![ResolvedTy::ref_str()],
+                        Box::new(ResolvedTy::unit()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Fn,
+                },
+            ),
+            (
+                Symbol("printInt".to_string()),
+                Variable {
+                    ty: type_table.intern(ResolvedTy::Fn(
+                        vec![ResolvedTy::i32()],
+                        Box::new(ResolvedTy::unit()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Fn,
+                },
+            ),
+            (
+                Symbol("printlnInt".to_string()),
+                Variable {
+                    ty: type_table.intern(ResolvedTy::Fn(
+                        vec![ResolvedTy::i32()],
+                        Box::new(ResolvedTy::unit()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Fn,
+                },
+            ),
+            (
+                Symbol("getString".to_string()),
+                Variable {
+                    ty: type_table.intern(ResolvedTy::Fn(vec![], Box::new(ResolvedTy::string()))),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Fn,
+                },
+            ),
+            (
+                Symbol("getInt".to_string()),
+                Variable {
+                    ty: type_table.intern(ResolvedTy::Fn(vec![], Box::new(ResolvedTy::i32()))),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Fn,
+                },
+            ),
+            (
+                Symbol("exit".to_string()),
+                Variable {
+                    ty: type_table.intern(ResolvedTy::Fn(
+                        vec![ResolvedTy::i32()],
+                        Box::new(ResolvedTy::unit()),
+                    )),
+                    mutbl: Mutability::Not,
+                    kind: VariableKind::Fn,
+                },
+            ),
+        ];
+
+        let root_scope = Scope {
+            id: 0,
+            kind: ScopeKind::Root,
+            types: HashMap::new(),
+            values: HashMap::from(preludes),
+            children: HashSet::new(),
+            father: 0,
+        };
+
         let builtin_impls = BulitInImpls::new(&mut type_table);
 
         Self {
             type_table: RefCell::new(type_table),
             impls: HashMap::default(),
-            scopes: HashMap::default(),
+            scopes: HashMap::from([(0, root_scope)]),
             current_scope: 0,
             stage: AnalyzeStage::SymbolCollect,
             state: AnalyzerState::default(),
@@ -129,6 +212,7 @@ impl SemanticAnalyzer {
             match scope.kind {
                 ScopeKind::Lambda => {}
                 ScopeKind::Root
+                | ScopeKind::Crate
                 | ScopeKind::Trait(_)
                 | ScopeKind::Impl(_)
                 | ScopeKind::Fn { ret_ty: _ } => return Err(SemanticError::NoLoopScope),
@@ -147,7 +231,7 @@ impl SemanticAnalyzer {
             let scope = self.scopes.get(&id).unwrap();
             match scope.kind {
                 ScopeKind::Lambda | ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {}
-                ScopeKind::Root | ScopeKind::Trait(_) | ScopeKind::Impl(_) => {
+                ScopeKind::Root | ScopeKind::Crate | ScopeKind::Trait(_) | ScopeKind::Impl(_) => {
                     return Err(SemanticError::NoFnScope);
                 }
                 ScopeKind::Fn { ret_ty: _ } => return Ok(scope),
@@ -530,7 +614,7 @@ impl SemanticAnalyzer {
         loop {
             let scope = self.scopes.get(&id).unwrap();
             ret.push(Symbol(format!("${}", scope.id)));
-            if matches!(scope.kind, ScopeKind::Root) {
+            if matches!(scope.kind, ScopeKind::Crate) {
                 break;
             } else {
                 id = scope.father;
@@ -586,7 +670,7 @@ impl SemanticAnalyzer {
             };
 
             match scope.kind {
-                ScopeKind::Root => return Err(SemanticError::UnknownType),
+                ScopeKind::Crate => return Err(SemanticError::UnknownType),
                 ScopeKind::Trait(type_id) | ScopeKind::Impl(type_id) => return Ok(type_id),
                 _ => id = scope.father,
             }
@@ -980,25 +1064,24 @@ impl Visitor for SemanticAnalyzer {
     type PatRes = Result<PatResult, SemanticError>;
 
     fn visit_crate(&mut self, krate: &Crate) -> Result<(), SemanticError> {
-        if matches!(self.stage, AnalyzeStage::SymbolCollect) {
-            self.scopes.insert(
-                krate.id,
-                Scope {
-                    id: krate.id,
-                    kind: ScopeKind::Root,
-                    types: HashMap::default(),
-                    values: HashMap::default(),
-                    children: HashSet::default(),
-                    father: krate.id,
-                },
-            );
-        }
-        self.current_scope = krate.id;
+        let old_state = self.state;
         self.state.current_ast_id = krate.id;
 
+        match self.stage {
+            AnalyzeStage::SymbolCollect => {
+                self.add_scope(ScopeKind::Crate)?;
+            }
+            AnalyzeStage::Definition => {}
+            AnalyzeStage::Impl => {}
+            AnalyzeStage::Body => {}
+        }
+
+        self.enter_scope()?;
         for item in &krate.items {
             self.visit_item(item)?
         }
+        self.exit_scope()?;
+        self.state = old_state;
         Ok(())
     }
 

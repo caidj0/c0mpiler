@@ -252,7 +252,7 @@ impl<'a> TokenBuffer<'a> {
         TokenIter {
             buffer: &self.buffer,
             pos: 0,
-            id: 0,
+            id: 1, /* 0 为 Root 保留 */
         }
     }
 }
