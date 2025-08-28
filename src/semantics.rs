@@ -1532,7 +1532,7 @@ impl Visitor for SemanticAnalyzer {
             self.visit_associate_item(item)?;
         }
         self.exit_scope()?;
-        Err(SemanticError::Unimplemented)
+        Ok(())
     }
 
     fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Self::ExprRes {
@@ -2422,57 +2422,59 @@ impl Visitor for SemanticAnalyzer {
             })
             .collect::<Result<Vec<_>, SemanticError>>()?;
 
-        let (id, struct_info) = self.search_type_by_path(qself, path)?;
-        match &struct_info.kind {
-            TypeKind::Placeholder => panic!("Impossible"),
-            TypeKind::Struct { fields } => match self.stage {
-                AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => {
-                    Ok(None)
-                }
-                AnalyzeStage::Body => {
-                    let exp_fields = exp_fields
-                        .into_iter()
-                        .map(|(s, e)| match e {
-                            Some(e) => Some((s, e)),
-                            None => None,
-                        })
-                        .collect::<Option<Vec<_>>>()
-                        .unwrap();
+        match self.stage {
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
+            AnalyzeStage::Body => {
+                let (id, struct_info) = self.search_type_by_path(qself, path)?;
+                match &struct_info.kind {
+                    TypeKind::Placeholder => panic!("Impossible"),
+                    TypeKind::Struct { fields } => {
+                        let exp_fields = exp_fields
+                            .into_iter()
+                            .map(|(s, e)| match e {
+                                Some(e) => Some((s, e)),
+                                None => None,
+                            })
+                            .collect::<Option<Vec<_>>>()
+                            .unwrap();
 
-                    for (_, res) in &exp_fields {
-                        no_assignee!(res.category);
-                    }
-
-                    let mut dic: HashMap<Symbol, ExprResult> = HashMap::new();
-
-                    for x in exp_fields.into_iter() {
-                        if let Some(_) = dic.insert(x.0, x.1) {
-                            return Err(SemanticError::MultiSpecifiedField);
+                        for (_, res) in &exp_fields {
+                            no_assignee!(res.category);
                         }
-                    }
 
-                    for (field_ident, field_type_id) in fields {
-                        if let Some(res) = dic.get(&field_ident) {
-                            let res_ty = self.get_type_by_id(res.type_id);
-                            let field_ty = self.get_type_by_id(*field_type_id);
-                            if !res_ty.can_trans_to_target_type(&field_ty) {
-                                return Err(SemanticError::TypeMismatch);
+                        let mut dic: HashMap<Symbol, ExprResult> = HashMap::new();
+
+                        for x in exp_fields.into_iter() {
+                            if let Some(_) = dic.insert(x.0, x.1) {
+                                return Err(SemanticError::MultiSpecifiedField);
                             }
                         }
+
+                        for (field_ident, field_type_id) in fields {
+                            if let Some(res) = dic.get(&field_ident) {
+                                let res_ty = self.get_type_by_id(res.type_id);
+                                let field_ty = self.get_type_by_id(*field_type_id);
+                                if !res_ty.can_trans_to_target_type(&field_ty) {
+                                    return Err(SemanticError::TypeMismatch);
+                                }
+                            }
+                        }
+
+                        Ok(Some(ExprResult {
+                            type_id: self.intern_type(
+                                self.resolve_ty_in_scope_by_symbol(&struct_info.name, id),
+                            ),
+                            category: ExprCategory::Not,
+                        }))
                     }
 
-                    Ok(Some(ExprResult {
-                        type_id: self
-                            .intern_type(self.resolve_ty_in_scope_by_symbol(&struct_info.name, id)),
-                        category: ExprCategory::Not,
-                    }))
+                    TypeKind::Enum { fields: _ }
+                    | TypeKind::Trait {
+                        methods: _,
+                        constants: _,
+                    } => Err(SemanticError::NotStructType),
                 }
-            },
-            TypeKind::Enum { fields: _ }
-            | TypeKind::Trait {
-                methods: _,
-                constants: _,
-            } => Err(SemanticError::NotStructType),
+            }
         }
     }
 
