@@ -13,7 +13,7 @@ use std::{
 
 use crate::{
     ast::{
-        Crate, Mutability, NodeId, Span, Symbol,
+        BindingMode, Crate, Mutability, NodeId, Span, Symbol,
         expr::{
             AssignExpr, AssignOp, AssignOpExpr, BinOp, BinaryExpr, BlockExpr, CallExpr, Expr,
             ExprKind, FieldExpr, IfExpr, LitKind, LoopExpr, MethodCallExpr, PathExpr, RepeatExpr,
@@ -23,7 +23,7 @@ use crate::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
             StructItem, TraitItem, TraitRef,
         },
-        pat::{IdentPat, RefPat},
+        pat::{IdentPat, PathPat, RefPat},
         path::{Path, PathSegment, QSelf},
         stmt::{LocalKind, StmtKind},
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
@@ -578,6 +578,27 @@ impl SemanticAnalyzer {
         self.search_type(&first.ident.symbol)
     }
 
+    fn search_value_by_path(
+        &self,
+        qself: &Option<Box<QSelf>>,
+        path: &Path,
+    ) -> Result<(NodeId, &Variable), SemanticError> {
+        if qself.is_some() {
+            return Err(SemanticError::Unimplemented);
+        }
+
+        if path.segments.len() > 1 {
+            return Err(SemanticError::Unimplemented);
+        }
+
+        let first = path.segments.first().unwrap();
+        if first.args.is_some() {
+            return Err(SemanticError::Unimplemented);
+        }
+
+        self.search_value(&first.ident.symbol)
+    }
+
     fn search_type(&self, ident: &Symbol) -> Result<(NodeId, &TypeInfo), SemanticError> {
         self.search_type_from(ident, self.current_scope)
     }
@@ -879,9 +900,15 @@ impl SemanticAnalyzer {
         }
 
         self.enter_scope()?;
-        for stmt in &expr.stmts {
-            // parser 阶段就保证只有最后一条 stmt 有可能不是 unit type
+        let stmt_len = expr.stmts.len();
+        for (index, stmt) in expr.stmts.iter().enumerate() {
             ret = self.visit_stmt(stmt)?;
+            if index + 1 != stmt_len
+                && let Some(r) = &ret
+                && r.type_id != Self::unit_type()
+            {
+                return Err(SemanticError::TypeMismatch);
+            }
         }
 
         if let Some(ret_res) = &mut ret {
@@ -1509,40 +1536,48 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Self::ExprRes {
-        match &stmt.kind {
+        let old_state = self.state;
+        self.state.current_span = stmt.span;
+
+        let default_ret = match self.stage {
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
+            AnalyzeStage::Body => Ok(Some(Self::unit_expr_result())),
+        };
+
+        let ret = match &stmt.kind {
             StmtKind::Let(local_stmt) => {
                 self.visit_let_stmt(local_stmt)?;
+                default_ret
             }
             StmtKind::Item(item) => {
                 self.visit_item(item)?;
+                default_ret
             }
-            StmtKind::Expr(expr) => return self.visit_expr(expr),
-            StmtKind::Semi(expr) => {
-                return self
-                    .visit_expr(expr)
-                    .map(|x| x.map(|_| Self::unit_expr_result()));
-            }
-            StmtKind::Empty(_) => {}
+            StmtKind::Expr(expr) => self.visit_expr(expr),
+            StmtKind::Semi(expr) => self
+                .visit_expr(expr)
+                .map(|x| x.map(|_| Self::unit_expr_result())),
+            StmtKind::Empty(_) => default_ret,
+        };
+
+        if matches!(ret, Ok(_)) {
+            self.state = old_state;
         }
 
-        match self.stage {
-            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
-            AnalyzeStage::Body => Ok(Some(Self::unit_expr_result())),
-        }
+        ret
     }
 
     fn visit_let_stmt(&mut self, stmt: &crate::ast::stmt::LocalStmt) -> Result<(), SemanticError> {
-        let expected_ty = match &stmt.ty {
-            Some(ty) => self.resolve_ty(&ty)?,
-            None => return Err(SemanticError::Unimplemented),
+        let Some(ty) = &stmt.ty else {
+            return Err(SemanticError::Unimplemented);
         };
-
-        let expected_ty_id = self.intern_type(expected_ty.clone());
 
         match &stmt.kind {
             LocalKind::Decl => {
                 if matches!(self.stage, AnalyzeStage::Body) {
                     // 从下面复制上来的，因为不用检查变量是否初始化
+                    let expected_ty = self.resolve_ty(&ty)?;
+                    let expected_ty_id = self.intern_type(expected_ty.clone());
                     let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
                     self.add_bindings(vec![pat_res], VariableKind::Inited)?;
                 }
@@ -1553,15 +1588,14 @@ impl Visitor for SemanticAnalyzer {
                     Some(ExprResult { type_id, category }) => {
                         debug_assert!(matches!(self.stage, AnalyzeStage::Body));
                         no_assignee!(category);
-                        let flag = if expected_ty_id == type_id {
-                            true
-                        } else {
-                            let expr_ty = self.get_type_by_id(type_id);
-                            expected_ty.is_number_type() && (expr_ty == ResolvedTy::integer())
-                        };
-                        if flag {
+                        let expected_ty = self.resolve_ty(&ty)?;
+                        let expected_ty_id = self.intern_type(expected_ty.clone());
+                        let expr_ty = self.get_type_by_id(type_id);
+                        if expr_ty.can_trans_to_target_type(&expected_ty) {
                             let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
                             self.add_bindings(vec![pat_res], VariableKind::Inited)?;
+                        } else {
+                            return Err(SemanticError::TypeMismatch);
                         }
                     }
                     None => {}
@@ -1616,10 +1650,7 @@ impl Visitor for SemanticAnalyzer {
             .map(|x| self.visit_expr(x))
             .collect::<Result<Vec<Option<ExprResult>>, SemanticError>>()?;
 
-        if matches!(
-            self.stage,
-            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition
-        ) {
+        if !matches!(self.stage, AnalyzeStage::Body) {
             debug_assert!(expr_res.iter().all(|x| x.is_none()));
             return Ok(None);
         }
@@ -1673,8 +1704,7 @@ impl Visitor for SemanticAnalyzer {
                         debug_assert!(!target.is_implicit_self_or_ref_implicit_self());
                         let income_ty = self.get_type_by_id(income.type_id);
 
-                        // 有没有 auto deref 的情况？
-                        if income_ty != *target {
+                        if !income_ty.can_trans_to_target_type(target) {
                             return Err(SemanticError::TypeMismatch);
                         }
                     }
@@ -2078,6 +2108,7 @@ impl Visitor for SemanticAnalyzer {
         self.visit_block_expr_with_kind(expr, ScopeKind::Lambda)
     }
 
+    // TODO: 如何实现 () = () 和 Struct {a: _ } = Struct {a: xxx }
     fn visit_assign_expr(&mut self, AssignExpr(left, right): &AssignExpr) -> Self::ExprRes {
         let left_res = self.visit_expr(&left)?;
         let right_res = self.visit_expr(&right)?;
@@ -2185,7 +2216,7 @@ impl Visitor for SemanticAnalyzer {
                 let (ty1, mut1) = self.get_type_by_id(res1.type_id).deref_all();
                 let ty2 = self.get_type_by_id(res2.type_id);
 
-                if ty2 != ResolvedTy::usize() {
+                if !ty2.can_trans_to_target_type(&ResolvedTy::usize()) {
                     return Err(SemanticError::TypeMismatch);
                 }
 
@@ -2518,10 +2549,23 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_path_pat(
         &mut self,
-        pat: &crate::ast::pat::PathPat,
+        PathPat(qself, path): &PathPat,
         expected_ty: TypeId,
     ) -> Self::PatRes {
-        todo!()
+        if let Ok((_, var)) = self.search_value_by_path(qself, path) {
+            if var.kind.is_constant() {
+                return Err(SemanticError::Unimplemented);
+            }
+        }
+
+        self.visit_ident_pat(
+            &IdentPat(
+                BindingMode(crate::ast::ByRef::No, Mutability::Not),
+                path.get_ident().clone(),
+                None,
+            ),
+            expected_ty,
+        )
     }
 
     fn visit_tuple_pat(

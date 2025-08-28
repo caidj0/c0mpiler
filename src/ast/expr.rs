@@ -159,7 +159,13 @@ impl Expr {
     pub fn is_block(&self) -> bool {
         matches!(
             self.kind,
-            ExprKind::Block(_) | ExprKind::If(_) | ExprKind::Match(_)
+            ExprKind::ConstBlock(_)
+                | ExprKind::If(_)
+                | ExprKind::While(_)
+                | ExprKind::ForLoop(_)
+                | ExprKind::Loop(_)
+                | ExprKind::Match(_)
+                | ExprKind::Block(_)
         )
     }
 }

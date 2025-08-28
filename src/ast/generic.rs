@@ -40,7 +40,15 @@ impl OptionEatable for AngleBracketedArgs {
         loop_until!(iter, TokenType::Gt, {
             args.push(AngleBracketedArg::eat(iter)?);
 
-            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::Gt);
+            // 与 exp1 < exp2 有二义性，一个 work around
+            let token = iter.peek()?;
+            if token.token_type == TokenType::Comma {
+                iter.advance();
+            } else if token.token_type == TokenType::Gt {
+                break;
+            } else {
+                return Ok(None);
+            }
         });
 
         Ok(Some(Self {

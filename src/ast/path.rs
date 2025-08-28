@@ -20,6 +20,10 @@ impl Path {
     pub fn get_symbol(&self) -> &Symbol {
         &self.segments.last().unwrap().ident.symbol
     }
+
+    pub fn get_ident(&self) -> &Ident {
+        &self.segments.last().unwrap().ident
+    }
 }
 
 #[derive(Debug)]
