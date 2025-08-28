@@ -13,11 +13,11 @@ use std::{
 
 use crate::{
     ast::{
-        Crate, Mutability, NodeId, Symbol,
+        Crate, Mutability, NodeId, Span, Symbol,
         expr::{
             AssignExpr, AssignOp, AssignOpExpr, BinOp, BinaryExpr, BlockExpr, CallExpr, Expr,
-            FieldExpr, IfExpr, LitKind, LoopExpr, MethodCallExpr, PathExpr, RepeatExpr, RetExpr,
-            StructExpr, StructRest, UnOp, WhileExpr,
+            ExprKind, FieldExpr, IfExpr, LitKind, LoopExpr, MethodCallExpr, PathExpr, RepeatExpr,
+            RetExpr, StructExpr, StructRest, UnOp, WhileExpr,
         },
         item::{
             AssocItemKind, ConstItem, EnumItem, FnItem, FnRetTy, ImplItem, Item, ItemKind,
@@ -28,6 +28,7 @@ use crate::{
         stmt::{LocalKind, StmtKind},
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
+    lexer::TokenPosition,
     semantics::{
         const_eval::{ConstEvalError, ConstEvalValue},
         error::SemanticError,
@@ -55,6 +56,24 @@ macro_rules! get_mutbl {
     };
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct AnalyzerState {
+    pub current_ast_id: NodeId,
+    pub current_span: Span,
+}
+
+impl Default for AnalyzerState {
+    fn default() -> Self {
+        Self {
+            current_ast_id: Default::default(),
+            current_span: Span {
+                begin: TokenPosition { line: 0, col: 0 },
+                end: TokenPosition { line: 0, col: 0 },
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
     type_table: RefCell<TypeTable>,
@@ -62,7 +81,7 @@ pub struct SemanticAnalyzer {
     scopes: HashMap<NodeId, Scope>,
     current_scope: NodeId,
     stage: AnalyzeStage,
-    current_ast_id: NodeId,
+    state: AnalyzerState,
 
     builtin_impls: BulitInImpls,
 }
@@ -81,9 +100,17 @@ impl SemanticAnalyzer {
             scopes: HashMap::default(),
             current_scope: 0,
             stage: AnalyzeStage::SymbolCollect,
-            current_ast_id: 0,
+            state: AnalyzerState::default(),
             builtin_impls,
         }
+    }
+
+    pub fn get_stage(&self) -> &AnalyzeStage {
+        &self.stage
+    }
+
+    pub fn get_state(&self) -> &AnalyzerState {
+        &self.state
     }
 
     fn get_scope_mut(&mut self) -> &mut Scope {
@@ -129,7 +156,9 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn add_scope(&mut self, id: NodeId, kind: ScopeKind) -> Result<(), SemanticError> {
+    fn add_scope(&mut self, kind: ScopeKind) -> Result<(), SemanticError> {
+        let id = self.state.current_ast_id;
+
         if self.scopes.contains_key(&id) || self.get_scope().children.contains(&id) {
             return Err(SemanticError::InvaildScope);
         }
@@ -150,7 +179,8 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn enter_scope(&mut self, id: NodeId) -> Result<(), SemanticError> {
+    fn enter_scope(&mut self) -> Result<(), SemanticError> {
+        let id = self.state.current_ast_id;
         if !self.get_scope().children.contains(&id) {
             return Err(SemanticError::UndefinedScope);
         }
@@ -483,10 +513,15 @@ impl SemanticAnalyzer {
     }
 
     pub fn visit(&mut self, krate: &crate::ast::Crate) -> Result<(), SemanticError> {
-        self.stage = AnalyzeStage::SymbolCollect;
-        self.visit_crate(krate)?;
-        self.stage = AnalyzeStage::Definition;
-        self.visit_crate(krate)?;
+        for stage in [
+            AnalyzeStage::SymbolCollect,
+            AnalyzeStage::Definition,
+            AnalyzeStage::Impl,
+            AnalyzeStage::Body,
+        ] {
+            self.stage = stage;
+            self.visit_crate(krate)?;
+        }
         Ok(())
     }
 
@@ -742,12 +777,15 @@ impl SemanticAnalyzer {
         expr: &BlockExpr,
         kind: ScopeKind,
     ) -> Result<Option<ExprResult>, SemanticError> {
-        let old_ast_id = self.current_ast_id;
-        self.current_ast_id = expr.id;
+        let old_state = self.state;
+        self.state = AnalyzerState {
+            current_ast_id: expr.id,
+            current_span: expr.span,
+        };
         let mut ret;
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                self.add_scope(self.current_ast_id, kind)?;
+                self.add_scope(kind)?;
                 ret = None
             }
             AnalyzeStage::Definition | AnalyzeStage::Impl => {
@@ -756,7 +794,7 @@ impl SemanticAnalyzer {
             AnalyzeStage::Body => ret = Some(Self::unit_expr_result()),
         }
 
-        self.enter_scope(self.current_ast_id)?;
+        self.enter_scope()?;
         for stmt in &expr.stmts {
             // parser 阶段就保证只有最后一条 stmt 有可能不是 unit type
             ret = self.visit_stmt(stmt)?;
@@ -778,7 +816,7 @@ impl SemanticAnalyzer {
 
         self.exit_scope()?;
 
-        self.current_ast_id = old_ast_id;
+        self.state = old_state;
         Ok(ret.map(|x| ExprResult {
             type_id: x.type_id,
             category: ExprCategory::Not,
@@ -956,7 +994,7 @@ impl Visitor for SemanticAnalyzer {
             );
         }
         self.current_scope = krate.id;
-        self.current_ast_id = krate.id;
+        self.state.current_ast_id = krate.id;
 
         for item in &krate.items {
             self.visit_item(item)?
@@ -965,8 +1003,11 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_item(&mut self, item: &Item) -> Result<(), SemanticError> {
-        let old_id = self.current_ast_id;
-        self.current_ast_id = item.id;
+        let old_state = self.state;
+        self.state = AnalyzerState {
+            current_ast_id: item.id,
+            current_span: item.span,
+        };
         match &item.kind {
             ItemKind::Const(const_item) => self.visit_const_item(const_item)?,
             ItemKind::Fn(fn_item) => self.visit_fn_item(fn_item)?,
@@ -976,18 +1017,21 @@ impl Visitor for SemanticAnalyzer {
             ItemKind::Trait(trait_item) => self.visit_trait_item(trait_item)?,
             ItemKind::Impl(impl_item) => self.visit_impl_item(impl_item)?,
         }
-        self.current_ast_id = old_id;
+        self.state = old_state;
         Ok(())
     }
 
     fn visit_associate_item(&mut self, item: &Item<AssocItemKind>) -> Result<(), SemanticError> {
-        let old_id = self.current_ast_id;
-        self.current_ast_id = item.id;
+        let old_state = self.state;
+        self.state = AnalyzerState {
+            current_ast_id: item.id,
+            current_span: item.span,
+        };
         match &item.kind {
             AssocItemKind::Const(const_item) => self.visit_const_item(const_item)?,
             AssocItemKind::Fn(fn_item) => self.visit_fn_item(fn_item)?,
         }
-        self.current_ast_id = old_id;
+        self.state = old_state;
         Ok(())
     }
 
@@ -1034,7 +1078,7 @@ impl Visitor for SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                self.add_scope(self.current_ast_id, ScopeKind::Fn { ret_ty: TypeId(0) })?;
+                self.add_scope(ScopeKind::Fn { ret_ty: TypeId(0) })?;
             }
             AnalyzeStage::Definition => {
                 let ret_ty = match &sig.decl.output {
@@ -1076,7 +1120,7 @@ impl Visitor for SemanticAnalyzer {
                     )?;
                 }
 
-                self.enter_scope(self.current_ast_id)?;
+                self.enter_scope()?;
 
                 let ret_ty_id = self.intern_type(ret_ty);
                 // local 函数参数能被 item 遮蔽，从而应该是在此处添加到 scope 的
@@ -1088,7 +1132,7 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::Impl => {}
             AnalyzeStage::Body => {}
         }
-        self.enter_scope(self.current_ast_id)?;
+        self.enter_scope()?;
         if let Some(b) = body {
             self.visit_block_expr(b)?;
         }
@@ -1237,7 +1281,7 @@ impl Visitor for SemanticAnalyzer {
                         },
                     },
                 )?;
-                self.add_scope(self.current_ast_id, ScopeKind::Trait(id))?;
+                self.add_scope(ScopeKind::Trait(id))?;
             }
             AnalyzeStage::Definition => {
                 let (methods, constants) = self.resolve_assoc_items(items, true)?;
@@ -1247,7 +1291,7 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::Impl => {}
             AnalyzeStage::Body => {} // 应该也什么也不用做？
         }
-        self.enter_scope(self.current_ast_id)?;
+        self.enter_scope()?;
         for item in items {
             self.visit_associate_item(item)?;
         }
@@ -1267,7 +1311,7 @@ impl Visitor for SemanticAnalyzer {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
                 // 0 type 作为 self ty 的占位符
-                self.add_scope(self.current_ast_id, ScopeKind::Impl(TypeId(0)))?;
+                self.add_scope(ScopeKind::Impl(TypeId(0)))?;
             }
             AnalyzeStage::Definition => {}
             AnalyzeStage::Impl => {
@@ -1367,13 +1411,13 @@ impl Visitor for SemanticAnalyzer {
                     }
                 }
 
-                self.enter_scope(self.current_ast_id)?;
+                self.enter_scope()?;
                 *self.get_scope_mut().kind.as_impl_mut().unwrap() = self_ty_id;
                 self.exit_scope()?;
             }
             AnalyzeStage::Body => {}
         }
-        self.enter_scope(self.current_ast_id)?;
+        self.enter_scope()?;
         for item in items {
             self.visit_associate_item(item)?;
         }
@@ -1442,6 +1486,44 @@ impl Visitor for SemanticAnalyzer {
             }
         }
         Ok(())
+    }
+
+    fn visit_expr(&mut self, expr: &Expr) -> Self::ExprRes {
+        let old_state = self.state;
+        self.state.current_span = expr.span;
+        let res = match &expr.kind {
+            ExprKind::Array(array_expr) => self.visit_array_expr(array_expr),
+            ExprKind::ConstBlock(const_block_expr) => self.visit_const_block_expr(const_block_expr),
+            ExprKind::Call(call_expr) => self.visit_call_expr(call_expr),
+            ExprKind::MethodCall(method_call_expr) => self.visit_method_call_expr(method_call_expr),
+            ExprKind::Tup(tup_expr) => self.visit_tup_expr(tup_expr),
+            ExprKind::Binary(binary_expr) => self.visit_binary_expr(binary_expr),
+            ExprKind::Unary(unary_expr) => self.visit_unary_expr(unary_expr),
+            ExprKind::Lit(lit_expr) => self.visit_lit_expr(lit_expr),
+            ExprKind::Cast(cast_expr) => self.visit_cast_expr(cast_expr),
+            ExprKind::Let(let_expr) => self.visit_let_expr(let_expr),
+            ExprKind::If(if_expr) => self.visit_if_expr(if_expr),
+            ExprKind::While(while_expr) => self.visit_while_expr(while_expr),
+            ExprKind::ForLoop(for_loop_expr) => self.visit_for_loop_expr(for_loop_expr),
+            ExprKind::Loop(loop_expr) => self.visit_loop_expr(loop_expr),
+            ExprKind::Match(match_expr) => self.visit_match_expr(match_expr),
+            ExprKind::Block(block_expr) => self.visit_block_expr(block_expr),
+            ExprKind::Assign(assign_expr) => self.visit_assign_expr(assign_expr),
+            ExprKind::AssignOp(assign_op_expr) => self.visit_assign_op_expr(assign_op_expr),
+            ExprKind::Field(field_expr) => self.visit_field_expr(field_expr),
+            ExprKind::Index(index_expr) => self.visit_index_expr(index_expr),
+            ExprKind::Range(range_expr) => self.visit_range_expr(range_expr),
+            ExprKind::Underscore(underscore_expr) => self.visit_underscore_expr(underscore_expr),
+            ExprKind::Path(path_expr) => self.visit_path_expr(path_expr),
+            ExprKind::AddrOf(addr_of_expr) => self.visit_addr_of_expr(addr_of_expr),
+            ExprKind::Break(break_expr) => self.visit_break_expr(break_expr),
+            ExprKind::Continue(continue_expr) => self.visit_continue_expr(continue_expr),
+            ExprKind::Ret(ret_expr) => self.visit_ret_expr(ret_expr),
+            ExprKind::Struct(struct_expr) => self.visit_struct_expr(struct_expr),
+            ExprKind::Repeat(repeat_expr) => self.visit_repeat_expr(repeat_expr),
+        }?;
+        self.state = old_state;
+        Ok(res)
     }
 
     fn visit_array_expr(&mut self, expr: &crate::ast::expr::ArrayExpr) -> Self::ExprRes {

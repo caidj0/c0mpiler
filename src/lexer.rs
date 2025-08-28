@@ -7,7 +7,7 @@ use crate::{
     tokens::{TokenType, get_all_tokens},
 };
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 pub struct TokenPosition {
     pub line: usize,
     pub col: usize,

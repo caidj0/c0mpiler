@@ -21,8 +21,22 @@ fn main() {
             let mut semantic = SemanticAnalyzer::new();
             let result = semantic.visit(&ast);
             match result {
-                Ok(_) => println!("{:#?}", semantic),
-                Err(err) => println!("{:#?}", err),
+                Ok(_) => println!("Semantic check passed!"),
+                Err(err) => {
+                    println!(
+                        "Error occured: {:#?}, analyze stage: {:?}, state: {:?}.",
+                        err,
+                        semantic.get_stage(),
+                        semantic.get_state()
+                    );
+                    println!(
+                        "{:#?}",
+                        test_str
+                            .lines()
+                            .nth(semantic.get_state().current_span.begin.line)
+                            .unwrap()
+                    );
+                }
             }
         }
         Err(err) => {

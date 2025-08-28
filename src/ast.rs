@@ -17,7 +17,7 @@ use crate::{
 
 pub type NodeId = usize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Span {
     pub begin: TokenPosition,
     pub end: TokenPosition,
@@ -278,7 +278,7 @@ impl Mutability {
     pub fn can_trans_to(&self, other: &Self) -> bool {
         match (self, other) {
             (Mutability::Not, Mutability::Mut) => false,
-            _ => true
+            _ => true,
         }
     }
 }

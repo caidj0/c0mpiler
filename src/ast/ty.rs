@@ -1,6 +1,9 @@
 use crate::{
     ast::{
-        expr::AnonConst, generic::GenericBounds, path::{Path, QSelf}, ASTError, ASTResult, Eatable, Mutability, NodeId, OptionEatable, Span
+        ASTError, ASTResult, Eatable, Mutability, NodeId, OptionEatable, Span,
+        expr::AnonConst,
+        generic::GenericBounds,
+        path::{Path, QSelf},
     },
     is_keyword, kind_check,
     lexer::TokenIter,

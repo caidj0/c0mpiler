@@ -1,5 +1,7 @@
 use crate::{
-    ast::{expr::Expr, item::Item, pat::Pat, ty::Ty, ASTResult, Eatable, NodeId, Span}, is_keyword, match_keyword, tokens::TokenType
+    ast::{ASTResult, Eatable, NodeId, Span, expr::Expr, item::Item, pat::Pat, ty::Ty},
+    is_keyword, match_keyword,
+    tokens::TokenType,
 };
 
 #[derive(Debug)]

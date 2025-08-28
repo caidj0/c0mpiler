@@ -1,6 +1,9 @@
 use enum_as_inner::EnumAsInner;
 
-use crate::{ast::{Mutability, Symbol}, semantics::utils::FullName};
+use crate::{
+    ast::{Mutability, Symbol},
+    semantics::utils::FullName,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum ResolvedTy {
