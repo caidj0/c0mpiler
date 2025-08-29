@@ -1,3 +1,5 @@
+use std::vec;
+
 use enum_as_inner::EnumAsInner;
 
 use crate::{
@@ -68,6 +70,10 @@ impl ResolvedTy {
         Self::BulitIn(Symbol("String".to_string()), Vec::new())
     }
 
+    pub fn big_self() -> Self {
+        Self::Named(FullName(vec![Symbol("Self".to_string())]))
+    }
+
     pub fn implicit_self() -> Self {
         Self::ImplicitSelf
     }
@@ -130,6 +136,32 @@ impl ResolvedTy {
                 .map(|x| x.is_implicit_self_or_ref_implicit_self())
                 .unwrap_or(false),
             _ => false,
+        }
+    }
+
+    pub fn expand_self(&self, self_ty: &Self) -> Self {
+        if *self == Self::big_self() {
+            self_ty.clone()
+        } else {
+            match self_ty {
+                ResolvedTy::Ref(resolved_ty, mutability) => {
+                    ResolvedTy::Ref(Box::new(resolved_ty.expand_self(self_ty)), *mutability)
+                }
+                ResolvedTy::Array(resolved_ty, len) => {
+                    ResolvedTy::Array(Box::new(resolved_ty.expand_self(self_ty)), *len)
+                }
+                ResolvedTy::Slice(resolved_ty) => {
+                    ResolvedTy::Slice(Box::new(resolved_ty.expand_self(self_ty)))
+                }
+                ResolvedTy::Tup(items) => {
+                    ResolvedTy::Tup(items.iter().map(|x| x.expand_self(self_ty)).collect())
+                }
+                ResolvedTy::Fn(items, resolved_ty) => ResolvedTy::Fn(
+                    items.iter().map(|x| x.expand_self(self_ty)).collect(),
+                    Box::new(resolved_ty.expand_self(self_ty)),
+                ),
+                _ => self.clone(),
+            }
         }
     }
 

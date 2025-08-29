@@ -470,7 +470,8 @@ impl SemanticAnalyzer {
     ) -> Result<Option<TypeId>, SemanticError> {
         let ty = self.get_type_by_id(id);
 
-        // builtin 在 get_impl 中返回
+        // builtin 在 get_impl 中返回，从而此处不需要特殊处理
+        // visit_impl_item 时保证了 implinfo 中的 fn 只有第一位可能出现 Self 类型，其他位置的 Self 都被展开了
         if let Some((inherent_impl, trait_impls)) = self.get_impl(&id) {
             match inherent_impl.get(name) {
                 Some(ImplInfoItem::Constant(constant)) => {
@@ -702,26 +703,30 @@ impl SemanticAnalyzer {
         self.get_self_type_from(self.current_scope)
     }
 
-    // 这个函数不会展开隐式 self（为了保留函数参数中的 self），但是会展开 Self
-    fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
+    fn resolve_ty_self_kind_specified(
+        &self,
+        ty: &Ty,
+        expand_self: bool,
+    ) -> Result<ResolvedTy, SemanticError> {
         match &ty.kind {
-            TyKind::Slice(slice_ty) => {
-                Ok(ResolvedTy::Slice(Box::new(self.resolve_ty(&slice_ty.0)?)))
-            }
+            TyKind::Slice(slice_ty) => Ok(ResolvedTy::Slice(Box::new(
+                self.resolve_ty_self_kind_specified(&slice_ty.0, expand_self)?,
+            ))),
             TyKind::Array(array_ty) => Ok(ResolvedTy::Array(
-                Box::new(self.resolve_ty(&array_ty.0)?),
+                Box::new(self.resolve_ty_self_kind_specified(&array_ty.0, expand_self)?),
                 self.const_eval(&ResolvedTy::usize(), &array_ty.1.value)?
                     .into_u_size()
                     .unwrap(),
             )),
-            TyKind::Ref(RefTy(MutTy { ty: ty2, mutbl })) => {
-                Ok(ResolvedTy::Ref(Box::new(self.resolve_ty(ty2)?), *mutbl))
-            }
+            TyKind::Ref(RefTy(MutTy { ty: ty2, mutbl })) => Ok(ResolvedTy::Ref(
+                Box::new(self.resolve_ty_self_kind_specified(ty2, expand_self)?),
+                *mutbl,
+            )),
             TyKind::Tup(tup_ty) => Ok(ResolvedTy::Tup(
                 tup_ty
                     .0
                     .iter()
-                    .map(|x| self.resolve_ty(x))
+                    .map(|x| self.resolve_ty_self_kind_specified(x, expand_self))
                     .collect::<Result<Vec<_>, SemanticError>>()?,
             )),
             TyKind::Path(path_ty) => {
@@ -741,7 +746,11 @@ impl SemanticAnalyzer {
                         if seg.args.is_some() {
                             return Err(SemanticError::InvaildPath);
                         }
-                        return Ok(self.get_type_by_id(self.get_self_type()?).clone());
+                        return Ok(if expand_self {
+                            self.get_type_by_id(self.get_self_type()?).clone()
+                        } else {
+                            ResolvedTy::big_self()
+                        });
                     }
                     return Err(SemanticError::InvaildPath);
                 }
@@ -768,7 +777,12 @@ impl SemanticAnalyzer {
                                                     generic_arg,
                                                 ) => match generic_arg {
                                                     crate::ast::generic::GenericArg::Type(ty) => {
-                                                        args_v.push(self.resolve_ty(ty)?)
+                                                        args_v.push(
+                                                            self.resolve_ty_self_kind_specified(
+                                                                ty,
+                                                                expand_self,
+                                                            )?,
+                                                        )
                                                     }
                                                 },
                                             }
@@ -786,8 +800,13 @@ impl SemanticAnalyzer {
             TyKind::TraitObject(_) => Err(SemanticError::Unimplemented),
             TyKind::ImplTrait(_) => Err(SemanticError::Unimplemented),
             TyKind::Infer(_) => Ok(ResolvedTy::Infer),
-            TyKind::ImplicitSelf => Ok(ResolvedTy::ImplicitSelf),
+            TyKind::ImplicitSelf => Ok(ResolvedTy::implicit_self()),
         }
+    }
+
+    // 这个函数不会展开 self（为了保留函数参数中的 self），但是会展开 Self
+    fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
+        self.resolve_ty_self_kind_specified(ty, true)
     }
 
     fn resolve_ty_in_scope_by_symbol(&self, s: &Symbol, id: usize) -> ResolvedTy {
@@ -944,18 +963,20 @@ impl SemanticAnalyzer {
     fn resolve_assoc_items(
         &self,
         items: &Vec<Box<Item<AssocItemKind>>>,
-        can_be_placeholder: bool,
+        is_trait_item: bool,
     ) -> Result<(HashMap<Symbol, FnSig>, HashMap<Symbol, Constant>), SemanticError> {
         let mut methods = HashMap::new();
         let mut constants = HashMap::new();
+        let expand_self = !is_trait_item;
+
         for item in items {
             match &item.kind {
                 AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
-                    let resloved_ty = self.resolve_ty(&ty)?;
+                    let resloved_ty = self.resolve_ty_self_kind_specified(&ty, expand_self)?;
                     let value = match expr {
                         Some(e) => self.const_eval(&resloved_ty, e)?,
                         None => {
-                            if can_be_placeholder {
+                            if is_trait_item {
                                 ConstEvalValue::Placeholder
                             } else {
                                 return Err(SemanticError::ConstantWithoutBody);
@@ -981,11 +1002,11 @@ impl SemanticAnalyzer {
                         .decl
                         .inputs
                         .iter()
-                        .map(|x| self.resolve_ty(&x.ty))
+                        .map(|x| self.resolve_ty_self_kind_specified(&x.ty, expand_self))
                         .collect::<Result<Vec<_>, SemanticError>>()?;
                     let ret_ty = match &sig.decl.output {
                         FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
-                        FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
+                        FnRetTy::Ty(ty) => self.resolve_ty_self_kind_specified(&ty, expand_self)?,
                     };
                     let fn_type = ResolvedTy::Fn(param_tys, Box::new(ret_ty));
                     let fn_type_id = self.intern_type(fn_type);
@@ -995,7 +1016,7 @@ impl SemanticAnalyzer {
                         return Err(SemanticError::MultiDefined);
                     }
 
-                    if body.is_none() && !can_be_placeholder {
+                    if body.is_none() && !is_trait_item {
                         return Err(SemanticError::FnWithoutBody);
                     }
 
@@ -1244,7 +1265,13 @@ impl Visitor for SemanticAnalyzer {
         }
         self.enter_scope()?;
         if let Some(b) = body {
-            self.visit_block_expr(b)?;
+            let res = self.visit_block_expr(b)?;
+            if let Some(res) = res {
+                no_assignee!(res.category);
+                if *self.get_scope().kind.as_fn().unwrap() != res.type_id {
+                    return Err(SemanticError::TypeMismatch);
+                }
+            }
         }
         self.exit_scope()?;
         Ok(())
@@ -1423,12 +1450,20 @@ impl Visitor for SemanticAnalyzer {
                 // 0 type 作为 self ty 的占位符
                 self.add_scope(ScopeKind::Impl(TypeId(0)))?;
             }
-            AnalyzeStage::Definition => {}
-            AnalyzeStage::Impl => {
+            AnalyzeStage::Definition => {
                 let self_ty = self.resolve_ty(&self_ty)?;
                 let self_ty_id = self.intern_type(self_ty);
 
-                // TODO: 此处应该进入 impl scope，另外在收集内部函数之前 self_ty 就应该被定义了
+                self.enter_scope()?;
+                *self.get_scope_mut().kind.as_impl_mut().unwrap() = self_ty_id;
+                self.exit_scope()?;
+            }
+            AnalyzeStage::Impl => {
+                self.enter_scope()?;
+                let self_ty_id = self.get_scope().kind.as_impl().unwrap().clone();
+                let self_ty = self.get_type_by_id(self_ty_id);
+
+                // trait 中使用 Self 作为类型，送到 impl 时替换为具体的 Type
                 let (methods, constants) = self.resolve_assoc_items(items, false)?;
 
                 match of_trait {
@@ -1462,7 +1497,12 @@ impl Visitor for SemanticAnalyzer {
                         }));
 
                         for (symbol, sig) in &methods {
-                            let Some(trait_sig) = trait_methods.get(&symbol) else {
+                            let Some(trait_sig) = trait_methods.get(&symbol).map(|x| FnSig {
+                                type_id: self.intern_type(
+                                    self.get_type_by_id(x.type_id).expand_self(&self_ty),
+                                ),
+                                ..*x
+                            }) else {
                                 return Err(SemanticError::NotTraitMember);
                             };
 
@@ -1474,7 +1514,14 @@ impl Visitor for SemanticAnalyzer {
                         }
 
                         for (symbol, constant) in &constants {
-                            let Some(trait_constant) = trait_constants.get(&symbol) else {
+                            let Some(trait_constant) =
+                                trait_constants.get(&symbol).map(|x| Constant {
+                                    ty: self.intern_type(
+                                        self.get_type_by_id(x.ty).expand_self(&self_ty),
+                                    ),
+                                    value: x.value.clone(),
+                                })
+                            else {
                                 return Err(SemanticError::NotTraitMember);
                             };
 
@@ -1522,8 +1569,6 @@ impl Visitor for SemanticAnalyzer {
                     }
                 }
 
-                self.enter_scope()?;
-                *self.get_scope_mut().kind.as_impl_mut().unwrap() = self_ty_id;
                 self.exit_scope()?;
             }
             AnalyzeStage::Body => {}
