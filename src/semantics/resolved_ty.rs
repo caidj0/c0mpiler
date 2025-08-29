@@ -2,7 +2,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{Mutability, Symbol},
-    semantics::utils::FullName,
+    semantics::utils::{DerefLevel, FullName},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
@@ -33,6 +33,10 @@ impl ResolvedTy {
     }
 
     pub fn integer() -> Self {
+        Self::BulitIn(Symbol("integer".to_string()), Vec::new())
+    }
+
+    pub fn signed_integer() -> Self {
         Self::BulitIn(Symbol("integer".to_string()), Vec::new())
     }
 
@@ -76,24 +80,24 @@ impl ResolvedTy {
         Self::Ref(Box::new(Self::implicit_self()), Mutability::Mut)
     }
 
-    pub fn try_deref(self) -> (Self, Mutability) {
+    pub fn try_deref(self) -> (Self, DerefLevel) {
         if let ResolvedTy::Ref(resolved, mutbl) = self {
-            (*resolved, mutbl)
+            (*resolved, DerefLevel::Deref(mutbl))
         } else {
-            (self, Mutability::Mut)
+            (self, DerefLevel::Not)
         }
     }
 
-    pub fn deref_all(self) -> (Self, Mutability) {
+    pub fn deref_all(self) -> (Self, DerefLevel) {
         let mut ret_ty = self;
-        let mut ret_mut = Mutability::Mut;
+        let mut level = DerefLevel::Not;
 
         while let ResolvedTy::Ref(resolved, mutbl) = ret_ty {
             ret_ty = *resolved;
-            ret_mut = ret_mut.merge(mutbl)
+            level = level.merge(DerefLevel::Deref(mutbl))
         }
 
-        (ret_ty, ret_mut)
+        (ret_ty, level)
     }
 
     pub fn is_number_type(&self) -> bool {
@@ -102,6 +106,11 @@ impl ResolvedTy {
             || *self == Self::u32()
             || *self == Self::usize()
             || *self == Self::isize()
+            || *self == Self::signed_integer()
+    }
+
+    pub fn is_signed_number_type(&self) -> bool {
+        *self == Self::i32() || *self == Self::isize() || *self == Self::signed_integer()
     }
 
     pub fn is_implicit_self_or_ref_implicit_self(&self) -> bool {
@@ -155,16 +164,13 @@ impl ResolvedTy {
         }
 
         match (self, target) {
-            (ResolvedTy::BulitIn(symbol1, args1), ResolvedTy::BulitIn(symbol2, args2)) => {
-                let arg_same = args1.iter().zip(args2.iter()).all(|(x, y)| x == y);
-                if arg_same && symbol1 == symbol2 {
+            (ResolvedTy::BulitIn(_, _), ResolvedTy::BulitIn(_, _)) => {
+                if (*self == ResolvedTy::integer() && target.is_number_type())
+                    || (*self == ResolvedTy::signed_integer() && target.is_signed_number_type())
+                {
                     true
                 } else {
-                    if *self == ResolvedTy::integer() && target.is_number_type() {
-                        true
-                    } else {
-                        false
-                    }
+                    false
                 }
             }
             (ResolvedTy::Named(_), ResolvedTy::Named(_)) => false,

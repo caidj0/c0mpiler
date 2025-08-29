@@ -37,19 +37,19 @@ impl OptionEatable for AngleBracketedArgs {
 
         let mut args = Vec::new();
 
-        loop_until!(iter, TokenType::Gt, {
-            args.push(AngleBracketedArg::eat(iter)?);
+        // 与 exp1 < exp2 有二义性，以下是一个 work around
+        if (|| -> Result<(), crate::ast::ASTError> {
+            loop_until!(iter, TokenType::Gt, {
+                args.push(AngleBracketedArg::eat(iter)?);
 
-            // 与 exp1 < exp2 有二义性，一个 work around
-            let token = iter.peek()?;
-            if token.token_type == TokenType::Comma {
-                iter.advance();
-            } else if token.token_type == TokenType::Gt {
-                break;
-            } else {
-                return Ok(None);
-            }
-        });
+                skip_keyword_or_break!(iter, TokenType::Comma, TokenType::Gt);
+            });
+            Ok(())
+        })()
+        .is_err()
+        {
+            return Ok(None);
+        }
 
         Ok(Some(Self {
             args,

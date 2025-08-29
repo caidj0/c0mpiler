@@ -849,8 +849,8 @@ impl SemanticAnalyzer {
         let mut ret_ty = self.get_type_by_id(*types.first().unwrap());
         for x in types {
             let t = self.get_type_by_id(x);
-            if ret_ty != t {
-                if ret_ty == ResolvedTy::integer() && t.is_number_type() {
+            if !t.can_trans_to_target_type(&ret_ty) {
+                if ret_ty.can_trans_to_target_type(&t) {
                     ret_ty = t;
                 } else {
                     return Err(SemanticError::TypeMismatch);
@@ -1428,6 +1428,7 @@ impl Visitor for SemanticAnalyzer {
                 let self_ty = self.resolve_ty(&self_ty)?;
                 let self_ty_id = self.intern_type(self_ty);
 
+                // TODO: 此处应该进入 impl scope，另外在收集内部函数之前 self_ty 就应该被定义了
                 let (methods, constants) = self.resolve_assoc_items(items, false)?;
 
                 match of_trait {
@@ -1675,8 +1676,11 @@ impl Visitor for SemanticAnalyzer {
         }))
     }
 
-    fn visit_const_block_expr(&mut self, expr: &crate::ast::expr::ConstBlockExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_const_block_expr(
+        &mut self,
+        _expr: &crate::ast::expr::ConstBlockExpr,
+    ) -> Self::ExprRes {
+        Err(SemanticError::Unimplemented)
     }
 
     fn visit_call_expr(&mut self, CallExpr(expr, params): &CallExpr) -> Self::ExprRes {
@@ -1825,87 +1829,158 @@ impl Visitor for SemanticAnalyzer {
                 no_assignee!(res1.category);
                 no_assignee!(res2.category);
 
-                let ty1 = self.get_type_by_id(res1.type_id).try_deref().0;
-                let ty2 = self.get_type_by_id(res2.type_id).try_deref().0;
+                // TODO: &1 + &2 之类的
+                let ty1 = self.get_type_by_id(res1.type_id);
+                let ty2 = self.get_type_by_id(res2.type_id);
 
-                match bin_op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                        if !ty1.is_number_type() || !ty2.is_number_type() {
-                            return Err(SemanticError::NoImplementation);
-                        }
-                        let ret_ty = if ty1 == ResolvedTy::integer() {
-                            ty2
-                        } else if ty2 == ResolvedTy::integer() || ty1 == ty2 {
-                            ty1
-                        } else {
-                            return Err(SemanticError::NoImplementation);
-                        };
+                macro_rules! general_bin_op {
+                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
+                        matches!($op_exp, $op) && ($(($ty1 == $ty && $ty2.can_trans_to_target_type(&$ty1)))||*)
+                    };
+                }
 
-                        Ok(Some(ExprResult {
-                            type_id: self.intern_type(ret_ty.clone()),
-                            category: ExprCategory::Not,
-                        }))
-                    }
-                    BinOp::And | BinOp::Or => {
-                        if ty1 == ResolvedTy::bool() && ty2 == ResolvedTy::bool() {
-                            Ok(Some(ExprResult {
-                                type_id: self.intern_type(ResolvedTy::bool()),
-                                category: ExprCategory::Not,
-                            }))
-                        } else {
-                            Err(SemanticError::NoImplementation)
-                        }
-                    }
-                    BinOp::BitXor | BinOp::BitAnd | BinOp::BitOr => {
-                        if ty1 == ResolvedTy::bool() && ty2 == ResolvedTy::bool() {
-                            Ok(Some(ExprResult {
-                                type_id: self.intern_type(ResolvedTy::bool()),
-                                category: ExprCategory::Not,
-                            }))
-                        } else if ty1.is_number_type() && ty2.is_number_type() {
-                            let ret_ty = if ty1 == ResolvedTy::integer() {
-                                ty2
-                            } else if ty2 == ResolvedTy::integer() || ty1 == ty2 {
-                                ty1
-                            } else {
-                                return Err(SemanticError::NoImplementation);
-                            };
+                macro_rules! shift_bin_op {
+                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
+                        matches!($op_exp, $op) && $ty2.is_number_type() && ($($ty1 == $ty)||*)
+                    };
+                }
 
-                            Ok(Some(ExprResult {
-                                type_id: self.intern_type(ret_ty.clone()),
-                                category: ExprCategory::Not,
-                            }))
-                        } else {
-                            Err(SemanticError::NoImplementation)
-                        }
-                    }
-                    BinOp::Shl | BinOp::Shr => {
-                        if ty1.is_number_type() && ty2.is_number_type() {
-                            Ok(Some(ExprResult {
-                                type_id: self.intern_type(ty1.clone()),
-                                category: ExprCategory::Not,
-                            }))
-                        } else {
-                            Err(SemanticError::NoImplementation)
-                        }
-                    }
-                    BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Ge | BinOp::Gt => {
-                        if (matches!(ty1, ResolvedTy::BulitIn(_, _))
-                            && matches!(ty2, ResolvedTy::BulitIn(_, _))
-                            && ty1 == ty2)
-                            || ((ty1 == ResolvedTy::str() || ty1 == ResolvedTy::string())
-                                && (ty2 == ResolvedTy::str() || ty2 == ResolvedTy::string()))
-                            || (ty1 == ResolvedTy::integer() && ty2.is_number_type())
-                            || (ty2 == ResolvedTy::integer() && ty1.is_number_type())
-                        {
-                            Ok(Some(ExprResult {
-                                type_id: self.intern_type(ResolvedTy::bool()),
-                                category: ExprCategory::Not,
-                            }))
-                        } else {
-                            Err(SemanticError::NoImplementation)
-                        }
-                    }
+                if (matches!(bin_op, BinOp::Add))
+                    && ty1 == ResolvedTy::string()
+                    && ty2 == ResolvedTy::ref_str()
+                {
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(ResolvedTy::string()),
+                        category: ExprCategory::Not,
+                    }))
+                } else if (matches!(bin_op, BinOp::Eq | BinOp::Ne)
+                    && ((ty1 == ResolvedTy::string() || ty1 == ResolvedTy::ref_str())
+                        && (ty2 == ResolvedTy::ref_str() || ty2 == ResolvedTy::string())))
+                    || general_bin_op!(
+                        bin_op,
+                        ty1,
+                        ty2,
+                        BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Ge | BinOp::Gt,
+                        (
+                            ResolvedTy::integer(),
+                            ResolvedTy::signed_integer(),
+                            ResolvedTy::i32(),
+                            ResolvedTy::u32(),
+                            ResolvedTy::isize(),
+                            ResolvedTy::usize(),
+                            ResolvedTy::bool(),
+                            ResolvedTy::char()
+                        )
+                    )
+                {
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(ResolvedTy::bool()),
+                        category: ExprCategory::Not,
+                    }))
+                } else if general_bin_op!(
+                    bin_op,
+                    ty1,
+                    ty2,
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem,
+                    (
+                        ResolvedTy::integer(),
+                        ResolvedTy::signed_integer(),
+                        ResolvedTy::i32(),
+                        ResolvedTy::u32(),
+                        ResolvedTy::isize(),
+                        ResolvedTy::usize()
+                    )
+                ) || general_bin_op!(
+                    bin_op,
+                    ty1,
+                    ty2,
+                    BinOp::And | BinOp::Or,
+                    (ResolvedTy::bool())
+                ) || general_bin_op!(
+                    bin_op,
+                    ty1,
+                    ty2,
+                    BinOp::BitXor | BinOp::BitAnd | BinOp::BitOr,
+                    (
+                        ResolvedTy::integer(),
+                        ResolvedTy::signed_integer(),
+                        ResolvedTy::i32(),
+                        ResolvedTy::u32(),
+                        ResolvedTy::isize(),
+                        ResolvedTy::usize(),
+                        ResolvedTy::bool()
+                    )
+                ) || shift_bin_op!(
+                    bin_op,
+                    ty1,
+                    ty2,
+                    BinOp::Shl | BinOp::Shr,
+                    (
+                        ResolvedTy::integer(),
+                        ResolvedTy::signed_integer(),
+                        ResolvedTy::i32(),
+                        ResolvedTy::u32(),
+                        ResolvedTy::isize(),
+                        ResolvedTy::usize()
+                    )
+                ) {
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(ty1.clone()),
+                        category: ExprCategory::Not,
+                    }))
+                } else if general_bin_op!(
+                    bin_op,
+                    ty2,
+                    ty1,
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem,
+                    (
+                        ResolvedTy::integer(),
+                        ResolvedTy::signed_integer(),
+                        ResolvedTy::i32(),
+                        ResolvedTy::u32(),
+                        ResolvedTy::isize(),
+                        ResolvedTy::usize()
+                    )
+                ) || general_bin_op!(
+                    bin_op,
+                    ty2,
+                    ty1,
+                    BinOp::And | BinOp::Or,
+                    (ResolvedTy::bool())
+                ) || general_bin_op!(
+                    bin_op,
+                    ty2,
+                    ty1,
+                    BinOp::BitXor | BinOp::BitAnd | BinOp::BitOr,
+                    (
+                        ResolvedTy::integer(),
+                        ResolvedTy::signed_integer(),
+                        ResolvedTy::i32(),
+                        ResolvedTy::u32(),
+                        ResolvedTy::isize(),
+                        ResolvedTy::usize(),
+                        ResolvedTy::bool()
+                    )
+                ) || shift_bin_op!(
+                    bin_op,
+                    ty2,
+                    ty1,
+                    BinOp::Shl | BinOp::Shr,
+                    (
+                        ResolvedTy::integer(),
+                        ResolvedTy::signed_integer(),
+                        ResolvedTy::i32(),
+                        ResolvedTy::u32(),
+                        ResolvedTy::isize(),
+                        ResolvedTy::usize()
+                    )
+                ) {
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(ty2.clone()),
+                        category: ExprCategory::Not,
+                    }))
+                } else {
+                    Err(SemanticError::Unimplemented)
                 }
             }
             (None, Some(_)) | (Some(_), None) => panic!("Impossible!"),
@@ -1934,11 +2009,7 @@ impl Visitor for SemanticAnalyzer {
                     }
                     UnOp::Not => {
                         let ty = ty.try_deref().0;
-                        if ty == ResolvedTy::bool()
-                            || ty == ResolvedTy::integer()
-                            || ty == ResolvedTy::i32()
-                            || ty == ResolvedTy::u32()
-                        {
+                        if ty == ResolvedTy::bool() || ty.is_number_type() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ty.clone()),
                                 category: ExprCategory::Not,
@@ -1949,9 +2020,14 @@ impl Visitor for SemanticAnalyzer {
                     }
                     UnOp::Neg => {
                         let ty = ty.try_deref().0;
-                        if ty == ResolvedTy::i32() || ty == ResolvedTy::integer() {
+                        if ty.is_signed_number_type() {
                             Ok(Some(ExprResult {
-                                type_id: self.intern_type(ResolvedTy::i32()),
+                                type_id: self.intern_type(ty),
+                                category: ExprCategory::Not,
+                            }))
+                        } else if ty == ResolvedTy::integer() {
+                            Ok(Some(ExprResult {
+                                type_id: self.intern_type(ResolvedTy::signed_integer()),
                                 category: ExprCategory::Not,
                             }))
                         } else {
@@ -2162,21 +2238,74 @@ impl Visitor for SemanticAnalyzer {
                 let left_ty = self.get_type_by_id(left_res.type_id);
                 let right_ty = self.get_type_by_id(right_res.type_id);
 
-                // TODO：把 visit_binary_expr 抽象一下，和这个一起做
-                match op {
-                    AssignOp::AddAssign => todo!(),
-                    AssignOp::SubAssign => todo!(),
-                    AssignOp::MulAssign => todo!(),
-                    AssignOp::DivAssign => todo!(),
-                    AssignOp::RemAssign => todo!(),
-                    AssignOp::BitXorAssign => todo!(),
-                    AssignOp::BitAndAssign => todo!(),
-                    AssignOp::BitOrAssign => todo!(),
-                    AssignOp::ShlAssign => todo!(),
-                    AssignOp::ShrAssign => todo!(),
+                // 从 visit_binary_expr 复制
+                macro_rules! general_bin_op {
+                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
+                        matches!($op_exp, $op) && ($(($ty1 == $ty && $ty2.can_trans_to_target_type(&$ty1)))||*)
+                    };
                 }
 
-                Ok(Some(Self::unit_expr_result()))
+                macro_rules! shift_bin_op {
+                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
+                        matches!($op_exp, $op) && $ty2.is_number_type() && ($($ty1 == $ty)||*)
+                    };
+                }
+
+                if ((matches!(op, AssignOp::AddAssign))
+                    && left_ty == ResolvedTy::string()
+                    && right_ty == ResolvedTy::ref_str())
+                    || general_bin_op!(
+                        op,
+                        left_ty,
+                        right_ty,
+                        AssignOp::AddAssign
+                            | AssignOp::SubAssign
+                            | AssignOp::MulAssign
+                            | AssignOp::DivAssign
+                            | AssignOp::RemAssign,
+                        (
+                            ResolvedTy::integer(),
+                            ResolvedTy::signed_integer(),
+                            ResolvedTy::i32(),
+                            ResolvedTy::u32(),
+                            ResolvedTy::isize(),
+                            ResolvedTy::usize()
+                        )
+                    )
+                    || general_bin_op!(
+                        op,
+                        left_ty,
+                        right_ty,
+                        AssignOp::BitXorAssign | AssignOp::BitAndAssign | AssignOp::BitOrAssign,
+                        (
+                            ResolvedTy::integer(),
+                            ResolvedTy::signed_integer(),
+                            ResolvedTy::i32(),
+                            ResolvedTy::u32(),
+                            ResolvedTy::isize(),
+                            ResolvedTy::usize(),
+                            ResolvedTy::bool()
+                        )
+                    )
+                    || shift_bin_op!(
+                        op,
+                        left_ty,
+                        right_ty,
+                        AssignOp::ShlAssign | AssignOp::ShrAssign,
+                        (
+                            ResolvedTy::integer(),
+                            ResolvedTy::signed_integer(),
+                            ResolvedTy::i32(),
+                            ResolvedTy::u32(),
+                            ResolvedTy::isize(),
+                            ResolvedTy::usize()
+                        )
+                    )
+                {
+                    Ok(Some(Self::unit_expr_result()))
+                } else {
+                    Err(SemanticError::Unimplemented)
+                }
             }
         }
     }
@@ -2194,7 +2323,10 @@ impl Visitor for SemanticAnalyzer {
 
                 Ok(Some(ExprResult {
                     type_id: field.ty,
-                    category: ExprCategory::Place(res_mut.merge(deref_level.get_mutbl())),
+                    category: ExprCategory::Place(match deref_level {
+                        DerefLevel::Not => res_mut,
+                        DerefLevel::Deref(mutability) => mutability, // 当发生解引用时，可变性就只和引用的可变性有关
+                    }),
                 }))
             }
             None => Ok(None),
@@ -2213,7 +2345,7 @@ impl Visitor for SemanticAnalyzer {
                     ExprCategory::Only => return Err(SemanticError::AssigneeOnlyExpr),
                 };
                 no_assignee!(res2.category);
-                let (ty1, mut1) = self.get_type_by_id(res1.type_id).deref_all();
+                let (ty1, level) = self.get_type_by_id(res1.type_id).deref_all();
                 let ty2 = self.get_type_by_id(res2.type_id);
 
                 if !ty2.can_trans_to_target_type(&ResolvedTy::usize()) {
@@ -2223,7 +2355,10 @@ impl Visitor for SemanticAnalyzer {
                 if let ResolvedTy::Array(ele_ty, _) | ResolvedTy::Slice(ele_ty) = ty1 {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ele_ty.as_ref().clone()),
-                        category: ExprCategory::Place(res1_mut.merge(mut1)),
+                        category: ExprCategory::Place(match level {
+                            DerefLevel::Not => res1_mut,
+                            DerefLevel::Deref(mutability) => mutability,
+                        }),
                     }))
                 } else {
                     Err(SemanticError::TypeMismatch)
@@ -2595,8 +2730,8 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_lit_pat(
         &mut self,
-        pat: &crate::ast::pat::LitPat,
-        expected_ty: TypeId,
+        _pat: &crate::ast::pat::LitPat,
+        _expected_ty: TypeId,
     ) -> Self::PatRes {
         todo!()
     }
