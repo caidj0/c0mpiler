@@ -928,11 +928,13 @@ impl SemanticAnalyzer {
         let stmt_len = expr.stmts.len();
         for (index, stmt) in expr.stmts.iter().enumerate() {
             ret = self.visit_stmt(stmt)?;
-            if index + 1 != stmt_len
-                && let Some(r) = &ret
-                && r.type_id != Self::unit_type()
-            {
-                return Err(SemanticError::TypeMismatch);
+            if let Some(r) = &ret {
+                if index + 1 != stmt_len && r.type_id != Self::unit_type() {
+                    return Err(SemanticError::TypeMismatch);
+                }
+                if matches!(r.category, ExprCategory::Only) {
+                    return Err(SemanticError::AssigneeOnlyExpr);
+                }
             }
         }
 
@@ -1281,7 +1283,10 @@ impl Visitor for SemanticAnalyzer {
             if let Some(res) = res {
                 no_assignee!(res.category);
                 // TODO: 如何兼容 block 的尾随返回和 return expr？重新引入 Never Type？
-                if *self.get_scope().kind.as_fn().unwrap() != res.type_id {
+                let target_ty_id = self.get_scope().kind.as_fn().unwrap();
+                let target_ty = self.get_type_by_id(*target_ty_id);
+                let ret_ty = self.get_type_by_id(res.type_id);
+                if !ret_ty.can_trans_to_target_type(&target_ty) {
                     return Err(SemanticError::TypeMismatch);
                 }
             }
@@ -1865,7 +1870,10 @@ impl Visitor for SemanticAnalyzer {
     fn visit_tup_expr(&mut self, expr: &crate::ast::expr::TupExpr) -> Self::ExprRes {
         match &expr.0[..] {
             [] => Ok(if matches!(self.stage, AnalyzeStage::Body) {
-                Some(Self::unit_expr_result())
+                Some(ExprResult {
+                    type_id: Self::unit_type(),
+                    category: ExprCategory::Place(Mutability::Mut),
+                })
             } else {
                 None
             }),
@@ -2242,7 +2250,7 @@ impl Visitor for SemanticAnalyzer {
         self.visit_block_expr_with_kind(expr, ScopeKind::Lambda)
     }
 
-    // TODO: 如何实现 () = () 和 Struct {a: _ } = Struct {a: xxx }
+    // TODO: struct A; A = A;
     fn visit_assign_expr(&mut self, AssignExpr(left, right): &AssignExpr) -> Self::ExprRes {
         let left_res = self.visit_expr(&left)?;
         let right_res = self.visit_expr(&right)?;
@@ -2629,9 +2637,9 @@ impl Visitor for SemanticAnalyzer {
                             .collect::<Option<Vec<_>>>()
                             .unwrap();
 
-                        for (_, res) in &exp_fields {
-                            no_assignee!(res.category);
-                        }
+                        let cat = Self::utilize_category(
+                            exp_fields.iter().map(|x| x.1.category).collect(),
+                        )?;
 
                         let mut dic: HashMap<Symbol, ExprResult> = HashMap::new();
 
@@ -2655,7 +2663,7 @@ impl Visitor for SemanticAnalyzer {
                             type_id: self.intern_type(
                                 self.resolve_ty_in_scope_by_symbol(&struct_info.name, id),
                             ),
-                            category: ExprCategory::Not,
+                            category: cat,
                         }))
                     }
 

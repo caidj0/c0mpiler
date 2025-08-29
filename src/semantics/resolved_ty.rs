@@ -241,6 +241,7 @@ impl ResolvedTy {
                 panic!("Impossible")
             }
             (_, ResolvedTy::Infer) => true,
+            (ResolvedTy::Infer, _) => true, // TODO: Infer 类型到底如何变化？真的可以随意推导吗？
             _ => false,
         }
     }

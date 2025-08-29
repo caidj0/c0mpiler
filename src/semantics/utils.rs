@@ -162,7 +162,7 @@ pub struct Scope {
     pub father: NodeId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ExprCategory {
     Place(Mutability),
     Not, // 也就是 Value Expr
