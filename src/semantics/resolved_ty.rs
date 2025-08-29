@@ -16,9 +16,9 @@ pub enum ResolvedTy {
     Slice(Box<ResolvedTy>),
     Tup(Vec<ResolvedTy>),
     Fn(Vec<ResolvedTy>, Box<ResolvedTy>),
-    Infer,
     ImplicitSelf,
-    Any, // for underscore
+    Never,
+    Infer, // for underscore
 }
 
 impl ResolvedTy {
@@ -143,7 +143,7 @@ impl ResolvedTy {
         if *self == Self::big_self() {
             self_ty.clone()
         } else {
-            match self_ty {
+            match self {
                 ResolvedTy::Ref(resolved_ty, mutability) => {
                     ResolvedTy::Ref(Box::new(resolved_ty.expand_self(self_ty)), *mutability)
                 }
@@ -237,13 +237,10 @@ impl ResolvedTy {
             (ResolvedTy::Fn(_, _), ResolvedTy::Fn(_, _)) => {
                 unimplemented!()
             }
-            (ResolvedTy::Infer, ResolvedTy::Infer) => {
-                unimplemented!()
-            }
             (ResolvedTy::ImplicitSelf, ResolvedTy::ImplicitSelf) => {
                 panic!("Impossible")
             }
-            (ResolvedTy::Any, _) => true,
+            (_, ResolvedTy::Infer) => true,
             _ => false,
         }
     }

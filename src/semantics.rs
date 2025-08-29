@@ -90,7 +90,8 @@ impl SemanticAnalyzer {
     pub fn new() -> Self {
         let mut type_table: TypeTable = TypeTable::default();
         type_table.intern(ResolvedTy::unit()); // Unit -> 0
-        type_table.intern(ResolvedTy::Any); // Any -> 1
+        type_table.intern(ResolvedTy::Infer); // Infer -> 1
+        type_table.intern(ResolvedTy::Never); // Never -> 2
 
         let preludes = [
             (
@@ -452,13 +453,7 @@ impl SemanticAnalyzer {
                 Ok((var, deref_level.merge(DerefLevel::Deref(*mutability))))
             }
             ResolvedTy::ImplicitSelf => self.get_type_fields(self.get_self_type()?, symbol),
-            ResolvedTy::BulitIn(_, _)
-            | ResolvedTy::Array(_, _)
-            | ResolvedTy::Slice(_)
-            | ResolvedTy::Tup(_)
-            | ResolvedTy::Fn(_, _)
-            | ResolvedTy::Infer
-            | ResolvedTy::Any => Err(SemanticError::NonProvidedField),
+            _ => Err(SemanticError::NonProvidedField),
         }
     }
 
@@ -825,13 +820,24 @@ impl SemanticAnalyzer {
         TypeId(0)
     }
 
-    fn any_type() -> TypeId {
+    fn infer_type() -> TypeId {
         TypeId(1)
+    }
+
+    fn never_type() -> TypeId {
+        TypeId(2)
     }
 
     fn unit_expr_result() -> ExprResult {
         ExprResult {
             type_id: Self::unit_type(),
+            category: ExprCategory::Not,
+        }
+    }
+
+    fn never_expr_result() -> ExprResult {
+        ExprResult {
+            type_id: Self::never_type(),
             category: ExprCategory::Not,
         }
     }
@@ -858,11 +864,11 @@ impl SemanticAnalyzer {
     fn utilize_ty(&self, types: Vec<TypeId>) -> Result<TypeId, SemanticError> {
         let types: Vec<TypeId> = types
             .into_iter()
-            .filter(|x| *x != Self::any_type())
+            .filter(|x| *x != Self::infer_type())
             .collect();
 
         if types.is_empty() {
-            return Ok(Self::any_type());
+            return Ok(Self::infer_type());
         }
 
         let mut ret_ty = self.get_type_by_id(*types.first().unwrap());
@@ -961,7 +967,7 @@ impl SemanticAnalyzer {
     }
 
     fn resolve_assoc_items(
-        &self,
+        &mut self,
         items: &Vec<Box<Item<AssocItemKind>>>,
         is_trait_item: bool,
     ) -> Result<(HashMap<Symbol, FnSig>, HashMap<Symbol, Constant>), SemanticError> {
@@ -970,6 +976,11 @@ impl SemanticAnalyzer {
         let expand_self = !is_trait_item;
 
         for item in items {
+            let old_state = self.state;
+            self.state = AnalyzerState {
+                current_ast_id: item.id,
+                current_span: item.span,
+            };
             match &item.kind {
                 AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
                     let resloved_ty = self.resolve_ty_self_kind_specified(&ty, expand_self)?;
@@ -1029,6 +1040,7 @@ impl SemanticAnalyzer {
                     );
                 }
             }
+            self.state = old_state;
         }
         Ok((methods, constants))
     }
@@ -1268,6 +1280,7 @@ impl Visitor for SemanticAnalyzer {
             let res = self.visit_block_expr(b)?;
             if let Some(res) = res {
                 no_assignee!(res.category);
+                // TODO: 如何兼容 block 的尾随返回和 return expr？重新引入 Never Type？
                 if *self.get_scope().kind.as_fn().unwrap() != res.type_id {
                     return Err(SemanticError::TypeMismatch);
                 }
@@ -2422,7 +2435,7 @@ impl Visitor for SemanticAnalyzer {
         match self.stage {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
             AnalyzeStage::Body => Ok(Some(ExprResult {
-                type_id: self.intern_type(ResolvedTy::Any),
+                type_id: self.intern_type(ResolvedTy::Infer),
                 category: ExprCategory::Only,
             })),
         }
@@ -2565,17 +2578,15 @@ impl Visitor for SemanticAnalyzer {
             Some(res) => {
                 no_assignee!(res.category);
                 let scope = self.get_fn_scope()?;
-                let ScopeKind::Fn { ret_ty: target_id } = scope.kind else {
-                    panic!("Impossible")
-                };
+                let target_id = scope.kind.as_fn().unwrap();
 
                 let ret_ty = self.get_type_by_id(res.type_id);
-                let target_ty = self.get_type_by_id(target_id);
+                let target_ty = self.get_type_by_id(*target_id);
 
                 if !ret_ty.can_trans_to_target_type(&target_ty) {
                     Err(SemanticError::TypeMismatch)
                 } else {
-                    Ok(Some(Self::unit_expr_result()))
+                    Ok(Some(Self::never_expr_result()))
                 }
             }
             None => Ok(None),

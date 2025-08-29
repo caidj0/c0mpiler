@@ -198,6 +198,8 @@ define_tokens! {
     Virtual  :[literal] "virtual",
     Yield    :[literal] "yield",
 
+    Underscor:[literal] "_"    ,
+
     // Reserved
     ReservedGuardedString  :"{RESERVED_GUARDED_STRING_LITERAL}" -> err,
     ReservedNumber         :"{RESERVED_NUMBER}" -> err,
@@ -249,7 +251,6 @@ define_tokens! {
     Ge       :[literal] ">="   ,
     Le       :[literal] "<="   ,
     At       :[literal] "@"    ,
-    Underscor:[literal] "_"    ,
     Dot      :[literal] "."    ,
     DotDot   :[literal] ".."   ,
     DotDotDot:[literal] "..."  ,
