@@ -2252,8 +2252,8 @@ impl Visitor for SemanticAnalyzer {
 
     // TODO: struct A; A = A;
     fn visit_assign_expr(&mut self, AssignExpr(left, right): &AssignExpr) -> Self::ExprRes {
-        let left_res = self.visit_expr(&left)?;
         let right_res = self.visit_expr(&right)?;
+        let left_res = self.visit_expr(&left)?;
 
         match (left_res, right_res) {
             (None, None) => Ok(None),
@@ -2283,8 +2283,8 @@ impl Visitor for SemanticAnalyzer {
         &mut self,
         AssignOpExpr(op, left, right): &AssignOpExpr,
     ) -> Self::ExprRes {
-        let left_res = self.visit_expr(&left)?;
         let right_res = self.visit_expr(&right)?;
+        let left_res = self.visit_expr(&left)?;
 
         match (left_res, right_res) {
             (None, None) => Ok(None),
