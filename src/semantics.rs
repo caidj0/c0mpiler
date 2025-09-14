@@ -91,7 +91,6 @@ impl SemanticAnalyzer {
         let mut type_table: TypeTable = TypeTable::default();
         type_table.intern(ResolvedTy::unit()); // Unit -> 0
         type_table.intern(ResolvedTy::Infer); // Infer -> 1
-        type_table.intern(ResolvedTy::Never); // Never -> 2
 
         let preludes = [
             (
@@ -824,22 +823,16 @@ impl SemanticAnalyzer {
         TypeId(1)
     }
 
-    fn never_type() -> TypeId {
-        TypeId(2)
-    }
-
-    fn unit_expr_result() -> ExprResult {
+    fn unit_expr_result_int_specified(int_flow: InterruptControlFlow) -> ExprResult {
         ExprResult {
             type_id: Self::unit_type(),
             category: ExprCategory::Not,
+            int_flow,
         }
     }
 
-    fn never_expr_result() -> ExprResult {
-        ExprResult {
-            type_id: Self::never_type(),
-            category: ExprCategory::Not,
-        }
+    fn unit_expr_result() -> ExprResult {
+        Self::unit_expr_result_int_specified(InterruptControlFlow::Not)
     }
 
     fn const_eval(&self, ty: &ResolvedTy, expr: &Expr) -> Result<ConstEvalValue, SemanticError> {
@@ -912,52 +905,55 @@ impl SemanticAnalyzer {
             current_ast_id: expr.id,
             current_span: expr.span,
         };
-        let mut ret;
-        match self.stage {
+        let mut ret = match self.stage {
             AnalyzeStage::SymbolCollect => {
-                self.add_scope(kind)?;
-                ret = None
+                self.add_scope(kind.clone())?;
+                None
             }
-            AnalyzeStage::Definition | AnalyzeStage::Impl => {
-                ret = None;
-            }
-            AnalyzeStage::Body => ret = Some(Self::unit_expr_result()),
-        }
+            AnalyzeStage::Definition | AnalyzeStage::Impl => None,
+            AnalyzeStage::Body => Some(Self::unit_expr_result()),
+        };
 
         self.enter_scope()?;
         let stmt_len = expr.stmts.len();
         for (index, stmt) in expr.stmts.iter().enumerate() {
-            ret = self.visit_stmt(stmt)?;
-            if let Some(r) = &ret {
-                if index + 1 != stmt_len && r.type_id != Self::unit_type() {
-                    return Err(SemanticError::TypeMismatch);
-                }
-                if matches!(r.category, ExprCategory::Only) {
-                    return Err(SemanticError::AssigneeOnlyExpr);
+            let new_ret = self.visit_stmt(stmt)?;
+            match (&mut ret, new_ret) {
+                (None, None) => {}
+                (None, Some(_)) | (Some(_), None) => panic!("Impossible!"),
+                (Some(old), Some(new)) => {
+                    if (index + 1 != stmt_len
+                        || matches!(
+                            kind,
+                            ScopeKind::CycleExceptLoop | ScopeKind::Loop { ret_ty: _ }
+                        ))
+                        && new.type_id != Self::unit_type()
+                    {
+                        return Err(SemanticError::TypeMismatch);
+                    }
+
+                    old.replace_by(new);
                 }
             }
         }
 
-        if let Some(ret_res) = &mut ret {
-            match &self.get_scope().kind {
-                ScopeKind::Loop { ret_ty } => {
-                    if ret_res.type_id != Self::unit_type() {
-                        return Err(SemanticError::TypeMismatch);
-                    }
-                    if let Some(ret_ty) = ret_ty {
-                        ret_res.type_id = *ret_ty;
-                    }
-                }
-                _ => {}
-            }
+        if let (
+            ScopeKind::Loop {
+                ret_ty: Some(ret_ty),
+            },
+            Some(r),
+        ) = (&self.get_scope().kind, &mut ret)
+        {
+            debug_assert_eq!(r.type_id, Self::unit_type());
+            r.type_id = *ret_ty;
         }
 
         self.exit_scope()?;
 
         self.state = old_state;
         Ok(ret.map(|x| ExprResult {
-            type_id: x.type_id,
             category: ExprCategory::Not,
+            ..x
         }))
     }
 
@@ -1599,6 +1595,7 @@ impl Visitor for SemanticAnalyzer {
         Ok(())
     }
 
+    // 确保了返回值不为 AssigneeOnly
     fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Self::ExprRes {
         let old_state = self.state;
         self.state.current_span = stmt.span;
@@ -1617,10 +1614,26 @@ impl Visitor for SemanticAnalyzer {
                 self.visit_item(item)?;
                 default_ret
             }
-            StmtKind::Expr(expr) => self.visit_expr(expr),
-            StmtKind::Semi(expr) => self
-                .visit_expr(expr)
-                .map(|x| x.map(|_| Self::unit_expr_result())),
+            StmtKind::Expr(expr) => {
+                let res = self.visit_expr(expr)?;
+                match res {
+                    Some(res) => {
+                        no_assignee!(res.category);
+                        Ok(Some(res))
+                    }
+                    None => Ok(None),
+                }
+            }
+            StmtKind::Semi(expr) => {
+                let res = self.visit_expr(expr)?;
+                match res {
+                    Some(res) => {
+                        no_assignee!(res.category);
+                        Ok(Some(Self::unit_expr_result_int_specified(res.int_flow)))
+                    }
+                    None => Ok(None),
+                }
+            }
             StmtKind::Empty(_) => default_ret,
         };
 
@@ -1631,7 +1644,7 @@ impl Visitor for SemanticAnalyzer {
         ret
     }
 
-    fn visit_let_stmt(&mut self, stmt: &crate::ast::stmt::LocalStmt) -> Result<(), SemanticError> {
+    fn visit_let_stmt(&mut self, stmt: &crate::ast::stmt::LocalStmt) -> Self::ExprRes {
         let Some(ty) = &stmt.ty else {
             return Err(SemanticError::Unimplemented);
         };
@@ -1644,12 +1657,19 @@ impl Visitor for SemanticAnalyzer {
                     let expected_ty_id = self.intern_type(expected_ty.clone());
                     let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
                     self.add_bindings(vec![pat_res], VariableKind::Inited)?;
+                    Ok(Some(Self::unit_expr_result()))
+                } else {
+                    Ok(None)
                 }
             }
             LocalKind::Init(expr) => {
                 let res = self.visit_expr(&expr)?;
                 match res {
-                    Some(ExprResult { type_id, category }) => {
+                    Some(ExprResult {
+                        type_id,
+                        category,
+                        int_flow: _,
+                    }) => {
                         debug_assert!(matches!(self.stage, AnalyzeStage::Body));
                         no_assignee!(category);
                         let expected_ty = self.resolve_ty(&ty)?;
@@ -1661,12 +1681,13 @@ impl Visitor for SemanticAnalyzer {
                         } else {
                             return Err(SemanticError::TypeMismatch);
                         }
+
+                        Ok(Some(Self::unit_expr_result()))
                     }
-                    None => {}
+                    None => Ok(None),
                 }
             }
         }
-        Ok(())
     }
 
     fn visit_expr(&mut self, expr: &Expr) -> Self::ExprRes {
@@ -1719,23 +1740,31 @@ impl Visitor for SemanticAnalyzer {
             return Ok(None);
         }
 
-        let (types, cats): (Vec<_>, Vec<_>) = expr_res
+        let (types, (cats, ints)): (Vec<_>, (Vec<_>, Vec<_>)) = expr_res
             .into_iter()
             .map(|x| {
-                let ExprResult { type_id, category } = x.unwrap();
-                (type_id, category)
+                let ExprResult {
+                    type_id,
+                    category,
+                    int_flow,
+                } = x.unwrap();
+                (type_id, (category, int_flow))
             })
             .unzip();
 
         let unified_type_id = self.utilize_ty(types)?;
         let unified_ty = self.get_type_by_id(unified_type_id);
         let cat = Self::utilize_category(cats)?;
+        let int_flow = ints
+            .iter()
+            .fold(InterruptControlFlow::Not, |x, y| x.concat(*y));
 
         let ret_ty = ResolvedTy::Array(Box::new(unified_ty.clone()), expr.0.len() as u32);
 
         Ok(Some(ExprResult {
             type_id: self.intern_type(ret_ty),
             category: cat,
+            int_flow,
         }))
     }
 
@@ -1767,9 +1796,11 @@ impl Visitor for SemanticAnalyzer {
                         return Err(SemanticError::MismatchArgNum);
                     }
 
+                    let mut int_flow = res.int_flow;
                     for (income, target) in params_res.into_iter().zip(required.iter()) {
                         debug_assert!(!target.is_implicit_self_or_ref_implicit_self());
                         let income_ty = self.get_type_by_id(income.type_id);
+                        int_flow = int_flow.concat(income.int_flow);
 
                         if !income_ty.can_trans_to_target_type(target) {
                             return Err(SemanticError::TypeMismatch);
@@ -1779,6 +1810,7 @@ impl Visitor for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ret_ty.as_ref().clone()),
                         category: ExprCategory::Not,
+                        int_flow,
                     }))
                 } else {
                     Err(SemanticError::NonFunctionCall)
@@ -1807,7 +1839,11 @@ impl Visitor for SemanticAnalyzer {
             .collect::<Result<Vec<_>, SemanticError>>()?;
 
         match res {
-            Some(ExprResult { type_id, category }) => {
+            Some(ExprResult {
+                type_id,
+                category,
+                mut int_flow,
+            }) => {
                 no_assignee!(category);
                 let params_res = params_res.into_iter().collect::<Option<Vec<_>>>().unwrap();
                 for x in &params_res {
@@ -1849,6 +1885,7 @@ impl Visitor for SemanticAnalyzer {
                 for (income, target) in params_res.iter().zip(required_tys[1..].iter()) {
                     debug_assert!(!target.is_implicit_self_or_ref_implicit_self());
                     let income_ty = self.get_type_by_id(income.type_id);
+                    int_flow = int_flow.concat(income.int_flow);
 
                     if !income_ty.can_trans_to_target_type(target) {
                         return Err(SemanticError::TypeMismatch);
@@ -1858,6 +1895,7 @@ impl Visitor for SemanticAnalyzer {
                 Ok(Some(ExprResult {
                     type_id: self.intern_type(ret_ty.as_ref().clone()),
                     category: ExprCategory::Not,
+                    int_flow,
                 }))
             }
             None => {
@@ -1873,6 +1911,7 @@ impl Visitor for SemanticAnalyzer {
                 Some(ExprResult {
                     type_id: Self::unit_type(),
                     category: ExprCategory::Place(Mutability::Mut),
+                    int_flow: InterruptControlFlow::Not,
                 })
             } else {
                 None
@@ -1898,6 +1937,7 @@ impl Visitor for SemanticAnalyzer {
                 // TODO: &1 + &2 之类的
                 let ty1 = self.get_type_by_id(res1.type_id);
                 let ty2 = self.get_type_by_id(res2.type_id);
+                let int_flow = res1.int_flow.concat(res2.int_flow);
 
                 macro_rules! general_bin_op {
                     ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
@@ -1918,6 +1958,7 @@ impl Visitor for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ResolvedTy::string()),
                         category: ExprCategory::Not,
+                        int_flow,
                     }))
                 } else if (matches!(bin_op, BinOp::Eq | BinOp::Ne)
                     && ((ty1 == ResolvedTy::string() || ty1 == ResolvedTy::ref_str())
@@ -1942,6 +1983,7 @@ impl Visitor for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ResolvedTy::bool()),
                         category: ExprCategory::Not,
+                        int_flow,
                     }))
                 } else if general_bin_op!(
                     bin_op,
@@ -1993,6 +2035,7 @@ impl Visitor for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ty1.clone()),
                         category: ExprCategory::Not,
+                        int_flow,
                     }))
                 } else if general_bin_op!(
                     bin_op,
@@ -2044,6 +2087,7 @@ impl Visitor for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ty2.clone()),
                         category: ExprCategory::Not,
+                        int_flow,
                     }))
                 } else {
                     Err(SemanticError::Unimplemented)
@@ -2057,7 +2101,11 @@ impl Visitor for SemanticAnalyzer {
     fn visit_unary_expr(&mut self, expr: &crate::ast::expr::UnaryExpr) -> Self::ExprRes {
         let res = self.visit_expr(&expr.1)?;
         match res {
-            Some(ExprResult { type_id, category }) => {
+            Some(ExprResult {
+                type_id,
+                category,
+                int_flow,
+            }) => {
                 debug_assert!(matches!(self.stage, AnalyzeStage::Body));
                 no_assignee!(category);
                 let ty = self.get_type_by_id(type_id);
@@ -2068,6 +2116,7 @@ impl Visitor for SemanticAnalyzer {
                             Ok(Some(ExprResult {
                                 category: ExprCategory::Place(multb),
                                 type_id: self.intern_type(t.as_ref().clone()),
+                                int_flow,
                             }))
                         } else {
                             Err(SemanticError::UnDereferenceable)
@@ -2079,6 +2128,7 @@ impl Visitor for SemanticAnalyzer {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ty.clone()),
                                 category: ExprCategory::Not,
+                                int_flow,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -2090,11 +2140,13 @@ impl Visitor for SemanticAnalyzer {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ty),
                                 category: ExprCategory::Not,
+                                int_flow,
                             }))
                         } else if ty == ResolvedTy::integer() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::signed_integer()),
                                 category: ExprCategory::Not,
+                                int_flow,
                             }))
                         } else {
                             Err(SemanticError::NoImplementation)
@@ -2135,6 +2187,7 @@ impl Visitor for SemanticAnalyzer {
                     _ => return Err(SemanticError::Unimplemented),
                 },
                 category: ExprCategory::Not,
+                int_flow: InterruptControlFlow::Not,
             })),
         }
     }
@@ -2142,7 +2195,11 @@ impl Visitor for SemanticAnalyzer {
     fn visit_cast_expr(&mut self, expr: &crate::ast::expr::CastExpr) -> Self::ExprRes {
         let res = self.visit_expr(&expr.0)?;
         match res {
-            Some(ExprResult { type_id, category }) => {
+            Some(ExprResult {
+                type_id,
+                category,
+                int_flow,
+            }) => {
                 debug_assert!(matches!(self.stage, AnalyzeStage::Body));
                 no_assignee!(category);
 
@@ -2159,6 +2216,7 @@ impl Visitor for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(target_ty),
                         category: ExprCategory::Not,
+                        int_flow,
                     }))
                 } else {
                     Err(SemanticError::IncompatibleCast)
@@ -2192,13 +2250,16 @@ impl Visitor for SemanticAnalyzer {
 
                 if let Some(els_res) = els_res {
                     no_assignee!(els_res.category);
-                    Ok(Some(ExprResult {
-                        type_id: self.utilize_ty(vec![take_res.type_id, els_res.type_id])?,
-                        category: ExprCategory::Not,
-                    }))
+                    Ok(Some(Self::unit_expr_result_int_specified(
+                        con_res
+                            .int_flow
+                            .concat(take_res.int_flow.shunt(els_res.int_flow)),
+                    )))
                 } else {
                     if take_res.type_id == Self::unit_type() {
-                        Ok(Some(Self::unit_expr_result()))
+                        Ok(Some(Self::unit_expr_result_int_specified(
+                            con_res.int_flow.concat(take_res.int_flow),
+                        )))
                     } else {
                         Err(SemanticError::TypeMismatch)
                     }
@@ -2224,7 +2285,14 @@ impl Visitor for SemanticAnalyzer {
                 }
 
                 if body_res.type_id == Self::unit_type() {
-                    Ok(Some(Self::unit_expr_result()))
+                    match body_res.int_flow {
+                        InterruptControlFlow::Not | InterruptControlFlow::Loop => {
+                            Ok(Some(Self::unit_expr_result()))
+                        }
+                        InterruptControlFlow::Return => Ok(Some(
+                            Self::unit_expr_result_int_specified(InterruptControlFlow::Return),
+                        )),
+                    }
                 } else {
                     Err(SemanticError::TypeMismatch)
                 }
@@ -2240,6 +2308,15 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_loop_expr(&mut self, LoopExpr(block): &LoopExpr) -> Self::ExprRes {
         self.visit_block_expr_with_kind(&block, ScopeKind::Loop { ret_ty: None })
+            .map(|x| match x {
+                Some(mut x) => {
+                    if matches!(x.int_flow, InterruptControlFlow::Loop) {
+                        x.int_flow = InterruptControlFlow::Not;
+                    }
+                    Some(x)
+                }
+                None => None,
+            })
     }
 
     fn visit_match_expr(&mut self, _: &crate::ast::expr::MatchExpr) -> Self::ExprRes {
@@ -2274,7 +2351,9 @@ impl Visitor for SemanticAnalyzer {
                     return Err(SemanticError::TypeMismatch);
                 }
 
-                Ok(Some(Self::unit_expr_result()))
+                Ok(Some(Self::unit_expr_result_int_specified(
+                    right_res.int_flow.concat(left_res.int_flow),
+                )))
             }
         }
     }
@@ -2368,7 +2447,9 @@ impl Visitor for SemanticAnalyzer {
                         )
                     )
                 {
-                    Ok(Some(Self::unit_expr_result()))
+                    Ok(Some(Self::unit_expr_result_int_specified(
+                        right_res.int_flow.concat(left_res.int_flow),
+                    )))
                 } else {
                     Err(SemanticError::Unimplemented)
                 }
@@ -2393,6 +2474,7 @@ impl Visitor for SemanticAnalyzer {
                         DerefLevel::Not => res_mut,
                         DerefLevel::Deref(mutability) => mutability, // 当发生解引用时，可变性就只和引用的可变性有关
                     }),
+                    int_flow: res.int_flow,
                 }))
             }
             None => Ok(None),
@@ -2425,6 +2507,7 @@ impl Visitor for SemanticAnalyzer {
                             DerefLevel::Not => res1_mut,
                             DerefLevel::Deref(mutability) => mutability,
                         }),
+                        int_flow: res1.int_flow.concat(res2.int_flow),
                     }))
                 } else {
                     Err(SemanticError::TypeMismatch)
@@ -2445,6 +2528,7 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::Body => Ok(Some(ExprResult {
                 type_id: self.intern_type(ResolvedTy::Infer),
                 category: ExprCategory::Only,
+                int_flow: InterruptControlFlow::Not,
             })),
         }
     }
@@ -2463,6 +2547,7 @@ impl Visitor for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         type_id: var.ty,
                         category: ExprCategory::Place(var.mutbl),
+                        int_flow: InterruptControlFlow::Not,
                     }))
                 }
                 [type_seg, value_seg] => {
@@ -2488,6 +2573,7 @@ impl Visitor for SemanticAnalyzer {
                         Ok(Some(ExprResult {
                             type_id: value,
                             category: ExprCategory::Not,
+                            int_flow: InterruptControlFlow::Not,
                         }))
                     } else {
                         Err(SemanticError::UnknownVariable)
@@ -2502,13 +2588,18 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_addr_of_expr(&mut self, expr: &crate::ast::expr::AddrOfExpr) -> Self::ExprRes {
         match self.visit_expr(&expr.1)? {
-            Some(ExprResult { type_id, category }) => {
+            Some(ExprResult {
+                type_id,
+                category,
+                int_flow,
+            }) => {
                 no_assignee!(category);
                 let ty = self.get_type_by_id(type_id);
                 let ret_ty = ResolvedTy::Ref(Box::new(ty.clone()), expr.0);
                 Ok(Some(ExprResult {
                     type_id: self.intern_type(ret_ty),
                     category: ExprCategory::Not,
+                    int_flow,
                 }))
             }
             None => Ok(None),
@@ -2530,6 +2621,8 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::Body => {
                 let target_scope = self.get_cycle_scope_mut()?;
 
+                let mut int_flow = InterruptControlFlow::Not;
+
                 match &mut target_scope.kind {
                     ScopeKind::Loop { ret_ty } => match (res, &ret_ty) {
                         (None, None) => {}
@@ -2540,10 +2633,12 @@ impl Visitor for SemanticAnalyzer {
                         }
                         (Some(new), None) => {
                             no_assignee!(new.category);
+                            int_flow = new.int_flow;
                             *ret_ty = Some(new.type_id)
                         }
                         (Some(new), Some(exist)) => {
                             no_assignee!(new.category);
+                            int_flow = new.int_flow;
                             if new.type_id != *exist {
                                 return Err(SemanticError::TypeMismatch);
                             }
@@ -2557,7 +2652,9 @@ impl Visitor for SemanticAnalyzer {
                     _ => panic!("Impossible"),
                 }
 
-                Ok(Some(Self::unit_expr_result())) // 没有 Never Type，暂时使用 Unit Type 代替
+                Ok(Some(Self::unit_expr_result_int_specified(
+                    int_flow.concat(InterruptControlFlow::Loop),
+                ))) // 没有 Never Type，使用 Unit Type 代替
             }
         }
     }
@@ -2567,7 +2664,9 @@ impl Visitor for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
             AnalyzeStage::Body => {
                 self.get_cycle_scope_mut()?;
-                Ok(Some(Self::unit_expr_result()))
+                Ok(Some(Self::unit_expr_result_int_specified(
+                    InterruptControlFlow::Loop,
+                )))
             }
         }
     }
@@ -2594,7 +2693,9 @@ impl Visitor for SemanticAnalyzer {
                 if !ret_ty.can_trans_to_target_type(&target_ty) {
                     Err(SemanticError::TypeMismatch)
                 } else {
-                    Ok(Some(Self::never_expr_result()))
+                    Ok(Some(Self::unit_expr_result_int_specified(
+                        res.int_flow.concat(InterruptControlFlow::Return),
+                    )))
                 }
             }
             None => Ok(None),
@@ -2637,9 +2738,22 @@ impl Visitor for SemanticAnalyzer {
                             .collect::<Option<Vec<_>>>()
                             .unwrap();
 
-                        let cat = Self::utilize_category(
+                        let category = Self::utilize_category(
                             exp_fields.iter().map(|x| x.1.category).collect(),
                         )?;
+
+                        let int_flow = exp_fields.iter().fold(
+                            InterruptControlFlow::Not,
+                            |x,
+                             (
+                                _,
+                                ExprResult {
+                                    type_id: _,
+                                    category: _,
+                                    int_flow: y,
+                                },
+                            )| x.concat(*y),
+                        );
 
                         let mut dic: HashMap<Symbol, ExprResult> = HashMap::new();
 
@@ -2663,7 +2777,8 @@ impl Visitor for SemanticAnalyzer {
                             type_id: self.intern_type(
                                 self.resolve_ty_in_scope_by_symbol(&struct_info.name, id),
                             ),
-                            category: cat,
+                            category,
+                            int_flow,
                         }))
                     }
 
@@ -2678,8 +2793,8 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_repeat_expr(&mut self, RepeatExpr(expr, const_expr): &RepeatExpr) -> Self::ExprRes {
-        let res = self.visit_expr(expr)?;
         let size = self.const_eval(&ResolvedTy::usize(), &const_expr.value)?;
+        let res = self.visit_expr(expr)?;
 
         match res {
             Some(res) => {
@@ -2691,6 +2806,7 @@ impl Visitor for SemanticAnalyzer {
                         size.into_u_size().unwrap(),
                     )),
                     category: ExprCategory::Not,
+                    int_flow: res.int_flow,
                 }))
             }
             None => Ok(None),

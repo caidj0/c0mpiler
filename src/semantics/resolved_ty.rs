@@ -17,7 +17,6 @@ pub enum ResolvedTy {
     Tup(Vec<ResolvedTy>),
     Fn(Vec<ResolvedTy>, Box<ResolvedTy>),
     ImplicitSelf,
-    Never,
     Infer, // for underscore
 }
 

@@ -140,7 +140,7 @@ impl DerefLevel {
     }
 }
 
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, EnumAsInner, Clone)]
 pub enum ScopeKind {
     Lambda,
     Root,
@@ -169,10 +169,50 @@ pub enum ExprCategory {
     Only,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum InterruptControlFlow {
+    Not,
+    Loop,
+    Return,
+}
+
+impl InterruptControlFlow {
+    pub fn concat(self, other: Self) -> Self {
+        match self {
+            InterruptControlFlow::Not => other,
+            _ => self,
+        }
+    }
+
+    pub fn shunt(self, other: Self) -> Self {
+        match (self, other) {
+            (_, InterruptControlFlow::Not) | (InterruptControlFlow::Not, _) => {
+                InterruptControlFlow::Not
+            }
+            (_, InterruptControlFlow::Loop) | (InterruptControlFlow::Loop, _) => {
+                InterruptControlFlow::Loop
+            }
+            (InterruptControlFlow::Return, InterruptControlFlow::Return) => {
+                InterruptControlFlow::Return
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct ExprResult {
     pub type_id: TypeId,
     pub category: ExprCategory,
+    pub int_flow: InterruptControlFlow,
+}
+
+impl ExprResult {
+    pub fn replace_by(&mut self, other: Self) {
+        *self = Self {
+            int_flow: self.int_flow.concat(other.int_flow),
+            ..other
+        }
+    }
 }
 
 #[derive(Debug)]

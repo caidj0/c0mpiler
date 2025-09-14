@@ -38,7 +38,7 @@ pub trait Visitor {
     fn visit_impl_item(&mut self, item: &ImplItem) -> Self::DefaultRes;
 
     fn visit_stmt(&mut self, stmt: &Stmt) -> Self::ExprRes;
-    fn visit_let_stmt(&mut self, stmt: &LocalStmt) -> Self::DefaultRes;
+    fn visit_let_stmt(&mut self, stmt: &LocalStmt) -> Self::ExprRes;
 
     fn visit_expr(&mut self, expr: &Expr) -> Self::ExprRes;
     fn visit_array_expr(&mut self, expr: &ArrayExpr) -> Self::ExprRes;
