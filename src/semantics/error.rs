@@ -42,4 +42,5 @@ pub enum SemanticError {
     LocalVarOutOfFn,
     MultiBinding,
     ShadowedConstantByBinding,
+    NoReturnFunction
 }

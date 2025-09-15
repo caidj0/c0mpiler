@@ -197,6 +197,13 @@ impl InterruptControlFlow {
             }
         }
     }
+
+    pub fn out_of_cycle(self) -> Self {
+        match self {
+            InterruptControlFlow::Not | InterruptControlFlow::Loop => InterruptControlFlow::Not,
+            InterruptControlFlow::Return => InterruptControlFlow::Return,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -213,6 +220,12 @@ impl ExprResult {
             ..other
         }
     }
+}
+
+#[derive(Debug, EnumAsInner)]
+pub enum StmtResult {
+    Expr(ExprResult),
+    Else { int_flow: InterruptControlFlow },
 }
 
 #[derive(Debug)]

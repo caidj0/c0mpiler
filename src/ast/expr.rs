@@ -577,9 +577,19 @@ impl Eatable for BlockExpr {
             stmts.push(Stmt::eat(iter)?);
         });
 
-        let mut stmt_iter = stmts.iter().rev();
-        stmt_iter.next();
-        for stmt in stmt_iter {
+        let mut no_item_stmt_iter = stmts.iter().rev().filter(|x| {
+            !matches!(
+                x,
+                Stmt {
+                    kind: StmtKind::Item(_),
+                    id: _,
+                    span: _
+                }
+            )
+        });
+
+        no_item_stmt_iter.next();
+        for stmt in no_item_stmt_iter {
             match &stmt.kind {
                 StmtKind::Expr(e) => {
                     if !e.is_block() {

@@ -241,6 +241,8 @@ impl SemanticAnalyzer {
     }
 
     fn add_scope(&mut self, kind: ScopeKind) -> Result<(), SemanticError> {
+        debug_assert!(matches!(self.stage, AnalyzeStage::SymbolCollect));
+
         let id = self.state.current_ast_id;
 
         if self.scopes.contains_key(&id) || self.get_scope().children.contains(&id) {
@@ -899,62 +901,57 @@ impl SemanticAnalyzer {
         &mut self,
         expr: &BlockExpr,
         kind: ScopeKind,
-    ) -> Result<Option<ExprResult>, SemanticError> {
+    ) -> Result<Option<StmtResult>, SemanticError> {
         let old_state = self.state;
         self.state = AnalyzerState {
             current_ast_id: expr.id,
             current_span: expr.span,
         };
-        let mut ret = match self.stage {
+
+        match self.stage {
             AnalyzeStage::SymbolCollect => {
                 self.add_scope(kind.clone())?;
-                None
             }
-            AnalyzeStage::Definition | AnalyzeStage::Impl => None,
-            AnalyzeStage::Body => Some(Self::unit_expr_result()),
+            _ => {}
+        };
+
+        let mut ret: Option<StmtResult> = match self.stage {
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => None,
+            AnalyzeStage::Body => Some(StmtResult::Else {
+                int_flow: InterruptControlFlow::Not,
+            }),
         };
 
         self.enter_scope()?;
-        let stmt_len = expr.stmts.len();
-        for (index, stmt) in expr.stmts.iter().enumerate() {
-            let new_ret = self.visit_stmt(stmt)?;
-            match (&mut ret, new_ret) {
-                (None, None) => {}
-                (None, Some(_)) | (Some(_), None) => panic!("Impossible!"),
-                (Some(old), Some(new)) => {
-                    if (index + 1 != stmt_len
-                        || matches!(
-                            kind,
-                            ScopeKind::CycleExceptLoop | ScopeKind::Loop { ret_ty: _ }
-                        ))
-                        && new.type_id != Self::unit_type()
-                    {
-                        return Err(SemanticError::TypeMismatch);
+        for stmt in expr.stmts.iter() {
+            if let Some(new_ret) = self.visit_stmt(stmt)?
+                && !matches!(stmt.kind, StmtKind::Item(_))
+            {
+                let mut_ret = ret.as_mut().unwrap();
+                let old_int_flow = match mut_ret {
+                    StmtResult::Expr(expr_result) => expr_result.int_flow,
+                    StmtResult::Else { int_flow } => *int_flow,
+                };
+                match new_ret {
+                    StmtResult::Expr(expr_result) => {
+                        *mut_ret = StmtResult::Expr(ExprResult {
+                            int_flow: old_int_flow.concat(expr_result.int_flow),
+                            ..expr_result
+                        })
                     }
-
-                    old.replace_by(new);
+                    StmtResult::Else { int_flow } => {
+                        *mut_ret = StmtResult::Else {
+                            int_flow: old_int_flow.concat(int_flow),
+                        }
+                    }
                 }
             }
-        }
-
-        if let (
-            ScopeKind::Loop {
-                ret_ty: Some(ret_ty),
-            },
-            Some(r),
-        ) = (&self.get_scope().kind, &mut ret)
-        {
-            debug_assert_eq!(r.type_id, Self::unit_type());
-            r.type_id = *ret_ty;
         }
 
         self.exit_scope()?;
 
         self.state = old_state;
-        Ok(ret.map(|x| ExprResult {
-            category: ExprCategory::Not,
-            ..x
-        }))
+        Ok(ret)
     }
 
     fn is_free_scope(&self) -> bool {
@@ -1120,6 +1117,7 @@ impl Visitor for SemanticAnalyzer {
     type DefaultRes = Result<(), SemanticError>;
     type ExprRes = Result<Option<ExprResult>, SemanticError>;
     type PatRes = Result<PatResult, SemanticError>;
+    type StmtRes = Result<Option<StmtResult>, SemanticError>;
 
     fn visit_crate(&mut self, krate: &Crate) -> Result<(), SemanticError> {
         let old_state = self.state;
@@ -1275,15 +1273,26 @@ impl Visitor for SemanticAnalyzer {
         }
         self.enter_scope()?;
         if let Some(b) = body {
-            let res = self.visit_block_expr(b)?;
+            let res = self.visit_block_expr_with_kind(b, ScopeKind::Lambda)?;
             if let Some(res) = res {
-                no_assignee!(res.category);
-                // TODO: 如何兼容 block 的尾随返回和 return expr？重新引入 Never Type？
                 let target_ty_id = self.get_scope().kind.as_fn().unwrap();
-                let target_ty = self.get_type_by_id(*target_ty_id);
-                let ret_ty = self.get_type_by_id(res.type_id);
-                if !ret_ty.can_trans_to_target_type(&target_ty) {
-                    return Err(SemanticError::TypeMismatch);
+                match res {
+                    StmtResult::Expr(expr_result) => {
+                        let target_ty = self.get_type_by_id(*target_ty_id);
+                        let ret_ty = self.get_type_by_id(expr_result.type_id);
+                        if !ret_ty.can_trans_to_target_type(&target_ty) {
+                            return Err(SemanticError::TypeMismatch);
+                        }
+                    }
+                    StmtResult::Else { int_flow } => match int_flow {
+                        InterruptControlFlow::Not => {
+                            if *target_ty_id != Self::unit_type() {
+                                return Err(SemanticError::NoReturnFunction);
+                            }
+                        }
+                        InterruptControlFlow::Loop => panic!("Impossible!"),
+                        InterruptControlFlow::Return => {}
+                    },
                 }
             }
         }
@@ -1596,55 +1605,48 @@ impl Visitor for SemanticAnalyzer {
     }
 
     // 确保了返回值不为 AssigneeOnly
-    fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Self::ExprRes {
+    fn visit_stmt(&mut self, stmt: &crate::ast::stmt::Stmt) -> Self::StmtRes {
         let old_state = self.state;
         self.state.current_span = stmt.span;
 
         let default_ret = match self.stage {
-            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
-            AnalyzeStage::Body => Ok(Some(Self::unit_expr_result())),
+            AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => None,
+            AnalyzeStage::Body => Some(StmtResult::Else {
+                int_flow: InterruptControlFlow::Not,
+            }),
         };
 
         let ret = match &stmt.kind {
-            StmtKind::Let(local_stmt) => {
-                self.visit_let_stmt(local_stmt)?;
-                default_ret
-            }
+            StmtKind::Let(local_stmt) => self.visit_let_stmt(local_stmt)?,
             StmtKind::Item(item) => {
                 self.visit_item(item)?;
                 default_ret
             }
-            StmtKind::Expr(expr) => {
-                let res = self.visit_expr(expr)?;
-                match res {
-                    Some(res) => {
-                        no_assignee!(res.category);
-                        Ok(Some(res))
-                    }
-                    None => Ok(None),
+            StmtKind::Expr(expr) => match self.visit_expr(expr)? {
+                Some(res) => {
+                    no_assignee!(res.category);
+                    Some(StmtResult::Expr(res))
                 }
-            }
-            StmtKind::Semi(expr) => {
-                let res = self.visit_expr(expr)?;
-                match res {
-                    Some(res) => {
-                        no_assignee!(res.category);
-                        Ok(Some(Self::unit_expr_result_int_specified(res.int_flow)))
-                    }
-                    None => Ok(None),
+                None => None,
+            },
+            StmtKind::Semi(expr) => match self.visit_expr(expr)? {
+                Some(res) => {
+                    no_assignee!(res.category);
+                    Some(StmtResult::Else {
+                        int_flow: res.int_flow,
+                    })
                 }
-            }
+                None => None,
+            },
             StmtKind::Empty(_) => default_ret,
         };
 
-        if matches!(ret, Ok(_)) {
-            self.state = old_state;
-        }
+        self.state = old_state;
 
-        ret
+        Ok(ret)
     }
 
-    fn visit_let_stmt(&mut self, stmt: &crate::ast::stmt::LocalStmt) -> Self::ExprRes {
+    fn visit_let_stmt(&mut self, stmt: &crate::ast::stmt::LocalStmt) -> Self::StmtRes {
         let Some(ty) = &stmt.ty else {
             return Err(SemanticError::Unimplemented);
         };
@@ -1657,7 +1659,9 @@ impl Visitor for SemanticAnalyzer {
                     let expected_ty_id = self.intern_type(expected_ty.clone());
                     let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
                     self.add_bindings(vec![pat_res], VariableKind::Inited)?;
-                    Ok(Some(Self::unit_expr_result()))
+                    Ok(Some(StmtResult::Else {
+                        int_flow: InterruptControlFlow::Not,
+                    }))
                 } else {
                     Ok(None)
                 }
@@ -1668,7 +1672,7 @@ impl Visitor for SemanticAnalyzer {
                     Some(ExprResult {
                         type_id,
                         category,
-                        int_flow: _,
+                        int_flow,
                     }) => {
                         debug_assert!(matches!(self.stage, AnalyzeStage::Body));
                         no_assignee!(category);
@@ -1682,7 +1686,7 @@ impl Visitor for SemanticAnalyzer {
                             return Err(SemanticError::TypeMismatch);
                         }
 
-                        Ok(Some(Self::unit_expr_result()))
+                        Ok(Some(StmtResult::Else { int_flow }))
                     }
                     None => Ok(None),
                 }
@@ -1690,6 +1694,7 @@ impl Visitor for SemanticAnalyzer {
         }
     }
 
+    // 在 body 阶段返回 Ok(Some(...))，其他阶段返回 Ok(None)
     fn visit_expr(&mut self, expr: &Expr) -> Self::ExprRes {
         let old_state = self.state;
         self.state.current_span = expr.span;
@@ -1724,6 +1729,9 @@ impl Visitor for SemanticAnalyzer {
             ExprKind::Struct(struct_expr) => self.visit_struct_expr(struct_expr),
             ExprKind::Repeat(repeat_expr) => self.visit_repeat_expr(repeat_expr),
         }?;
+
+        debug_assert!((matches!(self.stage, AnalyzeStage::Body) && res.is_some()) || res.is_none());
+
         self.state = old_state;
         Ok(res)
     }
@@ -2277,25 +2285,27 @@ impl Visitor for SemanticAnalyzer {
         match (con_res, body_res) {
             (Some(con_res), Some(body_res)) => {
                 no_assignee!(con_res.category);
-                no_assignee!(body_res.category);
 
                 let con_ty = self.get_type_by_id(con_res.type_id);
                 if con_ty != ResolvedTy::bool() {
                     return Err(SemanticError::TypeMismatch);
                 }
 
-                if body_res.type_id == Self::unit_type() {
-                    match body_res.int_flow {
-                        InterruptControlFlow::Not | InterruptControlFlow::Loop => {
-                            Ok(Some(Self::unit_expr_result()))
+                let body_int_flow = match body_res {
+                    StmtResult::Expr(expr_result) => {
+                        if expr_result.type_id != Self::unit_type() {
+                            return Err(SemanticError::TypeMismatch);
                         }
-                        InterruptControlFlow::Return => Ok(Some(
-                            Self::unit_expr_result_int_specified(InterruptControlFlow::Return),
-                        )),
+                        expr_result.int_flow
                     }
-                } else {
-                    Err(SemanticError::TypeMismatch)
-                }
+                    StmtResult::Else { int_flow } => int_flow,
+                };
+
+                let out_of_cycle_int_flow = body_int_flow.out_of_cycle();
+
+                Ok(Some(Self::unit_expr_result_int_specified(
+                    con_res.int_flow.concat(out_of_cycle_int_flow),
+                )))
             }
             (None, None) => Ok(None),
             _ => panic!("Impossible"),
@@ -2307,16 +2317,28 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_loop_expr(&mut self, LoopExpr(block): &LoopExpr) -> Self::ExprRes {
-        self.visit_block_expr_with_kind(&block, ScopeKind::Loop { ret_ty: None })
-            .map(|x| match x {
-                Some(mut x) => {
-                    if matches!(x.int_flow, InterruptControlFlow::Loop) {
-                        x.int_flow = InterruptControlFlow::Not;
+        let res = self.visit_block_expr_with_kind(&block, ScopeKind::Loop { ret_ty: None })?;
+
+        match res {
+            Some(res) => {
+                let int_flow = match res {
+                    StmtResult::Expr(expr_result) => {
+                        if expr_result.type_id != Self::unit_type() {
+                            return Err(SemanticError::TypeMismatch);
+                        }
+                        expr_result.int_flow
                     }
-                    Some(x)
-                }
-                None => None,
-            })
+                    StmtResult::Else { int_flow } => int_flow,
+                };
+
+                let out_of_cycle_int_flow = int_flow.out_of_cycle();
+
+                Ok(Some(Self::unit_expr_result_int_specified(
+                    out_of_cycle_int_flow,
+                )))
+            }
+            None => Ok(None),
+        }
     }
 
     fn visit_match_expr(&mut self, _: &crate::ast::expr::MatchExpr) -> Self::ExprRes {
@@ -2325,6 +2347,13 @@ impl Visitor for SemanticAnalyzer {
 
     fn visit_block_expr(&mut self, expr: &crate::ast::expr::BlockExpr) -> Self::ExprRes {
         self.visit_block_expr_with_kind(expr, ScopeKind::Lambda)
+            .map(|x| match x {
+                Some(StmtResult::Expr(expr_result)) => Some(expr_result),
+                Some(StmtResult::Else { int_flow }) => {
+                    Some(Self::unit_expr_result_int_specified(int_flow))
+                }
+                None => None,
+            })
     }
 
     // TODO: struct A; A = A;
