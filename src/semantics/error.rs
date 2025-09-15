@@ -1,4 +1,4 @@
-use crate::semantics::const_eval::ConstEvalError;
+use crate::const_eval::ConstEvalError;
 
 #[derive(Debug)]
 pub enum SemanticError {
@@ -42,5 +42,5 @@ pub enum SemanticError {
     LocalVarOutOfFn,
     MultiBinding,
     ShadowedConstantByBinding,
-    NoReturnFunction
+    NoReturnFunction,
 }

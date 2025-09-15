@@ -4,7 +4,8 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{Mutability, NodeId, Symbol},
-    semantics::{const_eval::ConstEvalValue, resolved_ty::ResolvedTy},
+    const_eval::ConstEvalValue,
+    semantics::resolved_ty::ResolvedTy,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

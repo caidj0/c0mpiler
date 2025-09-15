@@ -226,6 +226,12 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
 
             TokenType::Character => {
                 let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or_else(err)?;
+                if symbol.len() != 1 {
+                    return Err(ASTError {
+                        kind: crate::ast::ASTErrorKind::LiteralError,
+                        pos: self.pos,
+                    });
+                }
                 Ok(LitExpr {
                     kind: LitKind::Char,
                     symbol,

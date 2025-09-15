@@ -1,4 +1,3 @@
-pub mod const_eval;
 pub mod error;
 pub mod primitives;
 pub mod resolved_ty;
@@ -28,14 +27,9 @@ use crate::{
         stmt::{LocalKind, StmtKind},
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
+    const_eval::{ConstEvalValue, ConstEvaler},
     lexer::TokenPosition,
-    semantics::{
-        const_eval::{ConstEvalError, ConstEvalValue},
-        error::SemanticError,
-        resolved_ty::ResolvedTy,
-        utils::*,
-        visitor::Visitor,
-    },
+    semantics::{error::SemanticError, resolved_ty::ResolvedTy, utils::*, visitor::Visitor},
 };
 
 macro_rules! no_assignee {
@@ -710,7 +704,7 @@ impl SemanticAnalyzer {
             ))),
             TyKind::Array(array_ty) => Ok(ResolvedTy::Array(
                 Box::new(self.resolve_ty_self_kind_specified(&array_ty.0, expand_self)?),
-                self.const_eval(&ResolvedTy::usize(), &array_ty.1.value)?
+                self.const_eval(ResolvedTy::usize(), &array_ty.1.value)?
                     .into_u_size()
                     .unwrap(),
             )),
@@ -801,7 +795,7 @@ impl SemanticAnalyzer {
     }
 
     // 这个函数不会展开 self（为了保留函数参数中的 self），但是会展开 Self
-    fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
+    pub(crate) fn resolve_ty(&self, ty: &Ty) -> Result<ResolvedTy, SemanticError> {
         self.resolve_ty_self_kind_specified(ty, true)
     }
 
@@ -837,22 +831,12 @@ impl SemanticAnalyzer {
         Self::unit_expr_result_int_specified(InterruptControlFlow::Not)
     }
 
-    fn const_eval(&self, ty: &ResolvedTy, expr: &Expr) -> Result<ConstEvalValue, SemanticError> {
-        if let ResolvedTy::BulitIn(ident, _) = ty {
-            match ident.0.as_str() {
-                "u32" => {
-                    return Ok(ConstEvalValue::U32(expr.try_into()?));
-                }
-                "usize" => {
-                    return Ok(ConstEvalValue::USize(expr.try_into()?));
-                }
-                _ => {}
-            }
-        };
-
-        return Err(SemanticError::ConstEvalError(
-            ConstEvalError::NotSupportedExpr,
-        ));
+    fn const_eval(&self, ty: ResolvedTy, expr: &Expr) -> Result<ConstEvalValue, SemanticError> {
+        let mut evaler = ConstEvaler::new(self, ty);
+        evaler.visit_expr(expr).map_err(|x| match x {
+            crate::const_eval::ConstEvalError::Semantic(s) => *s,
+            _ => SemanticError::ConstEvalError(x),
+        })
     }
 
     // 尝试统一传入的 type （主要是为了 integer）
@@ -980,7 +964,7 @@ impl SemanticAnalyzer {
                 AssocItemKind::Const(ConstItem { ident, ty, expr }) => {
                     let resloved_ty = self.resolve_ty_self_kind_specified(&ty, expand_self)?;
                     let value = match expr {
-                        Some(e) => self.const_eval(&resloved_ty, e)?,
+                        Some(e) => self.const_eval(resloved_ty.clone(), e)?,
                         None => {
                             if is_trait_item {
                                 ConstEvalValue::Placeholder
@@ -1184,7 +1168,7 @@ impl Visitor for SemanticAnalyzer {
                 if self.is_free_scope() {
                     let ty = self.resolve_ty(&ty)?;
                     let value = self.const_eval(
-                        &ty,
+                        ty.clone(),
                         expr.as_ref().ok_or(SemanticError::ConstantWithoutBody)?,
                     )?;
                     let tyid = self.intern_type(ty);
@@ -2822,7 +2806,7 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_repeat_expr(&mut self, RepeatExpr(expr, const_expr): &RepeatExpr) -> Self::ExprRes {
-        let size = self.const_eval(&ResolvedTy::usize(), &const_expr.value)?;
+        let size = self.const_eval(ResolvedTy::usize(), &const_expr.value)?;
         let res = self.visit_expr(expr)?;
 
         match res {
