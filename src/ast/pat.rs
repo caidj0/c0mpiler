@@ -478,8 +478,7 @@ pub struct WildPat;
 impl Eatable for WildPat {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::Underscor);
-
-        std::unimplemented!()
+        Ok(Self)
     }
 }
 

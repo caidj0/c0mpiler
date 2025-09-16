@@ -1172,6 +1172,7 @@ impl Visitor for SemanticAnalyzer {
         ConstItem { ident, ty, expr }: &ConstItem,
     ) -> Result<(), SemanticError> {
         match self.stage {
+            // TODO: 在 SymbolCollect 阶段就被使用的常量怎么办？
             AnalyzeStage::SymbolCollect => {}
             AnalyzeStage::Definition => {
                 if self.is_free_scope() {
