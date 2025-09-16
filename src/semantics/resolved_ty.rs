@@ -244,4 +244,24 @@ impl ResolvedTy {
             _ => false,
         }
     }
+
+    pub fn utilize(types: Vec<ResolvedTy>) -> Option<ResolvedTy> {
+        if types.is_empty() {
+            return Some(ResolvedTy::Infer);
+        }
+
+        let mut iter = types.into_iter();
+        let mut ret_ty = iter.next().unwrap();
+        for x in iter {
+            if !x.can_trans_to_target_type(&ret_ty) {
+                if ret_ty.can_trans_to_target_type(&x) {
+                    ret_ty = x;
+                } else {
+                    return None;
+                }
+            }
+        }
+
+        Some(ret_ty)
+    }
 }

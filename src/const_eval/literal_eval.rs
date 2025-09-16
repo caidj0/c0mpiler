@@ -4,18 +4,9 @@ use crate::{
 };
 
 impl LitExpr {
-    pub fn to_integer(&self, container: ConstEvalValue) -> Result<ConstEvalValue, ConstEvalError> {
+    pub fn to_integer(&self) -> Result<ConstEvalValue, ConstEvalError> {
         match self.kind {
             LitKind::Integer => {
-                if let Some(suffix) = &self.suffix {
-                    if (matches!(container, ConstEvalValue::U32(_)) && suffix != "u32")
-                        || (matches!(container, ConstEvalValue::I32(_)) && suffix != "i32")
-                        || (matches!(container, ConstEvalValue::USize(_)) && suffix != "usize")
-                        || (matches!(container, ConstEvalValue::ISize(_)) && suffix != "isize")
-                    {
-                        return Err(ConstEvalError::IncorrectSuffix);
-                    }
-                }
                 let raw = self.symbol.replace('_', "");
 
                 let (radix, digits) = if let Some(rest) = raw.strip_prefix("0b") {
@@ -41,19 +32,41 @@ impl LitExpr {
                         .ok_or(ConstEvalError::Overflow)?;
                 } // 此处不会出现负数
 
-                Ok(match container {
-                    ConstEvalValue::U32(_) => ConstEvalValue::U32(value),
-                    ConstEvalValue::I32(_) => {
-                        ConstEvalValue::I32(value.try_into().map_err(|_| ConstEvalError::Overflow)?)
-                    }
-                    ConstEvalValue::USize(_) => ConstEvalValue::USize(value),
-                    ConstEvalValue::ISize(_) => ConstEvalValue::ISize(
-                        value.try_into().map_err(|_| ConstEvalError::Overflow)?,
-                    ),
-                    _ => panic!("Impossible"),
-                })
+                match &self.suffix {
+                    Some(suffix) => match suffix.as_str() {
+                        "u32" => Ok(ConstEvalValue::U32(value)),
+                        "usize" => Ok(ConstEvalValue::USize(value)),
+                        "i32" => Ok(ConstEvalValue::I32(
+                            value.try_into().map_err(|_| ConstEvalError::Overflow)?,
+                        )),
+                        "isize" => Ok(ConstEvalValue::ISize(
+                            value.try_into().map_err(|_| ConstEvalError::Overflow)?,
+                        )),
+                        _ => Err(ConstEvalError::IncorrectSuffix),
+                    },
+                    None => Ok(ConstEvalValue::Integer(value)),
+                }
             }
             _ => Err(ConstEvalError::TypeMisMatch),
+        }
+    }
+}
+
+impl TryInto<ConstEvalValue> for &LitExpr {
+    type Error = ConstEvalError;
+
+    fn try_into(self) -> Result<ConstEvalValue, Self::Error> {
+        match self.kind {
+            LitKind::Bool => Ok(ConstEvalValue::Bool(self.try_into()?)),
+            LitKind::Char => Ok(ConstEvalValue::Char(self.try_into()?)),
+            LitKind::Integer => self.to_integer(),
+            LitKind::Str | LitKind::StrRaw(_) | LitKind::CStr | LitKind::CStrRaw(_) => {
+                Ok(ConstEvalValue::RefStr(self.try_into()?))
+            }
+
+            LitKind::Byte | LitKind::Float | LitKind::ByteStr | LitKind::ByteStrRaw(_) => {
+                Err(ConstEvalError::NotSupportedExpr)
+            }
         }
     }
 }

@@ -841,28 +841,13 @@ impl SemanticAnalyzer {
 
     // 尝试统一传入的 type （主要是为了 integer）
     fn utilize_ty(&self, types: Vec<TypeId>) -> Result<TypeId, SemanticError> {
-        let types: Vec<TypeId> = types
+        let types: Vec<ResolvedTy> = types
             .into_iter()
             .filter(|x| *x != Self::infer_type())
+            .map(|x| self.get_type_by_id(x))
             .collect();
 
-        if types.is_empty() {
-            return Ok(Self::infer_type());
-        }
-
-        let mut ret_ty = self.get_type_by_id(*types.first().unwrap());
-        for x in types {
-            let t = self.get_type_by_id(x);
-            if !t.can_trans_to_target_type(&ret_ty) {
-                if ret_ty.can_trans_to_target_type(&t) {
-                    ret_ty = t;
-                } else {
-                    return Err(SemanticError::TypeMismatch);
-                }
-            }
-        }
-
-        Ok(self.intern_type(ret_ty.clone()))
+        Ok(self.intern_type(ResolvedTy::utilize(types).ok_or(SemanticError::TypeMismatch)?))
     }
 
     fn utilize_category(cats: Vec<ExprCategory>) -> Result<ExprCategory, SemanticError> {

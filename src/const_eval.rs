@@ -33,31 +33,82 @@ pub enum ConstEvalValue {
 }
 
 impl ConstEvalValue {
-    pub fn type_equal(&self, ty: &ResolvedTy) -> bool {
+    pub fn is_number(&self) -> bool {
+        matches!(
+            self,
+            Self::U32(_)
+                | Self::I32(_)
+                | Self::USize(_)
+                | Self::ISize(_)
+                | Self::Integer(_)
+                | Self::SignedInteger(_)
+        )
+    }
+
+    pub fn is_signed_number(&self) -> bool {
+        matches!(self, Self::I32(_) | Self::ISize(_) | Self::SignedInteger(_))
+    }
+
+    pub fn cast(self, ty: &ResolvedTy) -> Result<Self, ConstEvalError> {
+        fn cast_to_integer<T>(num: T, ty: &ResolvedTy) -> Result<ConstEvalValue, ConstEvalError>
+        where
+            T: TryInto<u32> + TryInto<i32>,
+        {
+            Ok(if *ty == ResolvedTy::u32() {
+                ConstEvalValue::U32(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
+            } else if *ty == ResolvedTy::usize() {
+                ConstEvalValue::USize(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
+            } else if *ty == ResolvedTy::i32() {
+                ConstEvalValue::I32(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
+            } else if *ty == ResolvedTy::isize() {
+                ConstEvalValue::ISize(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
+            } else {
+                return Err(ConstEvalError::NotSupportedCast);
+            })
+        }
+
         match self {
-            ConstEvalValue::Placeholder => false,
-            ConstEvalValue::U32(_) => *ty == ResolvedTy::u32(),
-            ConstEvalValue::I32(_) => *ty == ResolvedTy::i32(),
-            ConstEvalValue::USize(_) => *ty == ResolvedTy::usize(),
-            ConstEvalValue::ISize(_) => *ty == ResolvedTy::isize(),
-            ConstEvalValue::Bool(_) => *ty == ResolvedTy::bool(),
-            ConstEvalValue::Char(_) => *ty == ResolvedTy::char(),
-            ConstEvalValue::RefStr(_) => *ty == ResolvedTy::ref_str(),
-            ConstEvalValue::Array(const_eval_values) => match ty {
-                ResolvedTy::Array(resolved_ty, size) => {
-                    (*size as usize == const_eval_values.len())
-                        && (const_eval_values
-                            .first()
-                            .map_or(true, |x| x.type_equal(&resolved_ty)))
-                }
-                _ => false,
-            },
-            ConstEvalValue::UnitStruct(fullname) | ConstEvalValue::Struct(fullname, _) => {
-                match ty {
-                    ResolvedTy::Named(f) => f == fullname,
-                    _ => false,
-                }
+            ConstEvalValue::U32(u32)
+            | ConstEvalValue::USize(u32)
+            | ConstEvalValue::Integer(u32) => cast_to_integer(u32, ty),
+            ConstEvalValue::I32(i32)
+            | ConstEvalValue::ISize(i32)
+            | ConstEvalValue::SignedInteger(i32) => cast_to_integer(i32, ty),
+            ConstEvalValue::Bool(b) => cast_to_integer(b, ty),
+            ConstEvalValue::Char(c) => cast_to_integer(c as u32, ty),
+            ConstEvalValue::Placeholder
+            | ConstEvalValue::UnitStruct(_)
+            | ConstEvalValue::RefStr(_)
+            | ConstEvalValue::Array(_)
+            | ConstEvalValue::Struct(_, _) => Err(ConstEvalError::NotSupportedCast),
+        }
+    }
+}
+
+impl Into<ResolvedTy> for &ConstEvalValue {
+    fn into(self) -> ResolvedTy {
+        match self {
+            ConstEvalValue::Placeholder => ResolvedTy::Infer,
+            ConstEvalValue::U32(_) => ResolvedTy::u32(),
+            ConstEvalValue::I32(_) => ResolvedTy::i32(),
+            ConstEvalValue::USize(_) => ResolvedTy::usize(),
+            ConstEvalValue::ISize(_) => ResolvedTy::isize(),
+            ConstEvalValue::Integer(_) => ResolvedTy::integer(),
+            ConstEvalValue::SignedInteger(_) => ResolvedTy::signed_integer(),
+            ConstEvalValue::UnitStruct(full_name) | ConstEvalValue::Struct(full_name, _) => {
+                ResolvedTy::Named(full_name.clone())
             }
+            ConstEvalValue::Bool(_) => ResolvedTy::bool(),
+            ConstEvalValue::Char(_) => ResolvedTy::char(),
+            ConstEvalValue::RefStr(_) => ResolvedTy::ref_str(),
+            ConstEvalValue::Array(const_eval_values) => ResolvedTy::Array(
+                Box::new(
+                    const_eval_values
+                        .first()
+                        .map_or(ResolvedTy::Infer, |x| x.into()),
+                ),
+                const_eval_values.len().try_into().unwrap(),
+            ),
         }
     }
 }
@@ -72,19 +123,16 @@ pub enum ConstEvalError {
     Semantic(Box<SemanticError>),
     NotAStruct,
     NotStructField,
+    NotSupportedCast,
 }
 
 pub struct ConstEvaler<'a> {
     analyzer: &'a SemanticAnalyzer,
-    target_ty: ResolvedTy,
 }
 
 impl<'a> ConstEvaler<'a> {
-    pub fn new(analyzer: &'a SemanticAnalyzer, target_ty: ResolvedTy) -> Self {
-        Self {
-            analyzer,
-            target_ty,
-        }
+    pub fn new(analyzer: &'a SemanticAnalyzer) -> Self {
+        Self { analyzer }
     }
 }
 
@@ -180,23 +228,16 @@ impl<'a> Visitor for ConstEvaler<'a> {
     }
 
     fn visit_array_expr(&mut self, ArrayExpr(exprs): &ArrayExpr) -> Self::ExprRes {
-        let old_target = self.target_ty.clone();
-        let ResolvedTy::Array(resolved_ty, size) = &old_target else {
-            return Err(ConstEvalError::TypeMisMatch);
-        };
-
-        if exprs.len() != *size as usize {
-            return Err(ConstEvalError::TypeMisMatch);
-        }
-
-        self.target_ty = resolved_ty.as_ref().clone();
-
         let values = exprs
             .iter()
             .map(|x| self.visit_expr(x))
             .collect::<Result<Vec<_>, ConstEvalError>>()?;
 
-        self.target_ty = old_target;
+        let tys = values.iter().map(|x| x.into()).collect::<Vec<ResolvedTy>>();
+        let ut_ty = ResolvedTy::utilize(tys).ok_or(ConstEvalError::TypeMisMatch)?;
+        
+
+        // TODO: 统一类型
 
         Ok(ConstEvalValue::Array(values))
     }
@@ -232,24 +273,7 @@ impl<'a> Visitor for ConstEvaler<'a> {
     }
 
     fn visit_lit_expr(&mut self, expr: &LitExpr) -> Self::ExprRes {
-        
-        if self.target_ty == ResolvedTy::ref_str() {
-            Ok(ConstEvalValue::RefStr(expr.try_into()?))
-        } else if self.target_ty == ResolvedTy::u32() {
-            expr.to_integer(ConstEvalValue::U32(0))
-        } else if self.target_ty == ResolvedTy::i32() {
-            expr.to_integer(ConstEvalValue::I32(0))
-        } else if self.target_ty == ResolvedTy::usize() {
-            expr.to_integer(ConstEvalValue::USize(0))
-        } else if self.target_ty == ResolvedTy::isize() {
-            expr.to_integer(ConstEvalValue::ISize(0))
-        } else if self.target_ty == ResolvedTy::char() {
-            Ok(ConstEvalValue::Char(expr.try_into()?))
-        } else if self.target_ty == ResolvedTy::bool() {
-            Ok(ConstEvalValue::Bool(expr.try_into()?))
-        } else {
-            Err(ConstEvalError::NotSupportedExpr)
-        }
+        expr.try_into()
     }
 
     fn visit_cast_expr(&mut self, CastExpr(expr, cast_ty): &CastExpr) -> Self::ExprRes {
@@ -258,13 +282,8 @@ impl<'a> Visitor for ConstEvaler<'a> {
             .resolve_ty(&cast_ty)
             .map_err(|x| ConstEvalError::Semantic(Box::new(x)))?;
 
-        if self.target_ty != cast_ty {
-            return Err(ConstEvalError::TypeMisMatch);
-        }
-
-        // TODO: expr 的类型无法确定🥲，如何解决这个问题？
-
-        todo!()
+        let expr_res = self.visit_expr(expr)?;
+        expr_res.cast(&cast_ty)
     }
 
     fn visit_let_expr(&mut self, _expr: &crate::ast::expr::LetExpr) -> Self::ExprRes {
@@ -324,7 +343,7 @@ impl<'a> Visitor for ConstEvaler<'a> {
 
     fn visit_index_expr(&mut self, expr: &crate::ast::expr::IndexExpr) -> Self::ExprRes {
         let old_target = self.target_ty.clone();
-        self.target_ty = ResolvedTy::Array(Box::new(old_target), ())
+
         todo!()
     }
 
