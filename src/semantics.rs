@@ -27,7 +27,7 @@ use crate::{
         stmt::{LocalKind, StmtKind},
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
-    const_eval::{ConstEvalValue, ConstEvaler},
+    const_eval::{ConstEvalError, ConstEvalValue, ConstEvaler},
     lexer::TokenPosition,
     semantics::{error::SemanticError, resolved_ty::ResolvedTy, utils::*, visitor::Visitor},
 };
@@ -457,57 +457,56 @@ impl SemanticAnalyzer {
         id: TypeId,
         is_methods_call: bool,
         name: &Symbol,
-    ) -> Result<Option<TypeId>, SemanticError> {
+    ) -> Result<Option<(TypeId, ImplInfoItem)>, SemanticError> {
+        fn get_impl_item_type_id(
+            analyzer: &SemanticAnalyzer,
+            item: &ImplInfoItem,
+            is_methods_call: bool,
+            self_ty: &ResolvedTy,
+        ) -> Option<TypeId> {
+            match &item {
+                ImplInfoItem::Method(fn_sig) => {
+                    let fn_ty = analyzer.get_type_by_id(fn_sig.type_id);
+
+                    match (is_methods_call, fn_ty.is_method()) {
+                        (true, true) => Some(fn_sig.type_id),
+                        (true, false) => None,
+                        (false, true) => Some(analyzer.intern_type(fn_ty.method_to_func(&self_ty))),
+                        (false, false) => Some(fn_sig.type_id),
+                    }
+                }
+                ImplInfoItem::Constant(constant) => {
+                    if !is_methods_call {
+                        Some(constant.ty)
+                    } else {
+                        None
+                    }
+                }
+            }
+        }
+
         let ty = self.get_type_by_id(id);
 
         // builtin 在 get_impl 中返回，从而此处不需要特殊处理
         // visit_impl_item 时保证了 implinfo 中的 fn 只有第一位可能出现 Self 类型，其他位置的 Self 都被展开了
         if let Some((inherent_impl, trait_impls)) = self.get_impl(&id) {
-            match inherent_impl.get(name) {
-                Some(ImplInfoItem::Constant(constant)) => {
-                    if !is_methods_call {
-                        return Ok(Some(constant.ty));
-                    }
+            if let Some(item) = inherent_impl.get(name) {
+                let replacer = get_impl_item_type_id(self, &item, is_methods_call, &ty);
+                if let Some(replacer) = replacer {
+                    return Ok(Some((replacer, item)));
                 }
-                Some(ImplInfoItem::Method(sig)) => {
-                    let fn_ty = self.get_type_by_id(sig.type_id);
-
-                    match (is_methods_call, fn_ty.is_method()) {
-                        (true, true) => return Ok(Some(sig.type_id)),
-                        (true, false) => {}
-                        (false, true) => {
-                            return Ok(Some(self.intern_type(fn_ty.method_to_func(&ty))));
-                        }
-                        (false, false) => return Ok(Some(sig.type_id)),
-                    }
-                }
-                None => {}
-            }
+            };
 
             let mut candidate = None;
 
             for (_, trait_impl) in trait_impls {
-                match trait_impl.get(name) {
-                    Some(ImplInfoItem::Constant(constant)) => {
-                        if !is_methods_call {
-                            if candidate.replace(constant.ty).is_some() {
-                                return Err(SemanticError::MultipleApplicable);
-                            }
-                        }
+                if let Some(item) = trait_impl.get(name) {
+                    let replacer = get_impl_item_type_id(self, &item, is_methods_call, &ty);
+                    if let Some(replacer) = replacer
+                        && candidate.replace((replacer, item)).is_some()
+                    {
+                        return Err(SemanticError::MultipleApplicable);
                     }
-                    Some(ImplInfoItem::Method(sig)) => {
-                        let fn_ty = self.get_type_by_id(sig.type_id);
-
-                        match (is_methods_call, fn_ty.is_method()) {
-                            (true, true) => return Ok(Some(sig.type_id)),
-                            (true, false) => {}
-                            (false, true) => {
-                                return Ok(Some(self.intern_type(fn_ty.method_to_func(&ty))));
-                            }
-                            (false, false) => return Ok(Some(sig.type_id)),
-                        }
-                    }
-                    None => {}
                 }
             }
 
@@ -528,7 +527,7 @@ impl SemanticAnalyzer {
 
         loop {
             if let Some(ret) = self.get_type_items_noderef(id, is_methods_call, &name)? {
-                return Ok((ret, deref_level));
+                return Ok((ret.0, deref_level));
             }
             let ty = self.get_type_by_id(id).clone();
             match ty {
@@ -548,11 +547,13 @@ impl SemanticAnalyzer {
         self.search_type_from_mut(ident, self.current_scope)
     }
 
-    fn search_type_by_path(
+    pub(crate) fn search_type_by_path(
         &self,
         qself: &Option<Box<QSelf>>,
         path: &Path,
     ) -> Result<(NodeId, &TypeInfo), SemanticError> {
+        // TODO: 将 resolve_ty 统一过来，实现 Self::Ty 的结构
+
         if qself.is_some() {
             return Err(SemanticError::Unimplemented);
         }
@@ -569,25 +570,43 @@ impl SemanticAnalyzer {
         self.search_type(&first.ident.symbol)
     }
 
-    fn search_value_by_path(
+    pub(crate) fn search_value_by_path(
         &self,
         qself: &Option<Box<QSelf>>,
         path: &Path,
-    ) -> Result<(NodeId, &Variable), SemanticError> {
+    ) -> Result<ValueContainer, SemanticError> {
         if qself.is_some() {
             return Err(SemanticError::Unimplemented);
         }
 
-        if path.segments.len() > 1 {
-            return Err(SemanticError::Unimplemented);
+        // 在没有 module 时，path expr 应该只可能为 value 或 ty::value 格式 (错误)
+        // TODO: ty::ty::...::ty::value
+        match &path.segments[..] {
+            [value_seg] => self
+                .search_value(&value_seg.ident.symbol)
+                .map(|v| ValueContainer::Variable(v)),
+            [type_seg, value_seg] => {
+                let ty = self.resolve_ty(&Ty {
+                    kind: TyKind::Path(PathTy(
+                        None,
+                        Path {
+                            segments: vec![PathSegment {
+                                ident: type_seg.ident.clone(),
+                                args: None,
+                            }],
+                            span: path.span.clone(),
+                        },
+                    )),
+                    id: 0,
+                    span: path.span.clone(),
+                })?;
+                let type_id = self.intern_type(ty);
+                self.get_type_items_noderef(type_id, false, &value_seg.ident.symbol)?
+                    .map(|(id, v)| ValueContainer::ImplInfoItem(id, v))
+                    .ok_or(SemanticError::UnknownVariable)
+            }
+            _ => Err(SemanticError::InvaildPath),
         }
-
-        let first = path.segments.first().unwrap();
-        if first.args.is_some() {
-            return Err(SemanticError::Unimplemented);
-        }
-
-        self.search_value(&first.ident.symbol)
     }
 
     fn search_type(&self, ident: &Symbol) -> Result<(NodeId, &TypeInfo), SemanticError> {
@@ -595,8 +614,9 @@ impl SemanticAnalyzer {
     }
 
     // 返回值为 (Scope Id, 变量类型)
-    fn search_value(&self, ident: &Symbol) -> Result<(NodeId, &Variable), SemanticError> {
+    fn search_value(&self, ident: &Symbol) -> Result<&Variable, SemanticError> {
         self.search_value_from(ident, self.current_scope, true)
+            .map(|x| x.1)
     }
 
     fn get_type_info(&self, full_name: &FullName) -> &TypeInfo {
@@ -647,7 +667,7 @@ impl SemanticAnalyzer {
         FullName(prefix)
     }
 
-    fn get_full_name_from(&self, id: NodeId, s: Symbol) -> FullName {
+    pub(crate) fn get_full_name_from(&self, id: NodeId, s: Symbol) -> FullName {
         let mut prefix = self.get_prefix_name_from(id);
         prefix.push(s);
         FullName(prefix)
@@ -807,7 +827,7 @@ impl SemanticAnalyzer {
         self.type_table.borrow_mut().intern(ty)
     }
 
-    fn get_type_by_id(&self, id: TypeId) -> ResolvedTy {
+    pub(crate) fn get_type_by_id(&self, id: TypeId) -> ResolvedTy {
         self.type_table.borrow().get(id).clone()
     }
 
@@ -832,9 +852,13 @@ impl SemanticAnalyzer {
     }
 
     fn const_eval(&self, ty: ResolvedTy, expr: &Expr) -> Result<ConstEvalValue, SemanticError> {
-        let mut evaler = ConstEvaler::new(self, ty);
-        evaler.visit_expr(expr).map_err(|x| match x {
-            crate::const_eval::ConstEvalError::Semantic(s) => *s,
+        let mut evaler = ConstEvaler::new(self);
+        match evaler.visit_expr(expr) {
+            Ok(x) => x.cast(&ty),
+            Err(err) => Err(err),
+        }
+        .map_err(|x| match x {
+            ConstEvalError::Semantic(s) => *s,
             _ => SemanticError::ConstEvalError(x),
         })
     }
@@ -1061,7 +1085,7 @@ impl SemanticAnalyzer {
 
                 // bindings 不能遮蔽 const, 即使不同作用域
                 // binding 还应该检查没有重名
-                if let Ok((_, var)) = self.search_value(&symbol)
+                if let Ok(var) = self.search_value(&symbol)
                     && var.kind.is_constant()
                 {
                     return Err(SemanticError::ShadowedConstantByBinding);
@@ -1371,13 +1395,14 @@ impl Visitor for SemanticAnalyzer {
                 // unit struct 隐式添加了一个 constant
                 if variant_data.is_unit() {
                     let self_ty = self.resolve_ty_in_scope_by_symbol(&ident.symbol, id);
+                    let fullname = self_ty.as_named().unwrap().clone();
                     let self_ty_id = self.intern_type(self_ty);
                     self.add_value(
                         ident.symbol.clone(),
                         Variable {
                             ty: self_ty_id,
                             mutbl: Mutability::Not,
-                            kind: VariableKind::Constant(ConstEvalValue::UnitStruct),
+                            kind: VariableKind::Constant(ConstEvalValue::UnitStruct(fullname)),
                         },
                         false,
                     )?;
@@ -2532,52 +2557,19 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_path_expr(&mut self, PathExpr(qself, path): &PathExpr) -> Self::ExprRes {
-        if qself.is_some() {
-            return Err(SemanticError::Unimplemented);
-        }
-
         if matches!(self.stage, AnalyzeStage::Body) {
-            // 在没有 module 时，path expr 应该只可能为 value 或 ty::value 格式
-            match &path.segments[..] {
-                [value_seg] => {
-                    let (_scope_id, var) = self.search_value(&value_seg.ident.symbol)?;
-
-                    Ok(Some(ExprResult {
-                        type_id: var.ty,
-                        category: ExprCategory::Place(var.mutbl),
-                        int_flow: InterruptControlFlow::Not,
-                    }))
-                }
-                [type_seg, value_seg] => {
-                    let ty = self.resolve_ty(&Ty {
-                        kind: TyKind::Path(PathTy(
-                            None,
-                            Path {
-                                segments: vec![PathSegment {
-                                    ident: type_seg.ident.clone(),
-                                    args: None,
-                                }],
-                                span: path.span.clone(),
-                            },
-                        )),
-                        id: 0,
-                        span: path.span.clone(),
-                    })?;
-                    let type_id = self.intern_type(ty);
-                    let value =
-                        self.get_type_items_noderef(type_id, false, &value_seg.ident.symbol)?;
-
-                    if let Some(value) = value {
-                        Ok(Some(ExprResult {
-                            type_id: value,
-                            category: ExprCategory::Not,
-                            int_flow: InterruptControlFlow::Not,
-                        }))
-                    } else {
-                        Err(SemanticError::UnknownVariable)
-                    }
-                }
-                _ => return Err(SemanticError::InvaildPath),
+            let value = self.search_value_by_path(qself, path)?;
+            match value {
+                ValueContainer::Variable(variable) => Ok(Some(ExprResult {
+                    type_id: variable.ty,
+                    category: ExprCategory::Place(variable.mutbl),
+                    int_flow: InterruptControlFlow::Not,
+                })),
+                ValueContainer::ImplInfoItem(type_id, _) => Ok(Some(ExprResult {
+                    type_id,
+                    category: ExprCategory::Place(Mutability::Not),
+                    int_flow: InterruptControlFlow::Not,
+                })),
             }
         } else {
             Ok(None)
@@ -2762,12 +2754,13 @@ impl Visitor for SemanticAnalyzer {
                         }
 
                         for (field_ident, field_type_id) in fields {
-                            if let Some(res) = dic.get(&field_ident) {
-                                let res_ty = self.get_type_by_id(res.type_id);
-                                let field_ty = self.get_type_by_id(*field_type_id);
-                                if !res_ty.can_trans_to_target_type(&field_ty) {
-                                    return Err(SemanticError::TypeMismatch);
-                                }
+                            let Some(res) = dic.get(&field_ident) else {
+                                return Err(SemanticError::MissingField);
+                            };
+                            let res_ty = self.get_type_by_id(res.type_id);
+                            let field_ty = self.get_type_by_id(*field_type_id);
+                            if !res_ty.can_trans_to_target_type(&field_ty) {
+                                return Err(SemanticError::TypeMismatch);
                             }
                         }
 
@@ -2867,8 +2860,10 @@ impl Visitor for SemanticAnalyzer {
         PathPat(qself, path): &PathPat,
         expected_ty: TypeId,
     ) -> Self::PatRes {
-        if let Ok((_, var)) = self.search_value_by_path(qself, path) {
-            if var.kind.is_constant() {
+        if let Ok(var) = self.search_value_by_path(qself, path) {
+            if let ValueContainer::Variable(var) = var
+                && var.kind.is_constant()
+            {
                 return Err(SemanticError::Unimplemented);
             }
         }

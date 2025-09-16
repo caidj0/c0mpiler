@@ -7,10 +7,16 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{
         Symbol,
-        expr::{ArrayExpr, CastExpr, ExprKind, FieldExpr, LitExpr, RepeatExpr},
+        expr::{
+            ArrayExpr, BinOp, BinaryExpr, CastExpr, ExprKind, FieldExpr, IndexExpr, LitExpr,
+            PathExpr, RepeatExpr, StructExpr, UnOp, UnaryExpr,
+        },
     },
     semantics::{
-        SemanticAnalyzer, error::SemanticError, resolved_ty::ResolvedTy, utils::FullName,
+        SemanticAnalyzer,
+        error::SemanticError,
+        resolved_ty::ResolvedTy,
+        utils::{FullName, ImplInfoItem, TypeKind, ValueContainer},
         visitor::Visitor,
     },
 };
@@ -62,6 +68,10 @@ impl ConstEvalValue {
                 ConstEvalValue::I32(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
             } else if *ty == ResolvedTy::isize() {
                 ConstEvalValue::ISize(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
+            } else if *ty == ResolvedTy::signed_integer() {
+                ConstEvalValue::SignedInteger(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
+            } else if *ty == ResolvedTy::integer() {
+                ConstEvalValue::Integer(num.try_into().map_err(|_| ConstEvalError::Overflow)?)
             } else {
                 return Err(ConstEvalError::NotSupportedCast);
             })
@@ -76,11 +86,32 @@ impl ConstEvalValue {
             | ConstEvalValue::SignedInteger(i32) => cast_to_integer(i32, ty),
             ConstEvalValue::Bool(b) => cast_to_integer(b, ty),
             ConstEvalValue::Char(c) => cast_to_integer(c as u32, ty),
+            ConstEvalValue::Array(values) => {
+                let ResolvedTy::Array(elm_ty, size) = ty else {
+                    return Err(ConstEvalError::TypeMisMatch);
+                };
+
+                if values.len() != *size as usize {
+                    return Err(ConstEvalError::TypeMisMatch);
+                }
+
+                let elms = values
+                    .into_iter()
+                    .map(|x| x.cast(&elm_ty))
+                    .collect::<Result<Vec<ConstEvalValue>, ConstEvalError>>()?;
+
+                Ok(ConstEvalValue::Array(elms))
+            }
             ConstEvalValue::Placeholder
             | ConstEvalValue::UnitStruct(_)
             | ConstEvalValue::RefStr(_)
-            | ConstEvalValue::Array(_)
-            | ConstEvalValue::Struct(_, _) => Err(ConstEvalError::NotSupportedCast),
+            | ConstEvalValue::Struct(_, _) => {
+                if Into::<ResolvedTy>::into(&self) == *ty {
+                    Ok(self)
+                } else {
+                    Err(ConstEvalError::NotSupportedCast)
+                }
+            }
         }
     }
 }
@@ -124,6 +155,10 @@ pub enum ConstEvalError {
     NotAStruct,
     NotStructField,
     NotSupportedCast,
+    OutOfBound,
+    NonConstVariable,
+    NotStructType,
+    NotSupportedBinary,
 }
 
 pub struct ConstEvaler<'a> {
@@ -235,9 +270,11 @@ impl<'a> Visitor for ConstEvaler<'a> {
 
         let tys = values.iter().map(|x| x.into()).collect::<Vec<ResolvedTy>>();
         let ut_ty = ResolvedTy::utilize(tys).ok_or(ConstEvalError::TypeMisMatch)?;
-        
 
-        // TODO: 统一类型
+        let values = values
+            .into_iter()
+            .map(|x| x.cast(&ut_ty))
+            .collect::<Result<Vec<_>, ConstEvalError>>()?;
 
         Ok(ConstEvalValue::Array(values))
     }
@@ -264,12 +301,145 @@ impl<'a> Visitor for ConstEvaler<'a> {
         Err(ConstEvalError::NotSupportedExpr)
     }
 
-    fn visit_binary_expr(&mut self, expr: &crate::ast::expr::BinaryExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_binary_expr(&mut self, BinaryExpr(binop, expr1, expr2): &BinaryExpr) -> Self::ExprRes {
+        let value1 = self.visit_expr(&expr1)?;
+        let value2 = self.visit_expr(&expr2)?;
+
+        if let (ConstEvalValue::Bool(value1), ConstEvalValue::Bool(value2)) = (&value1, &value2) {
+            Ok(ConstEvalValue::Bool(match binop {
+                BinOp::And => *value1 && *value2,
+                BinOp::Or => *value1 || *value2,
+                BinOp::BitXor => value1 ^ value2,
+                BinOp::BitAnd => value1 & value2,
+                BinOp::BitOr => value1 | value2,
+                BinOp::Eq => value1 == value2,
+                BinOp::Lt => value1 < value2,
+                BinOp::Le => value1 <= value2,
+                BinOp::Ne => value1 != value2,
+                BinOp::Ge => value1 >= value2,
+                BinOp::Gt => value1 > value2,
+                _ => return Err(ConstEvalError::NotSupportedBinary),
+            }))
+        } else if value1.is_number() && value2.is_number() {
+            match binop {
+                BinOp::Shl | BinOp::Shr => {
+                    let value2 = value2.cast(&ResolvedTy::u32())?.into_u32().unwrap();
+
+                    macro_rules! number_operation {
+                        ($value1:expr, $value2:expr, [$($num_ty:ident),*]) => {
+                            match $value1 {
+                                $(
+                                    ConstEvalValue::$num_ty(value1) => Ok(match binop {
+                                        BinOp::Shl => ConstEvalValue::$num_ty(
+                                            value1.checked_shl(value2).ok_or(ConstEvalError::Overflow)?,
+                                        ),
+                                        BinOp::Shr => ConstEvalValue::$num_ty(
+                                            value1.checked_shr(value2).ok_or(ConstEvalError::Overflow)?,
+                                        ),
+                                        _ => return Err(ConstEvalError::NotSupportedBinary),
+                                    }),
+                                )*
+                                _ => panic!("Impossible!"),
+                            }
+                        };
+                    }
+
+                    number_operation!(
+                        value1,
+                        value2,
+                        [U32, I32, USize, ISize, Integer, SignedInteger]
+                    )
+                }
+                _ => {
+                    let ty = ResolvedTy::utilize(vec![(&value1).into(), (&value2).into()])
+                        .ok_or(ConstEvalError::NotSupportedBinary)?;
+
+                    let value1 = value1.cast(&ty).unwrap();
+                    let value2 = value2.cast(&ty).unwrap();
+
+                    macro_rules! number_operation {
+                        ($value1:expr, $value2: expr, [$($num_ty:ident),*]) => {
+                            match ($value1, $value2) {
+                                $(
+                                    (ConstEvalValue::$num_ty(value1), ConstEvalValue::$num_ty(value2)) => Ok(match binop {
+                                        BinOp::BitXor => ConstEvalValue::$num_ty(value1 ^ value2),
+                                        BinOp::BitAnd => ConstEvalValue::$num_ty(value1 & value2),
+                                        BinOp::BitOr => ConstEvalValue::$num_ty(value1 | value2),
+                                        BinOp::Eq => ConstEvalValue::Bool(value1 == value2),
+                                        BinOp::Lt => ConstEvalValue::Bool(value1 < value2),
+                                        BinOp::Le => ConstEvalValue::Bool(value1 <= value2),
+                                        BinOp::Ne => ConstEvalValue::Bool(value1 != value2),
+                                        BinOp::Ge => ConstEvalValue::Bool(value1 >= value2),
+                                        BinOp::Gt => ConstEvalValue::Bool(value1 > value2),
+                                        BinOp::Add => ConstEvalValue::$num_ty(
+                                            value1.checked_add(value2).ok_or(ConstEvalError::Overflow)?,
+                                        ),
+                                        BinOp::Sub => ConstEvalValue::$num_ty(
+                                            value1.checked_sub(value2).ok_or(ConstEvalError::Overflow)?,
+                                        ),
+                                        BinOp::Mul => ConstEvalValue::$num_ty(
+                                            value1.checked_mul(value2).ok_or(ConstEvalError::Overflow)?,
+                                        ),
+                                        BinOp::Div => ConstEvalValue::$num_ty(
+                                            value1.checked_div(value2).ok_or(ConstEvalError::Overflow)?,
+                                        ),
+                                        BinOp::Rem => ConstEvalValue::$num_ty(
+                                            value1.checked_rem(value2).ok_or(ConstEvalError::Overflow)?,
+                                        ),
+                                        _ => return Err(ConstEvalError::NotSupportedBinary),
+                                    }),
+                                )*
+                                _ => panic!("Impossible!"),
+                            }
+                        };
+                    }
+
+                    number_operation!(
+                        value1,
+                        value2,
+                        [U32, I32, USize, ISize, Integer, SignedInteger]
+                    )
+                }
+            }
+        } else {
+            Err(ConstEvalError::NotSupportedBinary)
+        }
     }
 
-    fn visit_unary_expr(&mut self, expr: &crate::ast::expr::UnaryExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_unary_expr(&mut self, UnaryExpr(unop, expr): &UnaryExpr) -> Self::ExprRes {
+        let value = self.visit_expr(expr)?;
+
+        match unop {
+            UnOp::Deref => Err(ConstEvalError::NotSupportedExpr),
+            UnOp::Not => match value {
+                ConstEvalValue::U32(v) => Ok(ConstEvalValue::U32(!v)),
+                ConstEvalValue::I32(v) => Ok(ConstEvalValue::I32(!v)),
+                ConstEvalValue::USize(v) => Ok(ConstEvalValue::USize(!v)),
+                ConstEvalValue::ISize(v) => Ok(ConstEvalValue::ISize(!v)),
+                ConstEvalValue::Integer(v) => Ok(ConstEvalValue::Integer(!v)),
+                ConstEvalValue::SignedInteger(v) => Ok(ConstEvalValue::SignedInteger(!v)),
+                ConstEvalValue::Bool(v) => Ok(ConstEvalValue::Bool(!v)),
+                _ => Err(ConstEvalError::NotSupportedExpr),
+            },
+            UnOp::Neg => match value {
+                ConstEvalValue::I32(v) => Ok(ConstEvalValue::I32(
+                    v.checked_neg().ok_or(ConstEvalError::Overflow)?,
+                )),
+                ConstEvalValue::ISize(v) => Ok(ConstEvalValue::ISize(
+                    v.checked_neg().ok_or(ConstEvalError::Overflow)?,
+                )),
+                ConstEvalValue::Integer(v) => Ok(ConstEvalValue::SignedInteger(
+                    TryInto::<i32>::try_into(v)
+                        .map_err(|_| ConstEvalError::Overflow)?
+                        .checked_neg()
+                        .ok_or(ConstEvalError::Overflow)?,
+                )),
+                ConstEvalValue::SignedInteger(v) => Ok(ConstEvalValue::SignedInteger(
+                    v.checked_neg().ok_or(ConstEvalError::Overflow)?,
+                )),
+                _ => Err(ConstEvalError::NotSupportedExpr),
+            },
+        }
     }
 
     fn visit_lit_expr(&mut self, expr: &LitExpr) -> Self::ExprRes {
@@ -323,28 +493,34 @@ impl<'a> Visitor for ConstEvaler<'a> {
     }
 
     fn visit_field_expr(&mut self, FieldExpr(expr, ident): &FieldExpr) -> Self::ExprRes {
-        let old_target = self.target_ty.clone();
-        self.target_ty = ResolvedTy::Infer;
         let ret = match self.visit_expr(&expr)? {
             ConstEvalValue::Struct(_, mut hash_map) => match hash_map.remove(&ident.symbol) {
-                Some(value) => {
-                    if !value.type_equal(&self.target_ty) {
-                        return Err(ConstEvalError::TypeMisMatch);
-                    }
-                    value
-                }
+                Some(value) => value,
                 None => return Err(ConstEvalError::NotStructField),
             },
             _ => return Err(ConstEvalError::NotAStruct),
         };
-        self.target_ty = old_target;
         Ok(ret)
     }
 
-    fn visit_index_expr(&mut self, expr: &crate::ast::expr::IndexExpr) -> Self::ExprRes {
-        let old_target = self.target_ty.clone();
+    fn visit_index_expr(&mut self, IndexExpr(array, index): &IndexExpr) -> Self::ExprRes {
+        let array = self.visit_expr(&array)?;
+        let index = self.visit_expr(&index)?;
 
-        todo!()
+        let index = match index {
+            ConstEvalValue::USize(index) | ConstEvalValue::Integer(index) => index,
+            _ => return Err(ConstEvalError::TypeMisMatch),
+        } as usize;
+
+        let ConstEvalValue::Array(mut array) = array else {
+            return Err(ConstEvalError::TypeMisMatch);
+        };
+
+        if index >= array.len() {
+            return Err(ConstEvalError::OutOfBound);
+        }
+
+        Ok(array.remove(index))
     }
 
     fn visit_range_expr(&mut self, _expr: &crate::ast::expr::RangeExpr) -> Self::ExprRes {
@@ -355,8 +531,21 @@ impl<'a> Visitor for ConstEvaler<'a> {
         Err(ConstEvalError::NotSupportedExpr)
     }
 
-    fn visit_path_expr(&mut self, expr: &crate::ast::expr::PathExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_path_expr(&mut self, PathExpr(qself, path): &PathExpr) -> Self::ExprRes {
+        let value = self
+            .analyzer
+            .search_value_by_path(qself, path)
+            .map_err(|x| ConstEvalError::Semantic(Box::new(x)))?;
+
+        match value {
+            ValueContainer::Variable(_) => Err(ConstEvalError::NonConstVariable),
+            ValueContainer::ImplInfoItem(_, ImplInfoItem::Constant(constant)) => {
+                Ok(constant.value.clone())
+            }
+            ValueContainer::ImplInfoItem(_, ImplInfoItem::Method(_)) => {
+                Err(ConstEvalError::NotSupportedExpr)
+            }
+        }
     }
 
     fn visit_addr_of_expr(&mut self, _expr: &crate::ast::expr::AddrOfExpr) -> Self::ExprRes {
@@ -375,32 +564,77 @@ impl<'a> Visitor for ConstEvaler<'a> {
         Err(ConstEvalError::NotSupportedExpr)
     }
 
-    fn visit_struct_expr(&mut self, expr: &crate::ast::expr::StructExpr) -> Self::ExprRes {
-        todo!()
+    fn visit_struct_expr(
+        &mut self,
+        StructExpr {
+            qself,
+            path,
+            fields,
+            rest,
+        }: &StructExpr,
+    ) -> Self::ExprRes {
+        if !matches!(rest, crate::ast::expr::StructRest::None) {
+            return Err(ConstEvalError::NotSupportedExpr);
+        };
+
+        let exp_fields = fields
+            .iter()
+            .map(|x| -> Result<(Symbol, ConstEvalValue), ConstEvalError> {
+                Ok((x.ident.symbol.clone(), self.visit_expr(&x.expr)?))
+            })
+            .collect::<Result<Vec<_>, ConstEvalError>>()?;
+
+        let (id, struct_info) = self
+            .analyzer
+            .search_type_by_path(qself, path)
+            .map_err(|x| ConstEvalError::Semantic(Box::new(x)))?;
+
+        match &struct_info.kind {
+            TypeKind::Placeholder => panic!("Impossible"),
+            TypeKind::Struct { fields } => {
+                let mut dic = HashMap::new();
+
+                for x in exp_fields.into_iter() {
+                    if let Some(_) = dic.insert(x.0, x.1) {
+                        return Err(ConstEvalError::Semantic(Box::new(
+                            SemanticError::MultiSpecifiedField,
+                        )));
+                    }
+                }
+
+                for (field_ident, field_type_id) in fields {
+                    let Some((s, res)) = dic.remove_entry(field_ident) else {
+                        return Err(ConstEvalError::Semantic(Box::new(
+                            SemanticError::MissingField,
+                        )));
+                    };
+                    let field_ty = self.analyzer.get_type_by_id(*field_type_id);
+                    dic.insert(s, res.cast(&field_ty)?);
+                }
+
+                Ok(ConstEvalValue::Struct(
+                    self.analyzer
+                        .get_full_name_from(id, struct_info.name.clone()),
+                    dic,
+                ))
+            }
+            TypeKind::Enum { fields: _ }
+            | TypeKind::Trait {
+                methods: _,
+                constants: _,
+            } => Err(ConstEvalError::NotStructType),
+        }
     }
 
     fn visit_repeat_expr(&mut self, RepeatExpr(expr, rep_time_expr): &RepeatExpr) -> Self::ExprRes {
-        let old_target = self.target_ty.clone();
-
-        let ResolvedTy::Array(resolved_ty, size) = &old_target else {
-            return Err(ConstEvalError::TypeMisMatch);
-        };
-
-        self.target_ty = ResolvedTy::usize();
         let rep_time = self
             .visit_expr(&rep_time_expr.value)?
             .into_u_size()
             .unwrap();
 
-        if *size != rep_time {
-            return Err(ConstEvalError::TypeMisMatch);
-        }
-
-        self.target_ty = resolved_ty.as_ref().clone();
-
         let value = self.visit_expr(&expr)?;
 
-        let values: Vec<ConstEvalValue> = repeat_n(value, *size as usize).collect();
+        let values: Vec<ConstEvalValue> = repeat_n(value, rep_time as usize).collect();
 
         Ok(ConstEvalValue::Array(values))
     }

@@ -89,7 +89,6 @@ pub struct QSelf {
 
 impl OptionEatable for QSelf {
     fn try_eat_impl(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Option<Self>> {
-        // TODO
         Ok(None)
     }
 }

@@ -98,7 +98,6 @@ pub struct Generics {
 
 impl Eatable for Generics {
     fn eat_impl(_iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
-        // TODO
         Ok(Generics::default())
     }
 }

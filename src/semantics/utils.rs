@@ -48,6 +48,7 @@ pub struct ImplInfo {
     pub constants: HashMap<Symbol, Constant>,
 }
 
+#[derive(Debug)]
 pub enum ImplInfoItem<'a> {
     Method(&'a FnSig),
     Constant(&'a Constant),
@@ -322,4 +323,10 @@ impl BulitInImpls {
             ),
         }
     }
+}
+
+#[derive(Debug, EnumAsInner)]
+pub enum ValueContainer<'a> {
+    Variable(&'a Variable),
+    ImplInfoItem(TypeId, ImplInfoItem<'a>),
 }

@@ -43,4 +43,5 @@ pub enum SemanticError {
     MultiBinding,
     ShadowedConstantByBinding,
     NoReturnFunction,
+    MissingField,
 }
