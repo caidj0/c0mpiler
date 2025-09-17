@@ -2332,11 +2332,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 if let Some(els_res) = els_res {
                     no_assignee!(els_res.category);
-                    Ok(Some(Self::unit_expr_result_int_specified(
-                        con_res
+                    Ok(Some(ExprResult {
+                        type_id: self.utilize_ty(vec![take_res.type_id, els_res.type_id])?,
+                        category: ExprCategory::Not,
+                        int_flow: con_res
                             .int_flow
                             .concat(take_res.int_flow.shunt(els_res.int_flow)),
-                    )))
+                    }))
                 } else {
                     if take_res.type_id == Self::unit_type() {
                         Ok(Some(Self::unit_expr_result_int_specified(

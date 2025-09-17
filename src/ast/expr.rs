@@ -13,6 +13,25 @@ use crate::{
     utils::string::{parse_number_literal, parse_quoted_content},
 };
 
+macro_rules! define_priority {
+    ($($name:ident $num:literal),*) => {
+        paste::paste! {
+            $(
+                const [<$name:upper _PRIORITY>]: usize = $num;
+            )*
+        }
+    };
+}
+
+define_priority! {
+    assign 1,
+    range 5,
+    or 10, and 20, compare 30, bitor 40, bitxor 50,
+    bitand 60, shlshr 70, addsub 80, muldivrem 90,
+    cast 500,
+    unary 1000000
+}
+
 #[derive(Debug)]
 pub struct Expr {
     pub kind: ExprKind,
@@ -133,9 +152,10 @@ impl Expr {
                 } else if let Some(helper) = RangeHelper::eat_with_priority(iter, min_priority)? {
                     expr1 =
                         ExprKind::Range(RangeExpr(Some(warp_expr(expr1, iter)), helper.0, helper.1))
-                } else if let Some(helper) = AssignHelper::try_eat(iter)? {
+                } else if let Some(helper) = AssignHelper::eat_with_priority(iter, min_priority)? {
                     expr1 = ExprKind::Assign(AssignExpr(warp_expr(expr1, iter), helper.0))
-                } else if let Some(helper) = AssignOpHelper::try_eat(iter)? {
+                } else if let Some(helper) = AssignOpHelper::eat_with_priority(iter, min_priority)?
+                {
                     expr1 =
                         ExprKind::AssignOp(AssignOpExpr(helper.0, warp_expr(expr1, iter), helper.1))
                 } else {
@@ -365,8 +385,9 @@ pub struct UnaryExpr(pub UnOp, pub Box<Expr>);
 
 impl Eatable for UnaryExpr {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
+        // 除了 . 运算符，unary 是优先级最高的
         let unop = iter.next()?.try_into()?;
-        let expr = Expr::eat_with_priority(iter, 1000000)?;
+        let expr = Expr::eat_with_priority(iter, UNARY_PRIORITY + 1)?;
         Ok(Self(unop, Box::new(expr)))
     }
 }
@@ -454,15 +475,15 @@ pub enum BinOp {
 impl BinOp {
     pub fn get_priority(&self) -> usize {
         match self {
-            Self::Or => 10,
-            Self::And => 20,
-            Self::Eq | Self::Ne | Self::Lt | Self::Gt | Self::Le | Self::Ge => 30,
-            Self::BitOr => 40,
-            Self::BitXor => 50,
-            Self::BitAnd => 60,
-            Self::Shl | Self::Shr => 70,
-            Self::Add | Self::Sub => 80,
-            Self::Mul | Self::Div | Self::Rem => 90,
+            Self::Or => OR_PRIORITY,
+            Self::And => AND_PRIORITY,
+            Self::Eq | Self::Ne | Self::Lt | Self::Gt | Self::Le | Self::Ge => COMPARE_PRIORITY,
+            Self::BitOr => BITOR_PRIORITY,
+            Self::BitXor => BITXOR_PRIORITY,
+            Self::BitAnd => BITAND_PRIORITY,
+            Self::Shl | Self::Shr => SHLSHR_PRIORITY,
+            Self::Add | Self::Sub => ADDSUB_PRIORITY,
+            Self::Mul | Self::Div | Self::Rem => MULDIVREM_PRIORITY,
         }
     }
 }
@@ -667,11 +688,18 @@ pub struct AssignExpr(pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignHelper(pub Box<Expr>);
 
-impl OptionEatable for AssignHelper {
-    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
-        match_prefix!(iter, TokenType::Eq);
-        let expr2 = Expr::eat(iter)?;
+impl AssignHelper {
+    pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
+        let mut using_iter = iter.clone();
 
+        if using_iter.peek()?.token_type != TokenType::Eq || ASSIGN_PRIORITY < min_priority {
+            return Ok(None);
+        }
+        using_iter.advance();
+
+        let expr2 = Expr::eat_with_priority(&mut using_iter, ASSIGN_PRIORITY + 1)?;
+
+        iter.update(using_iter);
         Ok(Some(AssignHelper(Box::new(expr2))))
     }
 }
@@ -940,12 +968,10 @@ pub struct RangeExpr(
 pub struct RangeHelper(pub Option<Box<Expr>>, pub RangeLimits);
 
 impl RangeHelper {
-    const RANGE_PRIORITY: usize = 5;
-
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
-        if Self::RANGE_PRIORITY < min_priority {
+        if RANGE_PRIORITY < min_priority {
             return Ok(None);
         }
 
@@ -956,7 +982,7 @@ impl RangeHelper {
         };
 
         let mut using_iter2 = using_iter.clone();
-        let expr2 = Expr::eat_with_priority(&mut using_iter2, Self::RANGE_PRIORITY + 1).ok();
+        let expr2 = Expr::eat_with_priority(&mut using_iter2, RANGE_PRIORITY + 1).ok();
         if expr2.is_some() {
             using_iter.update(using_iter2);
         }
@@ -978,15 +1004,23 @@ pub struct AssignOpExpr(pub AssignOp, pub Box<Expr>, pub Box<Expr>);
 #[derive(Debug)]
 pub struct AssignOpHelper(pub AssignOp, pub Box<Expr>);
 
-impl OptionEatable for AssignOpHelper {
-    fn try_eat_impl(iter: &mut TokenIter) -> ASTResult<Option<Self>> {
-        let assign_op_result: Result<AssignOp, _> = iter.next()?.try_into();
+impl AssignOpHelper {
+    pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
+        let mut using_iter = iter.clone();
+
+        if ASSIGN_PRIORITY < min_priority {
+            return Ok(None);
+        }
+
+        let assign_op_result: Result<AssignOp, _> = using_iter.next()?.try_into();
         let assign_op = match assign_op_result {
             Ok(o) => o,
             Err(_) => return Ok(None),
         };
-        let expr2 = Expr::eat(iter)?;
 
+        let expr2 = Expr::eat_with_priority(&mut using_iter, ASSIGN_PRIORITY + 1)?;
+
+        iter.update(using_iter);
         Ok(Some(AssignOpHelper(assign_op, Box::new(expr2))))
     }
 }
@@ -1169,12 +1203,10 @@ pub struct CastExpr(pub Box<Expr>, pub Box<Ty>);
 pub struct CastHelper(pub Box<Ty>);
 
 impl CastHelper {
-    const CAST_PRIOTIRY: usize = 500;
-
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Option<Self>> {
         let mut using_iter = iter.clone();
 
-        if using_iter.peek()?.token_type != TokenType::As || Self::CAST_PRIOTIRY < min_priority {
+        if using_iter.peek()?.token_type != TokenType::As || CAST_PRIORITY < min_priority {
             return Ok(None);
         }
         using_iter.advance();
