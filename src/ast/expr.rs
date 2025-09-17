@@ -822,8 +822,12 @@ pub struct IfExpr(pub Box<Expr>, pub Box<BlockExpr>, pub Option<Box<Expr>>);
 impl Eatable for IfExpr {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::If);
+        match_keyword!(iter, TokenType::OpenPar);
 
         let expr = Expr::eat_without_struct(iter)?;
+
+        match_keyword!(iter, TokenType::ClosePar);
+
         let block = BlockExpr::eat(iter)?;
 
         let else_expr = if iter.peek()?.token_type == TokenType::Else {
@@ -966,7 +970,9 @@ pub struct WhileExpr(pub Box<Expr>, pub Box<BlockExpr>);
 impl Eatable for WhileExpr {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::While);
+        match_keyword!(iter, TokenType::OpenPar);
         let expr = Expr::eat(iter)?;
+        match_keyword!(iter, TokenType::ClosePar);
         let block = BlockExpr::eat(iter)?;
 
         Ok(Self(Box::new(expr), Box::new(block)))
