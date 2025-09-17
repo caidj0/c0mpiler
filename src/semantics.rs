@@ -2174,6 +2174,10 @@ impl Visitor for SemanticAnalyzer {
                                 self.intern_type(ResolvedTy::u32())
                             } else if s == "i32" {
                                 self.intern_type(ResolvedTy::i32())
+                            } else if s == "isize" {
+                                self.intern_type(ResolvedTy::isize())
+                            } else if s == "usize" {
+                                self.intern_type(ResolvedTy::usize())
                             } else {
                                 return Err(SemanticError::UnknownSuffix);
                             }
@@ -2209,12 +2213,13 @@ impl Visitor for SemanticAnalyzer {
                 let expr_ty = self.get_type_by_id(type_id);
                 let target_ty = self.resolve_ty(&expr.1)?;
 
-                if (expr_ty == ResolvedTy::i32()
-                    || expr_ty == ResolvedTy::u32()
-                    || expr_ty == ResolvedTy::integer()
+                if (expr_ty.is_number_type()
                     || expr_ty == ResolvedTy::char()
                     || expr_ty == ResolvedTy::bool())
-                    && (target_ty == ResolvedTy::i32() || target_ty == ResolvedTy::u32())
+                    && (target_ty == ResolvedTy::i32()
+                        || target_ty == ResolvedTy::u32()
+                        || target_ty == ResolvedTy::isize()
+                        || target_ty == ResolvedTy::usize())
                 {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(target_ty),
@@ -2785,11 +2790,11 @@ impl Visitor for SemanticAnalyzer {
     }
 
     fn visit_repeat_expr(&mut self, RepeatExpr(expr, const_expr): &RepeatExpr) -> Self::ExprRes {
-        let size = self.const_eval(ResolvedTy::usize(), &const_expr.value)?;
         let res = self.visit_expr(expr)?;
 
         match res {
             Some(res) => {
+                let size = self.const_eval(ResolvedTy::usize(), &const_expr.value)?;
                 no_assignee!(res.category);
 
                 Ok(Some(ExprResult {

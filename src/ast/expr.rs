@@ -6,7 +6,7 @@ use crate::{
         stmt::{Stmt, StmtKind},
         ty::Ty,
     },
-    kind_check,
+    is_keyword, kind_check,
     lexer::{Token, TokenIter},
     loop_until, match_keyword, match_prefix, peek_keyword, skip_keyword_or_break,
     tokens::TokenType,
@@ -1152,7 +1152,7 @@ pub struct AddrOfExpr(pub Mutability, pub Box<Expr>);
 impl Eatable for AddrOfExpr {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::And);
-        let mutability = if iter.peek()?.token_type == TokenType::Mut {
+        let mutability = if is_keyword!(iter, TokenType::Mut) {
             Mutability::Mut
         } else {
             Mutability::Not

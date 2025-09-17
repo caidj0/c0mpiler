@@ -16,7 +16,7 @@ use crate::{
         SemanticAnalyzer,
         error::SemanticError,
         resolved_ty::ResolvedTy,
-        utils::{FullName, ImplInfoItem, TypeKind, ValueContainer},
+        utils::{FullName, ImplInfoItem, TypeKind, ValueContainer, Variable, VariableKind},
         visitor::Visitor,
     },
 };
@@ -538,7 +538,16 @@ impl<'a> Visitor for ConstEvaler<'a> {
             .map_err(|x| ConstEvalError::Semantic(Box::new(x)))?;
 
         match value {
-            ValueContainer::Variable(_) => Err(ConstEvalError::NonConstVariable),
+            ValueContainer::Variable(Variable {
+                ty: _,
+                mutbl: _,
+                kind,
+            }) => match kind {
+                VariableKind::Decl | VariableKind::Inited | VariableKind::Fn => {
+                    Err(ConstEvalError::NonConstVariable)
+                }
+                VariableKind::Constant(const_eval_value) => Ok(const_eval_value.clone()),
+            },
             ValueContainer::ImplInfoItem(_, ImplInfoItem::Constant(constant)) => {
                 Ok(constant.value.clone())
             }
