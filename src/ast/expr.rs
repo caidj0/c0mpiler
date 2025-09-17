@@ -29,8 +29,9 @@ define_priority! {
     or 10, and 20, compare 30, bitor 40, bitxor 50,
     bitand 60, shlshr 70, addsub 80, muldivrem 90,
     cast 500,
-    unary 1000000
-}
+    unary 1000000,
+    block 100000000
+} // BlockExpression - Expression 处有歧义，暂时认为 block 后不能跟优先级在 index 之下的运算符
 
 #[derive(Debug)]
 pub struct Expr {
@@ -72,6 +73,21 @@ pub enum ExprKind {
     Repeat(RepeatExpr),
 }
 
+impl ExprKind {
+    pub fn is_expr_with_block(&self) -> bool {
+        matches!(
+            self,
+            Self::Block(_)
+                | Self::ConstBlock(_)
+                | Self::Loop(_)
+                | Self::ForLoop(_)
+                | Self::While(_)
+                | Self::If(_)
+                | Self::Match(_)
+        )
+    }
+}
+
 impl Eatable for Expr {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         Self::eat_with_priority(iter, 0)
@@ -89,7 +105,7 @@ impl Expr {
 
     pub fn eat_with_priority_and_struct(
         iter: &mut TokenIter,
-        min_priority: usize,
+        mut min_priority: usize,
         has_struct: bool,
     ) -> ASTResult<Self> {
         let begin = iter.get_pos();
@@ -111,6 +127,15 @@ impl Expr {
             )
             .map_err(|err2| err.select(err2))
         });
+
+        match &kind {
+            Ok(x) => {
+                if x.is_expr_with_block() {
+                    min_priority = BLOCK_PRIORITY;
+                }
+            }
+            Err(_) => {}
+        }
 
         kind = kind.or_else(|err| match RangeHelper::eat_with_priority(iter, 0) {
             Ok(Some(helper)) => Ok(ExprKind::Range(RangeExpr(None, helper.0, helper.1))),
@@ -177,16 +202,7 @@ impl Expr {
     }
 
     pub fn is_block(&self) -> bool {
-        matches!(
-            self.kind,
-            ExprKind::ConstBlock(_)
-                | ExprKind::If(_)
-                | ExprKind::While(_)
-                | ExprKind::ForLoop(_)
-                | ExprKind::Loop(_)
-                | ExprKind::Match(_)
-                | ExprKind::Block(_)
-        )
+        self.kind.is_expr_with_block()
     }
 }
 
@@ -450,7 +466,7 @@ impl BinaryHelper {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     Add,
     Sub,

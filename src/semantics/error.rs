@@ -1,4 +1,4 @@
-use crate::const_eval::ConstEvalError;
+use crate::{ast::expr::BinOp, const_eval::ConstEvalError, semantics::resolved_ty::ResolvedTy};
 
 #[derive(Debug)]
 pub enum SemanticError {
@@ -44,6 +44,7 @@ pub enum SemanticError {
     ShadowedConstantByBinding,
     NoReturnFunction,
     MissingField,
+    NoBinaryOperation(BinOp, ResolvedTy, ResolvedTy),
 }
 
 impl From<ConstEvalError> for SemanticError {

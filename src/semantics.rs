@@ -2167,7 +2167,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow,
                     }))
                 } else {
-                    Err(SemanticError::Unimplemented)
+                    Err(SemanticError::NoBinaryOperation(*bin_op, ty1, ty2))
                 }
             }
             (None, Some(_)) | (Some(_), None) => panic!("Impossible!"),
