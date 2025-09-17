@@ -45,3 +45,12 @@ pub enum SemanticError {
     NoReturnFunction,
     MissingField,
 }
+
+impl From<ConstEvalError> for SemanticError {
+    fn from(value: ConstEvalError) -> Self {
+        match value {
+            ConstEvalError::Semantic(err) => *err,
+            _ => Self::ConstEvalError(value),
+        }
+    }
+}

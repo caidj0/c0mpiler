@@ -20,59 +20,59 @@ use crate::{
     semantics::TypeId,
 };
 
-pub trait Visitor {
+pub trait Visitor<'ast> {
     type DefaultRes;
     type ExprRes;
     type PatRes;
     type StmtRes;
 
-    fn visit_crate(&mut self, krate: &Crate) -> Self::DefaultRes;
+    fn visit_crate(&mut self, krate: &'ast Crate) -> Self::DefaultRes;
 
-    fn visit_item(&mut self, item: &Item) -> Self::DefaultRes;
-    fn visit_associate_item(&mut self, item: &Item<AssocItemKind>) -> Self::DefaultRes;
-    fn visit_const_item(&mut self, item: &ConstItem) -> Self::DefaultRes;
-    fn visit_fn_item(&mut self, item: &FnItem) -> Self::DefaultRes;
-    fn visit_mod_item(&mut self, item: &ModItem) -> Self::DefaultRes;
-    fn visit_enum_item(&mut self, item: &EnumItem) -> Self::DefaultRes;
-    fn visit_struct_item(&mut self, item: &StructItem) -> Self::DefaultRes;
-    fn visit_trait_item(&mut self, item: &TraitItem) -> Self::DefaultRes;
-    fn visit_impl_item(&mut self, item: &ImplItem) -> Self::DefaultRes;
+    fn visit_item(&mut self, item: &'ast Item) -> Self::DefaultRes;
+    fn visit_associate_item(&mut self, item: &'ast Item<AssocItemKind>) -> Self::DefaultRes;
+    fn visit_const_item(&mut self, item: &'ast ConstItem) -> Self::DefaultRes;
+    fn visit_fn_item(&mut self, item: &'ast FnItem) -> Self::DefaultRes;
+    fn visit_mod_item(&mut self, item: &'ast ModItem) -> Self::DefaultRes;
+    fn visit_enum_item(&mut self, item: &'ast EnumItem) -> Self::DefaultRes;
+    fn visit_struct_item(&mut self, item: &'ast StructItem) -> Self::DefaultRes;
+    fn visit_trait_item(&mut self, item: &'ast TraitItem) -> Self::DefaultRes;
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) -> Self::DefaultRes;
 
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Self::StmtRes;
-    fn visit_let_stmt(&mut self, stmt: &LocalStmt) -> Self::StmtRes;
+    fn visit_stmt(&mut self, stmt: &'ast Stmt) -> Self::StmtRes;
+    fn visit_let_stmt(&mut self, stmt: &'ast LocalStmt) -> Self::StmtRes;
 
-    fn visit_expr(&mut self, expr: &Expr) -> Self::ExprRes;
-    fn visit_array_expr(&mut self, expr: &ArrayExpr) -> Self::ExprRes;
-    fn visit_const_block_expr(&mut self, expr: &ConstBlockExpr) -> Self::ExprRes;
-    fn visit_call_expr(&mut self, expr: &CallExpr) -> Self::ExprRes;
-    fn visit_method_call_expr(&mut self, expr: &MethodCallExpr) -> Self::ExprRes;
-    fn visit_tup_expr(&mut self, expr: &TupExpr) -> Self::ExprRes;
-    fn visit_binary_expr(&mut self, expr: &BinaryExpr) -> Self::ExprRes;
-    fn visit_unary_expr(&mut self, expr: &UnaryExpr) -> Self::ExprRes;
-    fn visit_lit_expr(&mut self, expr: &LitExpr) -> Self::ExprRes;
-    fn visit_cast_expr(&mut self, expr: &CastExpr) -> Self::ExprRes;
-    fn visit_let_expr(&mut self, expr: &LetExpr) -> Self::ExprRes;
-    fn visit_if_expr(&mut self, expr: &IfExpr) -> Self::ExprRes;
-    fn visit_while_expr(&mut self, expr: &WhileExpr) -> Self::ExprRes;
-    fn visit_for_loop_expr(&mut self, expr: &ForLoopExpr) -> Self::ExprRes;
-    fn visit_loop_expr(&mut self, expr: &LoopExpr) -> Self::ExprRes;
-    fn visit_match_expr(&mut self, expr: &MatchExpr) -> Self::ExprRes;
-    fn visit_block_expr(&mut self, expr: &BlockExpr) -> Self::ExprRes;
-    fn visit_assign_expr(&mut self, expr: &AssignExpr) -> Self::ExprRes;
-    fn visit_assign_op_expr(&mut self, expr: &AssignOpExpr) -> Self::ExprRes;
-    fn visit_field_expr(&mut self, expr: &FieldExpr) -> Self::ExprRes;
-    fn visit_index_expr(&mut self, expr: &IndexExpr) -> Self::ExprRes;
-    fn visit_range_expr(&mut self, expr: &RangeExpr) -> Self::ExprRes;
-    fn visit_underscore_expr(&mut self, expr: &UnderscoreExpr) -> Self::ExprRes;
-    fn visit_path_expr(&mut self, expr: &PathExpr) -> Self::ExprRes;
-    fn visit_addr_of_expr(&mut self, expr: &AddrOfExpr) -> Self::ExprRes;
-    fn visit_break_expr(&mut self, expr: &BreakExpr) -> Self::ExprRes;
-    fn visit_continue_expr(&mut self, expr: &ContinueExpr) -> Self::ExprRes;
-    fn visit_ret_expr(&mut self, expr: &RetExpr) -> Self::ExprRes;
-    fn visit_struct_expr(&mut self, expr: &StructExpr) -> Self::ExprRes;
-    fn visit_repeat_expr(&mut self, expr: &RepeatExpr) -> Self::ExprRes;
+    fn visit_expr(&mut self, expr: &'ast Expr) -> Self::ExprRes;
+    fn visit_array_expr(&mut self, expr: &'ast ArrayExpr) -> Self::ExprRes;
+    fn visit_const_block_expr(&mut self, expr: &'ast ConstBlockExpr) -> Self::ExprRes;
+    fn visit_call_expr(&mut self, expr: &'ast CallExpr) -> Self::ExprRes;
+    fn visit_method_call_expr(&mut self, expr: &'ast MethodCallExpr) -> Self::ExprRes;
+    fn visit_tup_expr(&mut self, expr: &'ast TupExpr) -> Self::ExprRes;
+    fn visit_binary_expr(&mut self, expr: &'ast BinaryExpr) -> Self::ExprRes;
+    fn visit_unary_expr(&mut self, expr: &'ast UnaryExpr) -> Self::ExprRes;
+    fn visit_lit_expr(&mut self, expr: &'ast LitExpr) -> Self::ExprRes;
+    fn visit_cast_expr(&mut self, expr: &'ast CastExpr) -> Self::ExprRes;
+    fn visit_let_expr(&mut self, expr: &'ast LetExpr) -> Self::ExprRes;
+    fn visit_if_expr(&mut self, expr: &'ast IfExpr) -> Self::ExprRes;
+    fn visit_while_expr(&mut self, expr: &'ast WhileExpr) -> Self::ExprRes;
+    fn visit_for_loop_expr(&mut self, expr: &'ast ForLoopExpr) -> Self::ExprRes;
+    fn visit_loop_expr(&mut self, expr: &'ast LoopExpr) -> Self::ExprRes;
+    fn visit_match_expr(&mut self, expr: &'ast MatchExpr) -> Self::ExprRes;
+    fn visit_block_expr(&mut self, expr: &'ast BlockExpr) -> Self::ExprRes;
+    fn visit_assign_expr(&mut self, expr: &'ast AssignExpr) -> Self::ExprRes;
+    fn visit_assign_op_expr(&mut self, expr: &'ast AssignOpExpr) -> Self::ExprRes;
+    fn visit_field_expr(&mut self, expr: &'ast FieldExpr) -> Self::ExprRes;
+    fn visit_index_expr(&mut self, expr: &'ast IndexExpr) -> Self::ExprRes;
+    fn visit_range_expr(&mut self, expr: &'ast RangeExpr) -> Self::ExprRes;
+    fn visit_underscore_expr(&mut self, expr: &'ast UnderscoreExpr) -> Self::ExprRes;
+    fn visit_path_expr(&mut self, expr: &'ast PathExpr) -> Self::ExprRes;
+    fn visit_addr_of_expr(&mut self, expr: &'ast AddrOfExpr) -> Self::ExprRes;
+    fn visit_break_expr(&mut self, expr: &'ast BreakExpr) -> Self::ExprRes;
+    fn visit_continue_expr(&mut self, expr: &'ast ContinueExpr) -> Self::ExprRes;
+    fn visit_ret_expr(&mut self, expr: &'ast RetExpr) -> Self::ExprRes;
+    fn visit_struct_expr(&mut self, expr: &'ast StructExpr) -> Self::ExprRes;
+    fn visit_repeat_expr(&mut self, expr: &'ast RepeatExpr) -> Self::ExprRes;
 
-    fn visit_pat(&mut self, pat: &Pat, expected_ty: TypeId) -> Self::PatRes {
+    fn visit_pat(&mut self, pat: &'ast Pat, expected_ty: TypeId) -> Self::PatRes {
         match &pat.kind {
             PatKind::Wild(wild_pat) => self.visit_wild_pat(wild_pat, expected_ty),
             PatKind::Ident(ident_pat) => self.visit_ident_pat(ident_pat, expected_ty),
@@ -87,15 +87,15 @@ pub trait Visitor {
             PatKind::Rest(rest_pat) => self.visit_rest_pat(rest_pat, expected_ty),
         }
     }
-    fn visit_wild_pat(&mut self, pat: &WildPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_ident_pat(&mut self, pat: &IdentPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_struct_pat(&mut self, pat: &StructPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_or_pat(&mut self, pat: &OrPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_path_pat(&mut self, pat: &PathPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_tuple_pat(&mut self, pat: &TuplePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_ref_pat(&mut self, pat: &RefPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_lit_pat(&mut self, pat: &LitPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_range_pat(&mut self, pat: &RangePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_slice_pat(&mut self, pat: &SlicePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_rest_pat(&mut self, pat: &RestPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_wild_pat(&mut self, pat: &'ast WildPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_ident_pat(&mut self, pat: &'ast IdentPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_struct_pat(&mut self, pat: &'ast StructPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_or_pat(&mut self, pat: &'ast OrPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_path_pat(&mut self, pat: &'ast PathPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_tuple_pat(&mut self, pat: &'ast TuplePat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_ref_pat(&mut self, pat: &'ast RefPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_lit_pat(&mut self, pat: &'ast LitPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_range_pat(&mut self, pat: &'ast RangePat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_slice_pat(&mut self, pat: &'ast SlicePat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_rest_pat(&mut self, pat: &'ast RestPat, expected_ty: TypeId) -> Self::PatRes;
 }
