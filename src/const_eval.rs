@@ -38,6 +38,7 @@ pub enum ConstEvalValue {
     RefStr(String),
     Array(Vec<ConstEvalValue>),
     Struct(FullName, HashMap<Symbol, ConstEvalValue>),
+    Enum(FullName, Symbol),
 }
 
 impl ConstEvalValue {
@@ -114,7 +115,8 @@ impl ConstEvalValue {
             ConstEvalValue::Placeholder
             | ConstEvalValue::UnitStruct(_)
             | ConstEvalValue::RefStr(_)
-            | ConstEvalValue::Struct(_, _) => {
+            | ConstEvalValue::Struct(_, _)
+            | ConstEvalValue::Enum(..) => {
                 if Into::<ResolvedTy>::into(&self) == *ty {
                     Ok(self)
                 } else {
@@ -136,9 +138,9 @@ impl Into<ResolvedTy> for &ConstEvalValue {
             ConstEvalValue::ISize(_) => ResolvedTy::isize(),
             ConstEvalValue::Integer(_) => ResolvedTy::integer(),
             ConstEvalValue::SignedInteger(_) => ResolvedTy::signed_integer(),
-            ConstEvalValue::UnitStruct(full_name) | ConstEvalValue::Struct(full_name, _) => {
-                ResolvedTy::Named(full_name.clone())
-            }
+            ConstEvalValue::UnitStruct(full_name)
+            | ConstEvalValue::Struct(full_name, _)
+            | ConstEvalValue::Enum(full_name, _) => ResolvedTy::Named(full_name.clone()),
             ConstEvalValue::Bool(_) => ResolvedTy::bool(),
             ConstEvalValue::Char(_) => ResolvedTy::char(),
             ConstEvalValue::RefStr(_) => ResolvedTy::ref_str(),
@@ -608,6 +610,12 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
             ValueContainer::ImplInfoItem(_, ImplInfoItem::Method(_)) => {
                 Err(ConstEvalError::NotSupportedExpr)
             }
+            ValueContainer::Temp(variable) => match &variable.kind {
+                VariableKind::Decl | VariableKind::Inited | VariableKind::Fn => {
+                    Err(ConstEvalError::NonConstVariable)
+                }
+                VariableKind::Constant(const_eval_value) => Ok(const_eval_value.clone()),
+            },
         }
     }
 

@@ -327,6 +327,7 @@ impl BulitInImpls {
 
 #[derive(Debug, EnumAsInner)]
 pub enum ValueContainer<'a> {
+    Temp(Variable),
     Variable(&'a Variable),
     ImplInfoItem(TypeId, ImplInfoItem<'a>),
 }

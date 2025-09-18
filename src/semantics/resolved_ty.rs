@@ -159,6 +159,7 @@ impl ResolvedTy {
                     items.iter().map(|x| x.expand_self(self_ty)).collect(),
                     Box::new(resolved_ty.expand_self(self_ty)),
                 ),
+                ResolvedTy::ImplicitSelf => self_ty.clone(),
                 _ => self.clone(),
             }
         }

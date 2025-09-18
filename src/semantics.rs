@@ -644,7 +644,26 @@ impl SemanticAnalyzer {
                     id: 0,
                     span: path.span.clone(),
                 })?;
-                let type_id = self.intern_type(ty);
+
+                let type_id = self.intern_type(ty.clone());
+
+                // 枚举Type::Variant，这个不能简单的直接在 inherit impl 中定义几个常量
+                if let ResolvedTy::Named(fullname) = ty {
+                    let info = self.get_type_info(&fullname);
+                    if let TypeKind::Enum { fields } = &info.kind
+                        && fields.contains(&value_seg.ident.symbol)
+                    {
+                        return Ok(ValueContainer::Temp(Variable {
+                            ty: type_id,
+                            mutbl: Mutability::Not,
+                            kind: VariableKind::Constant(ConstEvalValue::Enum(
+                                fullname.clone(),
+                                value_seg.ident.symbol.clone(),
+                            )),
+                        }));
+                    }
+                }
+
                 self.get_type_items_noderef(type_id, false, &value_seg.ident.symbol)?
                     .map(|(id, v)| ValueContainer::ImplInfoItem(id, v))
                     .ok_or(SemanticError::UnknownVariable)
@@ -1289,17 +1308,39 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 self.add_scope(ScopeKind::Fn { ret_ty: TypeId(0) })?;
             }
             AnalyzeStage::Definition => {
-                let ret_ty = match &sig.decl.output {
+                let mut ret_ty = match &sig.decl.output {
                     FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
                     FnRetTy::Ty(ty) => self.resolve_ty(&ty)?,
                 };
 
-                let param_tys = sig
+                let mut param_tys = sig
                     .decl
                     .inputs
                     .iter()
                     .map(|x| self.resolve_ty(&x.ty))
                     .collect::<Result<Vec<_>, SemanticError>>()?;
+
+                let is_free_scope = if let ScopeKind::Trait(self_ty) | ScopeKind::Impl(self_ty) =
+                    self.get_scope().kind
+                {
+                    let self_ty = &self.get_type_by_id(self_ty);
+                    ret_ty = ret_ty.expand_self(self_ty);
+                    param_tys = param_tys
+                        .into_iter()
+                        .map(|x| x.expand_self(self_ty))
+                        .collect();
+                    false
+                } else {
+                    if ret_ty.is_implicit_self_or_ref_implicit_self()
+                        || param_tys
+                            .iter()
+                            .any(|x| x.is_implicit_self_or_ref_implicit_self())
+                    {
+                        return Err(SemanticError::SelfInNoAssocFn);
+                    }
+
+                    true
+                };
 
                 let params_ty_ids = param_tys
                     .iter()
@@ -1313,7 +1354,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     .map(|(param, id)| self.visit_pat(&param.pat, id))
                     .collect::<Result<Vec<_>, SemanticError>>()?;
 
-                if self.is_free_scope() {
+                if is_free_scope {
                     let tyid =
                         self.intern_type(ResolvedTy::Fn(param_tys, Box::new(ret_ty.clone())));
 
@@ -2032,7 +2073,16 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     };
                 }
 
-                if (matches!(bin_op, BinOp::Add))
+                if ty1 == ty2
+                    && let ResolvedTy::Named(fullname) = &ty1
+                    && self.get_type_info(fullname).kind.is_enum()
+                {
+                    Ok(Some(ExprResult {
+                        type_id: self.intern_type(ResolvedTy::bool()),
+                        category: ExprCategory::Not,
+                        int_flow,
+                    }))
+                } else if (matches!(bin_op, BinOp::Add))
                     && ty1 == ResolvedTy::string()
                     && ty2 == ResolvedTy::ref_str()
                 {
@@ -2711,6 +2761,20 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     category: ExprCategory::Place(Mutability::Not),
                     int_flow: InterruptControlFlow::Not,
                 })),
+                ValueContainer::Temp(variable) => {
+                    debug_assert!(
+                        variable
+                            .kind
+                            .as_constant()
+                            .map(|x| !x.is_un_evaled())
+                            .unwrap_or(true)
+                    );
+                    Ok(Some(ExprResult {
+                        type_id: variable.ty,
+                        category: ExprCategory::Place(variable.mutbl),
+                        int_flow: InterruptControlFlow::Not,
+                    }))
+                }
             }
         } else {
             Ok(None)

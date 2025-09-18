@@ -45,6 +45,7 @@ pub enum SemanticError {
     NoReturnFunction,
     MissingField,
     NoBinaryOperation(BinOp, ResolvedTy, ResolvedTy),
+    SelfInNoAssocFn,
 }
 
 impl From<ConstEvalError> for SemanticError {
