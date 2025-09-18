@@ -1,3 +1,5 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::{ASTResult, Eatable, NodeId, Span, expr::Expr, item::Item, pat::Pat, ty::Ty},
     is_keyword, match_keyword,
@@ -11,7 +13,7 @@ pub struct Stmt {
     pub span: Span,
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum StmtKind {
     Let(LocalStmt),
     Item(Box<Item>),

@@ -85,6 +85,7 @@ impl SemanticAnalyzer {
         let mut type_table: TypeTable = TypeTable::default();
         type_table.intern(ResolvedTy::unit()); // Unit -> 0
         type_table.intern(ResolvedTy::Infer); // Infer -> 1
+        type_table.intern(ResolvedTy::Never); // Never -> 2
 
         let preludes = [
             (
@@ -910,6 +911,10 @@ impl SemanticAnalyzer {
         TypeId(1)
     }
 
+    fn never_type() -> TypeId {
+        TypeId(2)
+    }
+
     fn unit_expr_result_int_specified(int_flow: InterruptControlFlow) -> ExprResult {
         ExprResult {
             type_id: Self::unit_type(),
@@ -920,6 +925,15 @@ impl SemanticAnalyzer {
 
     fn unit_expr_result() -> ExprResult {
         Self::unit_expr_result_int_specified(InterruptControlFlow::Not)
+    }
+
+    // TODO: 将 blockexpr 在某些情形下的返回值都修改为 never
+    fn never_expr_result_int_specified(int_flow: InterruptControlFlow) -> ExprResult {
+        ExprResult {
+            type_id: Self::never_type(),
+            category: ExprCategory::Not,
+            int_flow,
+        }
     }
 
     pub(crate) fn const_eval(
@@ -990,7 +1004,7 @@ impl SemanticAnalyzer {
         };
 
         self.enter_scope()?;
-        for stmt in expr.stmts.iter() {
+        for (index, stmt) in expr.stmts.iter().enumerate() {
             if let Some(new_ret) = self.visit_stmt(stmt)?
                 && !matches!(stmt.kind, StmtKind::Item(_))
             {
@@ -1001,6 +1015,10 @@ impl SemanticAnalyzer {
                 };
                 match new_ret {
                     StmtResult::Expr(expr_result) => {
+                        if index + 1 != expr.stmts.len() {
+                            return Err(SemanticError::TypeMismatch);
+                        }
+
                         *mut_ret = StmtResult::Expr(ExprResult {
                             int_flow: old_int_flow.concat(expr_result.int_flow),
                             ..expr_result
@@ -1739,7 +1757,18 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             StmtKind::Expr(expr) => match self.visit_expr(expr)? {
                 Some(res) => {
                     no_assignee!(res.category);
-                    Some(StmtResult::Expr(res))
+                    Some(
+                        if expr.is_block()
+                            && (res.type_id == Self::unit_type()
+                                || res.type_id == Self::never_type())
+                        {
+                            StmtResult::Else {
+                                int_flow: res.int_flow,
+                            }
+                        } else {
+                            StmtResult::Expr(res)
+                        },
+                    )
                 }
                 None => None,
             },
@@ -2394,7 +2423,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             .concat(take_res.int_flow.shunt(els_res.int_flow)),
                     }))
                 } else {
-                    if take_res.type_id == Self::unit_type() {
+                    if take_res.type_id == Self::unit_type()
+                        || take_res.type_id == Self::never_type()
+                    {
                         Ok(Some(Self::unit_expr_result_int_specified(
                             con_res.int_flow.concat(take_res.int_flow),
                         )))
@@ -2476,7 +2507,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         .kind
                         .as_loop()
                         .unwrap()
-                        .unwrap_or(Self::unit_type()),
+                        .unwrap_or(Self::never_type()),
                     category: ExprCategory::Not,
                     int_flow: out_of_cycle_int_flow,
                 }))
@@ -2493,9 +2524,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         self.visit_block_expr_with_kind(expr, ScopeKind::Lambda)
             .map(|x| match x {
                 Some(StmtResult::Expr(expr_result)) => Some(expr_result),
-                Some(StmtResult::Else { int_flow }) => {
-                    Some(Self::unit_expr_result_int_specified(int_flow))
-                }
+                Some(StmtResult::Else { int_flow }) => Some(if int_flow.is_not() {
+                    Self::unit_expr_result_int_specified(InterruptControlFlow::Not)
+                } else {
+                    Self::never_expr_result_int_specified(int_flow)
+                }),
                 None => None,
             })
     }
@@ -2847,7 +2880,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     _ => panic!("Impossible"),
                 }
 
-                Ok(Some(Self::unit_expr_result_int_specified(
+                Ok(Some(Self::never_expr_result_int_specified(
                     int_flow.concat(InterruptControlFlow::Loop),
                 ))) // 没有 Never Type，使用 Unit Type 代替
             }
@@ -2859,7 +2892,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
             AnalyzeStage::Body => {
                 self.get_cycle_scope_mut()?;
-                Ok(Some(Self::unit_expr_result_int_specified(
+                Ok(Some(Self::never_expr_result_int_specified(
                     InterruptControlFlow::Loop,
                 )))
             }
@@ -2888,7 +2921,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 if !ret_ty.can_trans_to_target_type(&target_ty) {
                     Err(SemanticError::TypeMismatch)
                 } else {
-                    Ok(Some(Self::unit_expr_result_int_specified(
+                    Ok(Some(Self::never_expr_result_int_specified(
                         res.int_flow.concat(InterruptControlFlow::Return),
                     )))
                 }

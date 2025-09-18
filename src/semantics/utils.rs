@@ -171,7 +171,7 @@ pub enum ExprCategory {
     Only,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, EnumAsInner)]
 pub enum InterruptControlFlow {
     Not,
     Loop,
