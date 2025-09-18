@@ -198,6 +198,10 @@ impl SemanticAnalyzer {
         self.scopes.get(&self.current_scope).unwrap()
     }
 
+    fn get_scope_by_id(&self, id: NodeId) -> &Scope {
+        self.scopes.get(&id).unwrap()
+    }
+
     fn get_cycle_scope_mut(&mut self) -> Result<&mut Scope, SemanticError> {
         let mut id = self.current_scope;
 
@@ -1752,6 +1756,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
                             self.add_bindings(vec![pat_res], VariableKind::Inited)?;
                         } else {
+                            println!("{expected_ty:?}\n{expr_ty:?}");
                             return Err(SemanticError::TypeMismatch);
                         }
 
@@ -1946,7 +1951,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 match required_tys.first().unwrap() {
                     ResolvedTy::Ref(_, target_mut) => {
-                        let self_mut = get_mutbl!(category).merge(devel_level.get_mutbl());
+                        let self_mut = get_mutbl!(category).merge_with_deref_level(devel_level);
                         if !self_mut.can_trans_to(target_mut) {
                             return Err(SemanticError::ImmutableVar);
                         }
@@ -2397,6 +2402,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
         match res {
             Some(res) => {
+                if res
+                    .as_expr()
+                    .map_or(false, |x| x.type_id != Self::unit_type())
+                {
+                    return Err(SemanticError::TypeMismatch);
+                }
+
                 let int_flow = match res {
                     StmtResult::Expr(expr_result) => {
                         if expr_result.type_id != Self::unit_type() {
@@ -2409,9 +2421,16 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 let out_of_cycle_int_flow = int_flow.out_of_cycle();
 
-                Ok(Some(Self::unit_expr_result_int_specified(
-                    out_of_cycle_int_flow,
-                )))
+                Ok(Some(ExprResult {
+                    type_id: self
+                        .get_scope_by_id(block.id)
+                        .kind
+                        .as_loop()
+                        .unwrap()
+                        .unwrap_or(Self::unit_type()),
+                    category: ExprCategory::Not,
+                    int_flow: out_of_cycle_int_flow,
+                }))
             }
             None => Ok(None),
         }
@@ -2575,10 +2594,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 Ok(Some(ExprResult {
                     type_id: field.ty,
-                    category: ExprCategory::Place(match deref_level {
-                        DerefLevel::Not => res_mut,
-                        DerefLevel::Deref(mutability) => mutability, // 当发生解引用时，可变性就只和引用的可变性有关
-                    }),
+                    category: ExprCategory::Place(res_mut.merge_with_deref_level(deref_level)),
                     int_flow: res.int_flow,
                 }))
             }

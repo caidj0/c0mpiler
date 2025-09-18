@@ -12,6 +12,7 @@ use crate::{
         path::{Path, PathSegment},
     },
     lexer::{Token, TokenIter, TokenPosition},
+    semantics::utils::DerefLevel,
     tokens::TokenType,
 };
 
@@ -272,6 +273,13 @@ impl Mutability {
         match (self, other) {
             (Mutability::Mut, Mutability::Mut) => Mutability::Mut,
             _ => Mutability::Not,
+        }
+    }
+
+    pub fn merge_with_deref_level(self, other: DerefLevel) -> Self {
+        match other {
+            DerefLevel::Not => self,
+            DerefLevel::Deref(mutability) => mutability, // 当发生解引用时，可变性就只和引用的可变性有关
         }
     }
 
