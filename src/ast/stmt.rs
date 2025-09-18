@@ -39,7 +39,7 @@ impl Eatable for Stmt {
         });
 
         kind = kind.or_else(|err| {
-            let expr_result = Expr::eat(iter);
+            let expr_result = Expr::eat_by_stmt(iter);
 
             match expr_result {
                 Ok(expr) => {

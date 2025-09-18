@@ -88,6 +88,12 @@ impl ExprKind {
     }
 }
 
+pub struct ExprEatConfig {
+    pub min_priority: usize,
+    pub has_struct: bool,
+    pub is_stmt_environment: bool,
+}
+
 impl Eatable for Expr {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         Self::eat_with_priority(iter, 0)
@@ -95,18 +101,50 @@ impl Eatable for Expr {
 }
 
 impl Expr {
+    pub fn eat_by_stmt(iter: &mut TokenIter) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+        let result = Expr::eat_with_priority_and_struct(
+            &mut using_iter,
+            ExprEatConfig {
+                min_priority: 0,
+                has_struct: true,
+                is_stmt_environment: true,
+            },
+        )?;
+        iter.update(using_iter);
+        Ok(result)
+    }
+
     pub fn eat_without_struct(iter: &mut TokenIter) -> ASTResult<Self> {
-        Self::eat_with_priority_and_struct(iter, 0, false)
+        Self::eat_with_priority_and_struct(
+            iter,
+            ExprEatConfig {
+                min_priority: 0,
+                has_struct: false,
+                is_stmt_environment: false,
+            },
+        )
     }
 
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Self> {
-        Self::eat_with_priority_and_struct(iter, min_priority, true)
+        Self::eat_with_priority_and_struct(
+            iter,
+            ExprEatConfig {
+                min_priority: min_priority,
+                has_struct: true,
+                is_stmt_environment: false,
+            },
+        )
     }
 
+    // 这个 eat 失败时不会自动恢复 iter 位置，要小心使用
     pub fn eat_with_priority_and_struct(
         iter: &mut TokenIter,
-        mut min_priority: usize,
-        has_struct: bool,
+        ExprEatConfig {
+            mut min_priority,
+            has_struct,
+            is_stmt_environment,
+        }: ExprEatConfig,
     ) -> ASTResult<Self> {
         let begin = iter.get_pos();
 
@@ -130,7 +168,7 @@ impl Expr {
 
         match &kind {
             Ok(x) => {
-                if x.is_expr_with_block() {
+                if is_stmt_environment && x.is_expr_with_block() {
                     min_priority = BLOCK_PRIORITY;
                 }
             }
@@ -458,8 +496,14 @@ impl BinaryHelper {
             return Ok(None);
         };
 
-        let expr2 =
-            Expr::eat_with_priority_and_struct(&mut using_iter, op.get_priority() + 1, has_struct)?;
+        let expr2 = Expr::eat_with_priority_and_struct(
+            &mut using_iter,
+            ExprEatConfig {
+                min_priority: op.get_priority() + 1,
+                has_struct: has_struct,
+                is_stmt_environment: false,
+            },
+        )?;
 
         iter.update(using_iter);
         Ok(Some(BinaryHelper(op, Box::new(expr2))))

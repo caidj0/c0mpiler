@@ -1756,7 +1756,6 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
                             self.add_bindings(vec![pat_res], VariableKind::Inited)?;
                         } else {
-                            println!("{expected_ty:?}\n{expr_ty:?}");
                             return Err(SemanticError::TypeMismatch);
                         }
 
