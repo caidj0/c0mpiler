@@ -59,7 +59,7 @@ impl ImplInfo {
         self.methods.contains_key(key) || self.constants.contains_key(key)
     }
 
-    pub fn get(&self, key: &Symbol) -> Option<ImplInfoItem> {
+    pub fn get(&self, key: &Symbol) -> Option<ImplInfoItem<'_>> {
         self.methods
             .get(key)
             .map(ImplInfoItem::Method)
@@ -251,14 +251,14 @@ pub enum AnalyzeStage {
 pub type Impls = (ImplInfo, HashMap<FullName, ImplInfo>);
 
 #[derive(Debug)]
-pub struct BulitInImpls {
+pub struct BuiltInImpls {
     pub u32_and_usize_and_integer: Impls,
     pub string: Impls,
     pub str: Impls,
     pub array_and_slice: Impls,
 }
 
-impl BulitInImpls {
+impl BuiltInImpls {
     pub fn new(type_table: &mut TypeTable) -> Self {
         let len_method: ResolvedTy = ResolvedTy::Fn(
             vec![ResolvedTy::ref_implicit_self()],

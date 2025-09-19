@@ -162,7 +162,7 @@ pub enum ConstEvalError {
     NotSupportedExpr,
     IncorrectSuffix,
     Overflow,
-    InvaildDigit,
+    InvalidDigit,
     TypeMisMatch,
     Semantic(Box<SemanticError>),
     NotAStruct,

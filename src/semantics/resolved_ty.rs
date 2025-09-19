@@ -9,7 +9,7 @@ use crate::{
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum ResolvedTy {
-    BulitIn(Symbol, Vec<ResolvedTy>),
+    BuiltIn(Symbol, Vec<ResolvedTy>),
     Named(FullName),
     Ref(Box<ResolvedTy>, Mutability),
     Array(Box<ResolvedTy>, u32),
@@ -27,39 +27,39 @@ impl ResolvedTy {
     }
 
     pub fn bool() -> Self {
-        Self::BulitIn(Symbol("bool".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("bool".to_string()), Vec::new())
     }
 
     pub fn char() -> Self {
-        Self::BulitIn(Symbol("char".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("char".to_string()), Vec::new())
     }
 
     pub fn integer() -> Self {
-        Self::BulitIn(Symbol("integer".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("integer".to_string()), Vec::new())
     }
 
     pub fn signed_integer() -> Self {
-        Self::BulitIn(Symbol("integer".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("integer".to_string()), Vec::new())
     }
 
     pub fn i32() -> Self {
-        Self::BulitIn(Symbol("i32".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("i32".to_string()), Vec::new())
     }
 
     pub fn u32() -> Self {
-        Self::BulitIn(Symbol("u32".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("u32".to_string()), Vec::new())
     }
 
     pub fn isize() -> Self {
-        Self::BulitIn(Symbol("isize".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("isize".to_string()), Vec::new())
     }
 
     pub fn usize() -> Self {
-        Self::BulitIn(Symbol("usize".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("usize".to_string()), Vec::new())
     }
 
     pub fn str() -> Self {
-        Self::BulitIn(Symbol("str".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("str".to_string()), Vec::new())
     }
 
     pub fn ref_str() -> Self {
@@ -67,7 +67,7 @@ impl ResolvedTy {
     }
 
     pub fn string() -> Self {
-        Self::BulitIn(Symbol("String".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("String".to_string()), Vec::new())
     }
 
     pub fn big_self() -> Self {
@@ -197,7 +197,7 @@ impl ResolvedTy {
         }
 
         match (self, target) {
-            (ResolvedTy::BulitIn(_, _), ResolvedTy::BulitIn(_, _)) => {
+            (ResolvedTy::BuiltIn(_, _), ResolvedTy::BuiltIn(_, _)) => {
                 (*self == ResolvedTy::integer() && target.is_number_type())
                     || (*self == ResolvedTy::signed_integer() && target.is_signed_number_type())
             }

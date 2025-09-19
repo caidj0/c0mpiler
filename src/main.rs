@@ -21,7 +21,7 @@ fn main() {
                 Ok(_) => println!("Semantic check passed!"),
                 Err(err) => {
                     println!(
-                        "Error occured: {:#?}, analyze stage: {:?}, state: {:?}.",
+                        "Error occurred: {:#?}, analyze stage: {:?}, state: {:?}.",
                         err,
                         analyzer.get_stage(),
                         analyzer.get_state()

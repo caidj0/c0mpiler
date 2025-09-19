@@ -240,7 +240,7 @@ impl<'a> TokenBuffer<'a> {
                     buffer.push(token);
                 }
                 Err(info) => {
-                    panic!("Tokenlize error: {} at {}", info.0, info.1);
+                    panic!("Tokenize error: {} at {}", info.0, info.1);
                 }
             }
         }
@@ -248,7 +248,7 @@ impl<'a> TokenBuffer<'a> {
         TokenBuffer { buffer }
     }
 
-    pub fn iter(&self) -> TokenIter {
+    pub fn iter(&self) -> TokenIter<'_> {
         TokenIter {
             buffer: &self.buffer,
             pos: 0,

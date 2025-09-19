@@ -193,7 +193,7 @@ define_tokens! {
     Macro    :[literal] "macro",
     Override :[literal] "override",
     Priv     :[literal] "priv",
-    Typeof   :[literal] "typepf",
+    Typeof   :[literal] "typeof",
     Unsized  :[literal] "unsized",
     Virtual  :[literal] "virtual",
     Yield    :[literal] "yield",

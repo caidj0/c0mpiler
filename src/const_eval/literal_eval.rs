@@ -20,12 +20,12 @@ impl LitExpr {
                 };
 
                 if digits.is_empty() {
-                    return Err(ConstEvalError::InvaildDigit);
+                    return Err(ConstEvalError::InvalidDigit);
                 }
 
                 let mut value: u32 = 0;
                 for ch in digits.chars() {
-                    let digit = ch.to_digit(radix).ok_or(ConstEvalError::InvaildDigit)?;
+                    let digit = ch.to_digit(radix).ok_or(ConstEvalError::InvalidDigit)?;
                     value = value
                         .checked_mul(radix)
                         .and_then(|v| v.checked_add(digit))

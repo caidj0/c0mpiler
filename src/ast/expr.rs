@@ -168,10 +168,11 @@ impl Expr {
             .map_err(|err2| err.select(err2))
         });
 
-        if let Ok(x) = &kind {
-            if is_stmt_environment && x.is_expr_with_block() {
-                min_priority = BLOCK_PRIORITY;
-            }
+        if let Ok(x) = &kind
+            && is_stmt_environment
+            && x.is_expr_with_block()
+        {
+            min_priority = BLOCK_PRIORITY;
         }
 
         kind = kind.or_else(|err| match RangeHelper::eat_with_priority(iter, 0) {
@@ -676,13 +677,13 @@ impl Eatable for BlockExpr {
 
         no_item_stmt_iter.next();
         for stmt in no_item_stmt_iter {
-            if let StmtKind::Expr(e) = &stmt.kind {
-                if !e.is_block() {
-                    return Err(ASTError {
-                        kind: crate::ast::ASTErrorKind::MissingSemi,
-                        pos: e.span.end,
-                    });
-                }
+            if let StmtKind::Expr(e) = &stmt.kind
+                && !e.is_block()
+            {
+                return Err(ASTError {
+                    kind: crate::ast::ASTErrorKind::MissingSemi,
+                    pos: e.span.end,
+                });
             }
         }
 
