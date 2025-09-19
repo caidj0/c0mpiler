@@ -1,0 +1,6 @@
+fn main() {
+    let a: &str = "Hello world";
+    let b: str = *a;
+
+    exit(0);
+}

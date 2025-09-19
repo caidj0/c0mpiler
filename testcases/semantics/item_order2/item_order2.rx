@@ -1,0 +1,18 @@
+struct A;
+
+fn main() {
+    fn foo(i: i32) {
+        println("{i}");
+
+        impl A {
+            fn aoo() {
+                foo(1);
+            }
+        }
+    }
+    let foo: i32 = 123;
+    
+    A::aoo();
+
+    exit(0);
+}

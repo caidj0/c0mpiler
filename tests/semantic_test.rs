@@ -37,14 +37,43 @@ fn run(src: &str) -> Result<(), String> {
 }
 
 #[test]
+fn my_semantic() {
+    let escape_list = [];
+    let case_path = "testcases/semantics";
+
+    run_test_cases(&escape_list, case_path);
+}
+
+#[test]
 fn semantics_1() {
     let escape_list = [
         "loop1", "misc29", // let 缺失类型标注
         // "misc15", // 仅从控制流上分析不能确保 loop 能退出
         "misc28", // TODO: Copy Trait
     ];
+    let case_path = "RCompiler-Testcases/semantic-1";
 
-    let mut entries: Vec<_> = fs::read_dir("RCompiler-Testcases/semantic-1")
+    run_test_cases(&escape_list, case_path);
+}
+
+#[test]
+fn semantics_2() {
+    let escape_list = [
+        "comprehensive1",  // Tuple Type
+        "comprehensive10", // No Exit
+        "comprehensive11",
+        "comprehensive12",
+        "comprehensive13",
+        "comprehensive14",
+        "comprehensive15", // if condtion without parentheses
+    ];
+    let case_path = "RCompiler-Testcases/semantic-2";
+
+    run_test_cases(&escape_list, case_path);
+}
+
+fn run_test_cases(escape_list: &[&'static str], case_path: &'static str) {
+    let mut entries: Vec<_> = fs::read_dir(case_path)
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();

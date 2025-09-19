@@ -166,7 +166,7 @@ impl Eatable for TupTy {
         loop_until!(iter, TokenType::ClosePar, {
             ties.push(Box::new(Ty::eat(iter)?));
 
-            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::CloseCurly);
+            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::ClosePar);
         });
 
         Ok(Self(ties))
