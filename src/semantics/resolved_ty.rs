@@ -198,13 +198,8 @@ impl ResolvedTy {
 
         match (self, target) {
             (ResolvedTy::BulitIn(_, _), ResolvedTy::BulitIn(_, _)) => {
-                if (*self == ResolvedTy::integer() && target.is_number_type())
+                (*self == ResolvedTy::integer() && target.is_number_type())
                     || (*self == ResolvedTy::signed_integer() && target.is_signed_number_type())
-                {
-                    true
-                } else {
-                    false
-                }
             }
             (ResolvedTy::Named(_), ResolvedTy::Named(_)) => false,
             (
@@ -212,17 +207,17 @@ impl ResolvedTy {
                 ResolvedTy::Ref(resolved_ty2, mutability2),
             ) => match (mutability1, mutability2) {
                 (Mutability::Not, Mutability::Mut) => false,
-                _ => resolved_ty1.can_trans_to_target_type(&resolved_ty2),
+                _ => resolved_ty1.can_trans_to_target_type(resolved_ty2),
             },
             (ResolvedTy::Array(resolved_ty1, len1), ResolvedTy::Array(resolved_ty2, len2)) => {
                 if len1 == len2 {
-                    resolved_ty1.can_trans_to_target_type(&resolved_ty2)
+                    resolved_ty1.can_trans_to_target_type(resolved_ty2)
                 } else {
                     false
                 }
             }
             (ResolvedTy::Slice(resolved_ty1), ResolvedTy::Slice(resolved_ty2)) => {
-                resolved_ty1.can_trans_to_target_type(&resolved_ty2)
+                resolved_ty1.can_trans_to_target_type(resolved_ty2)
             }
             (ResolvedTy::Tup(items1), ResolvedTy::Tup(items2)) => {
                 if items1.len() != items2.len() {

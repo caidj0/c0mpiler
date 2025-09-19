@@ -183,7 +183,7 @@ impl Eatable for Param {
                     expected: stringify!($e).to_owned(),
                     actual: format!("{:?}", iter.peek()?.token_type),
                 },
-                pos: iter.peek()?.pos.clone(),
+                pos: iter.peek()?.pos,
             })?
         } else {
             iter.advance();
@@ -401,7 +401,7 @@ pub struct ImplItem {
     pub generics: Generics,
     pub of_trait: Option<TraitRef>,
     pub self_ty: Box<Ty>,
-    pub items: Vec<Box<AssocItem>>,
+    pub items: Vec<AssocItem>,
 }
 
 impl Eatable for ImplItem {
@@ -422,7 +422,7 @@ impl Eatable for ImplItem {
                         expected: "Path type".to_owned(),
                         actual: format!("{self_ty:?}"),
                     },
-                    pos: self_ty_token.pos.clone(),
+                    pos: self_ty_token.pos,
                 });
             }
         } else {
@@ -434,7 +434,7 @@ impl Eatable for ImplItem {
         let mut items = Vec::new();
 
         loop_until!(iter, TokenType::CloseCurly, {
-            items.push(Box::new(AssocItem::eat(iter)?));
+            items.push(AssocItem::eat(iter)?);
         });
 
         Ok(Self {
@@ -513,7 +513,7 @@ impl Eatable for ModItem {
                         expected: "{ or ;".to_owned(),
                         actual: format!("{:?}", token_type.clone()),
                     },
-                    pos: pos.clone(),
+                    pos: *pos,
                 });
             }
         };
@@ -539,7 +539,7 @@ pub struct TraitItem {
     pub ident: Ident,
     pub generics: Generics,
     pub bounds: GenericBounds,
-    pub items: Vec<Box<AssocItem>>,
+    pub items: Vec<AssocItem>,
 }
 
 impl Eatable for TraitItem {
@@ -556,7 +556,7 @@ impl Eatable for TraitItem {
         match_keyword!(iter, TokenType::OpenCurly);
         let mut items = Vec::new();
         loop_until!(iter, TokenType::CloseCurly, {
-            items.push(Box::new(AssocItem::eat(iter)?));
+            items.push(AssocItem::eat(iter)?);
         });
 
         Ok(Self {

@@ -187,7 +187,7 @@ impl Eatable for TraitObjectTy {
                     expected: "dyn".to_owned(),
                     actual: format!("{:?}", t.token_type.clone()),
                 },
-                pos: t.pos.clone(),
+                pos: t.pos,
             });
         }
 

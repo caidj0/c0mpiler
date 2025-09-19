@@ -132,7 +132,7 @@ impl Expr {
         Self::eat_with_priority_and_struct(
             iter,
             ExprEatConfig {
-                min_priority: min_priority,
+                min_priority,
                 has_struct: true,
                 is_stmt_environment: false,
             },
@@ -168,13 +168,10 @@ impl Expr {
             .map_err(|err2| err.select(err2))
         });
 
-        match &kind {
-            Ok(x) => {
-                if is_stmt_environment && x.is_expr_with_block() {
-                    min_priority = BLOCK_PRIORITY;
-                }
+        if let Ok(x) = &kind {
+            if is_stmt_environment && x.is_expr_with_block() {
+                min_priority = BLOCK_PRIORITY;
             }
-            Err(_) => {}
         }
 
         kind = kind.or_else(|err| match RangeHelper::eat_with_priority(iter, 0) {
@@ -189,7 +186,7 @@ impl Expr {
                     Box::new(Expr {
                         kind: e,
                         span: Span {
-                            begin: begin.clone(),
+                            begin,
                             end: i.get_pos(),
                         },
                         id: i.assign_id(),
@@ -281,7 +278,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
     fn try_into(self) -> Result<LitExpr, Self::Error> {
         let err = || ASTError {
             kind: crate::ast::ASTErrorKind::LiteralError,
-            pos: self.pos.clone(),
+            pos: self.pos,
         };
 
         match self.token_type {
@@ -430,7 +427,7 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
                     expected: "Literal Kind".to_owned(),
                     actual: format!("{:?}", self.token_type.clone()),
                 },
-                pos: self.pos.clone(),
+                pos: self.pos,
             }),
         }
     }
@@ -468,7 +465,7 @@ impl<'a> TryInto<UnOp> for &Token<'a> {
                     expected: "Unary Operation".to_owned(),
                     actual: format!("{:?}", self.token_type.clone()),
                 },
-                pos: self.pos.clone(),
+                pos: self.pos,
             }),
         }
     }
@@ -502,7 +499,7 @@ impl BinaryHelper {
             &mut using_iter,
             ExprEatConfig {
                 min_priority: op.get_priority() + 1,
-                has_struct: has_struct,
+                has_struct,
                 is_stmt_environment: false,
             },
         )?;
@@ -679,16 +676,13 @@ impl Eatable for BlockExpr {
 
         no_item_stmt_iter.next();
         for stmt in no_item_stmt_iter {
-            match &stmt.kind {
-                StmtKind::Expr(e) => {
-                    if !e.is_block() {
-                        return Err(ASTError {
-                            kind: crate::ast::ASTErrorKind::MissingSemi,
-                            pos: e.span.end.clone(),
-                        });
-                    }
+            if let StmtKind::Expr(e) = &stmt.kind {
+                if !e.is_block() {
+                    return Err(ASTError {
+                        kind: crate::ast::ASTErrorKind::MissingSemi,
+                        pos: e.span.end,
+                    });
                 }
-                _ => {}
             }
         }
 
@@ -848,7 +842,7 @@ impl Eatable for MethodCallHelper {
                 expected: "(".to_string(),
                 actual: format!("{:?}", iter.peek()?.token_type.clone()),
             },
-            pos: iter.peek()?.pos.clone(),
+            pos: iter.peek()?.pos,
         })?;
 
         Ok(Self {
@@ -891,7 +885,7 @@ impl Eatable for IfExpr {
                             expected: "Block or If".to_owned(),
                             actual: format!("{t:?}"),
                         },
-                        pos: t.pos.clone(),
+                        pos: t.pos,
                     });
                 }
             }
@@ -929,7 +923,7 @@ impl Eatable for MatchExpr {
                             expected: "Comma".to_owned(),
                             actual: format!("{:?}", t.token_type.clone()),
                         },
-                        pos: t.pos.clone(),
+                        pos: t.pos,
                     });
                 }
             }
@@ -1198,7 +1192,7 @@ impl Eatable for ExprField {
         } else {
             let expr = Expr {
                 kind: ExprKind::Path(PathExpr(None, ident.clone().into())),
-                span: ident.span.clone(),
+                span: ident.span,
                 id: iter.assign_id(),
             };
             (Box::new(expr), true)

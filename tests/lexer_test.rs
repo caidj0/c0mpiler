@@ -155,7 +155,7 @@ fn test_lex_bad_binary_literal() {
     ];
     for code in cases.iter() {
         let mut lexer = Lexer::new(code);
-        assert!(lexer.next_token().is_err(), "should error for {}", code);
+        assert!(lexer.next_token().is_err(), "should error for {code}");
     }
 }
 
@@ -164,7 +164,7 @@ fn test_lex_bad_str_literal_as_char() {
     let cases = ["'1 + 1", "'abc'", "''", r"'\x10\x10'", r"'\x1'"];
     for code in cases.iter() {
         let mut lexer = Lexer::new(code);
-        assert!(lexer.next_token().is_err(), "should error for {}", code);
+        assert!(lexer.next_token().is_err(), "should error for {code}");
     }
 }
 

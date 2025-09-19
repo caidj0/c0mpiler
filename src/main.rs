@@ -7,17 +7,6 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str = r##"
-fn main() {
-    println(
-        r#"Why is there no exit in main?
-Look in my eyes!
-Tell me!
-WHY!"#,
-    );
-}
-                    "##
-    .to_string();
     let test_str = fs::read_to_string("RCompiler-Testcases/semantic-1/return3/return3.rx").unwrap();
     let lexer = Lexer::new(test_str.as_str());
     let buffer = TokenBuffer::new(lexer);

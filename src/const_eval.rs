@@ -107,7 +107,7 @@ impl ConstEvalValue {
 
                 let elms = values
                     .into_iter()
-                    .map(|x| x.cast(&elm_ty))
+                    .map(|x| x.cast(elm_ty))
                     .collect::<Result<Vec<ConstEvalValue>, ConstEvalError>>()?;
 
                 Ok(ConstEvalValue::Array(elms))
@@ -128,9 +128,9 @@ impl ConstEvalValue {
     }
 }
 
-impl Into<ResolvedTy> for &ConstEvalValue {
-    fn into(self) -> ResolvedTy {
-        match self {
+impl From<&ConstEvalValue> for ResolvedTy {
+    fn from(val: &ConstEvalValue) -> Self {
+        match val {
             ConstEvalValue::Placeholder => ResolvedTy::Infer,
             ConstEvalValue::U32(_) => ResolvedTy::u32(),
             ConstEvalValue::I32(_) => ResolvedTy::i32(),
@@ -334,8 +334,8 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         &mut self,
         BinaryExpr(binop, expr1, expr2): &'ast BinaryExpr,
     ) -> Self::ExprRes {
-        let value1 = self.visit_expr(&expr1)?;
-        let value2 = self.visit_expr(&expr2)?;
+        let value1 = self.visit_expr(expr1)?;
+        let value2 = self.visit_expr(expr2)?;
 
         if let (ConstEvalValue::Bool(value1), ConstEvalValue::Bool(value2)) = (&value1, &value2) {
             Ok(ConstEvalValue::Bool(match binop {
@@ -479,7 +479,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     }
 
     fn visit_cast_expr(&mut self, CastExpr(expr, cast_ty): &'ast CastExpr) -> Self::ExprRes {
-        let cast_ty = self.analyzer.resolve_ty(&cast_ty)?;
+        let cast_ty = self.analyzer.resolve_ty(cast_ty)?;
 
         let expr_res = self.visit_expr(expr)?;
         expr_res.cast(&cast_ty)
@@ -525,7 +525,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     }
 
     fn visit_field_expr(&mut self, FieldExpr(expr, ident): &'ast FieldExpr) -> Self::ExprRes {
-        let ret = match self.visit_expr(&expr)? {
+        let ret = match self.visit_expr(expr)? {
             ConstEvalValue::Struct(_, mut hash_map) => match hash_map.remove(&ident.symbol) {
                 Some(value) => value,
                 None => return Err(ConstEvalError::NotStructField),
@@ -536,8 +536,8 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     }
 
     fn visit_index_expr(&mut self, IndexExpr(array, index): &'ast IndexExpr) -> Self::ExprRes {
-        let array = self.visit_expr(&array)?;
-        let index = self.visit_expr(&index)?;
+        let array = self.visit_expr(array)?;
+        let index = self.visit_expr(index)?;
 
         let index = match index {
             ConstEvalValue::USize(index) | ConstEvalValue::Integer(index) => index,
@@ -567,7 +567,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     }
 
     fn visit_path_expr(&mut self, PathExpr(qself, path): &'ast PathExpr) -> Self::ExprRes {
-        let old_state = self.analyzer.state.clone();
+        let old_state = self.analyzer.state;
         let value = self.analyzer.search_value_by_path(qself, path)?;
 
         match value {
@@ -669,7 +669,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                 let mut dic = HashMap::new();
 
                 for x in exp_fields.into_iter() {
-                    if let Some(_) = dic.insert(x.0, x.1) {
+                    if dic.insert(x.0, x.1).is_some() {
                         return Err(ConstEvalError::Semantic(Box::new(
                             SemanticError::MultiSpecifiedField,
                         )));
@@ -709,7 +709,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
             .into_u_size()
             .unwrap();
 
-        let value = self.visit_expr(&expr)?;
+        let value = self.visit_expr(expr)?;
 
         let values: Vec<ConstEvalValue> = repeat_n(value, rep_time as usize).collect();
 

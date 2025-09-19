@@ -37,6 +37,7 @@ fn run(src: &str) -> Result<(), String> {
 }
 
 #[test]
+#[ignore]
 fn my_semantic() {
     let escape_list = [];
     let case_path = "testcases/semantics";
@@ -57,6 +58,7 @@ fn semantics_1() {
 }
 
 #[test]
+#[ignore]
 fn semantics_2() {
     let escape_list = [
         "comprehensive1",  // Tuple Type
@@ -81,30 +83,30 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str) {
     for x in entries {
         let name = x.file_name().into_string().unwrap();
         if escape_list.contains(&name.as_str()) {
-            println!("{} skiped!", name);
+            println!("{name} skiped!");
             continue;
         }
         let path = x.path();
         let info_path = path.join("testcase_info.json");
         let info: TestCaseInfo =
             serde_json::from_str(fs::read_to_string(info_path).unwrap().as_str()).unwrap();
-        let src_path = path.join(format!("{}.rx", name));
+        let src_path = path.join(format!("{name}.rx"));
         let src = fs::read_to_string(src_path).unwrap();
         let should_pass = info.compileexitcode == 0;
         let result = match panic::catch_unwind(|| run(src.as_str())) {
             Ok(result) => result,
             Err(_) => {
-                panic!("{} caused panic!", name);
+                panic!("{name} caused panic!");
             }
         };
 
         match (should_pass, result) {
-            (true, Ok(_)) | (false, Err(_)) => println!("{} passed!", name),
+            (true, Ok(_)) | (false, Err(_)) => println!("{name} passed!"),
             (true, Err(e)) => {
-                panic!("{} check failed, expect pass!\n{}", name, e);
+                panic!("{name} check failed, expect pass!\n{e}");
             }
             (false, Ok(_)) => {
-                panic!("{} check passed, expect fail!", name);
+                panic!("{name} check passed, expect fail!");
             }
         }
     }

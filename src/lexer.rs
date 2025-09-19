@@ -210,13 +210,13 @@ impl<'a> TokenIter<'a> {
     pub fn get_pos(&self) -> TokenPosition {
         self.buffer
             .get(self.pos)
-            .map_or(self.get_last_pos(), |t| t.pos.clone())
+            .map_or(self.get_last_pos(), |t| t.pos)
     }
 
     pub fn get_last_pos(&self) -> TokenPosition {
         self.buffer
             .last()
-            .map_or(TokenPosition { line: 0, col: 0 }, |x| x.pos.clone())
+            .map_or(TokenPosition { line: 0, col: 0 }, |x| x.pos)
     }
 
     pub fn assign_id(&mut self) -> NodeId {

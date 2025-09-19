@@ -40,12 +40,12 @@ impl Pat {
                                 BindingMode(super::ByRef::No, Mutability::Not),
                                 Ident {
                                     symbol: Symbol::self_symbol(),
-                                    span: span.clone(),
+                                    span,
                                 },
                                 None,
                             )),
                             id,
-                            span: span.clone(),
+                            span,
                         },
                         Ty {
                             kind: super::ty::TyKind::Ref(RefTy(MutTy {
@@ -273,7 +273,7 @@ impl Eatable for PatField {
 
         let err = ASTError {
             kind: crate::ast::ASTErrorKind::MisMatchPat,
-            pos: iter.peek()?.pos.clone(),
+            pos: iter.peek()?.pos,
         };
 
         let (ident, pat, is_shorthand) = if is_keyword!(iter, TokenType::Colon) {
@@ -411,7 +411,7 @@ impl Eatable for RangePat {
                         expected: "Comma".to_owned(),
                         actual: format!("{:?}", t.token_type.clone()),
                     },
-                    pos: t.pos.clone(),
+                    pos: t.pos,
                 });
             }
         };

@@ -16,7 +16,7 @@ pub struct FullName(pub Vec<Symbol>);
 
 #[derive(Debug, Default)]
 pub struct TypeTable {
-    entries: Vec<Box<ResolvedTy>>,
+    entries: Vec<ResolvedTy>,
     map: HashMap<ResolvedTy, TypeId>,
 }
 
@@ -26,7 +26,7 @@ impl TypeTable {
             return id;
         }
         let id = TypeId(self.entries.len());
-        self.entries.push(Box::new(ty.clone()));
+        self.entries.push(ty.clone());
         self.map.insert(ty, id);
         id
     }

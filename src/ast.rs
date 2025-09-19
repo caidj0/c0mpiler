@@ -42,9 +42,8 @@ pub trait OptionEatable: Sized {
         let mut using_iter = iter.clone();
         let ret = Self::try_eat_impl(&mut using_iter);
 
-        match &ret {
-            Ok(Some(_)) => iter.update(using_iter),
-            _ => {}
+        if let Ok(Some(_)) = &ret {
+            iter.update(using_iter)
         }
         ret
     }
@@ -284,10 +283,7 @@ impl Mutability {
     }
 
     pub fn can_trans_to(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Mutability::Not, Mutability::Mut) => false,
-            _ => true,
-        }
+        !matches!((self, other), (Mutability::Not, Mutability::Mut))
     }
 }
 
@@ -325,7 +321,7 @@ pub struct Ident {
 impl From<Ident> for Path {
     fn from(val: Ident) -> Self {
         Path {
-            span: val.span.clone(),
+            span: val.span,
             segments: vec![PathSegment {
                 ident: val,
                 args: None,
@@ -342,7 +338,7 @@ impl<'a> TryInto<Ident> for &Token<'a> {
             TokenType::Id => Ok(Ident {
                 symbol: Symbol(self.lexeme.to_owned()),
                 span: Span {
-                    begin: self.pos.clone(),
+                    begin: self.pos,
                     end: TokenPosition {
                         line: self.pos.line,
                         col: self.pos.col + self.lexeme.len(),
@@ -352,7 +348,7 @@ impl<'a> TryInto<Ident> for &Token<'a> {
             TokenType::LSelfType | TokenType::SelfType => Ok(Ident {
                 symbol: Symbol(self.token_type.to_keyword().unwrap().to_string()),
                 span: Span {
-                    begin: self.pos.clone(),
+                    begin: self.pos,
                     end: TokenPosition {
                         line: self.pos.line,
                         col: self.pos.col + self.lexeme.len(),
@@ -364,7 +360,7 @@ impl<'a> TryInto<Ident> for &Token<'a> {
                     expected: r#"Identifier, "self" or "Self""#.to_owned(),
                     actual: format!("{self:?}"),
                 },
-                pos: self.pos.clone(),
+                pos: self.pos,
             }),
         }
     }

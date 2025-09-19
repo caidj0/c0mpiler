@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test, Format Check, Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Sync and update submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Show rustc/cargo versions
+        run: |
+          rustc -Vv
+          cargo -V
+
+      - name: Run tests (all features)
+        run: cargo test --all-features
+
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+      - name: Run clippy (deny warnings)
+        run: cargo clippy --all-targets --all-features -- -D warnings
