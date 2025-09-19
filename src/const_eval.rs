@@ -9,7 +9,7 @@ use crate::{
         NodeId, Span, Symbol,
         expr::{
             ArrayExpr, BinOp, BinaryExpr, CastExpr, Expr, ExprKind, FieldExpr, IndexExpr, LitExpr,
-            PathExpr, RepeatExpr, StructExpr, UnOp, UnaryExpr,
+            PathExpr, RepeatExpr, StructExpr, TupExpr, UnOp, UnaryExpr,
         },
         item::ConstItem,
     },
@@ -323,8 +323,11 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         Err(ConstEvalError::NotSupportedExpr)
     }
 
-    fn visit_tup_expr(&mut self, _expr: &'ast crate::ast::expr::TupExpr) -> Self::ExprRes {
-        Err(ConstEvalError::NotSupportedExpr)
+    fn visit_tup_expr(&mut self, TupExpr(exprs): &'ast TupExpr) -> Self::ExprRes {
+        match &exprs[..] {
+            [expr] => self.visit_expr(expr),
+            _ => Err(ConstEvalError::NotSupportedExpr),
+        }
     }
 
     fn visit_binary_expr(
