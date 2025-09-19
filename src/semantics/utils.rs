@@ -247,7 +247,7 @@ pub type Impls = (ImplInfo, HashMap<FullName, ImplInfo>);
 
 #[derive(Debug)]
 pub struct BulitInImpls {
-    pub u32_and_usize: Impls,
+    pub u32_and_usize_and_integer: Impls,
     pub string: Impls,
     pub str: Impls,
     pub array_and_slice: Impls,
@@ -293,7 +293,7 @@ impl BulitInImpls {
         );
 
         Self {
-            u32_and_usize: (
+            u32_and_usize_and_integer: (
                 ImplInfo {
                     methods: HashMap::from([to_string]),
                     constants: HashMap::new(),

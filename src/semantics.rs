@@ -1133,8 +1133,8 @@ impl SemanticAnalyzer {
         } else {
             let ty = self.get_type_by_id(*id);
 
-            if ty == ResolvedTy::u32() || ty == ResolvedTy::i32() {
-                Some(&self.builtin_impls.u32_and_usize)
+            if ty == ResolvedTy::u32() || ty == ResolvedTy::i32() || ty == ResolvedTy::integer() {
+                Some(&self.builtin_impls.u32_and_usize_and_integer)
             } else if ty == ResolvedTy::string() {
                 Some(&self.builtin_impls.string)
             } else if ty == ResolvedTy::str() {
@@ -1796,6 +1796,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
         match &stmt.kind {
             LocalKind::Decl => {
+                // TODO: 检查变量是否完成初始化，需要进行控制流分析，需要允许回退内层 scope 对外层 TypeTable 的修改
+
                 if matches!(self.stage, AnalyzeStage::Body) {
                     // 从下面复制上来的，因为不用检查变量是否初始化
                     let expected_ty = self.resolve_ty(&ty)?;
@@ -2271,6 +2273,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let ty = self.get_type_by_id(type_id);
                 match expr.0 {
                     UnOp::Deref => {
+                        // TODO: 检测是否实现 Copy Trait
+
                         // 在 rust 中，貌似任意 value expr 都可以取其 ref，并且再解引用后可以得到 place value
                         if let ResolvedTy::Ref(t, multb) = ty {
                             Ok(Some(ExprResult {
@@ -2426,9 +2430,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     if take_res.type_id == Self::unit_type()
                         || take_res.type_id == Self::never_type()
                     {
-                        Ok(Some(Self::unit_expr_result_int_specified(
-                            con_res.int_flow.concat(take_res.int_flow),
-                        )))
+                        Ok(Some(Self::unit_expr_result_int_specified(con_res.int_flow)))
                     } else {
                         Err(SemanticError::TypeMismatch)
                     }
@@ -2499,18 +2501,24 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     StmtResult::Else { int_flow } => int_flow,
                 };
 
-                let out_of_cycle_int_flow = int_flow.out_of_cycle();
+                if int_flow.is_not() {
+                    Ok(Some(Self::never_expr_result_int_specified(
+                        InterruptControlFlow::Return,
+                    )))
+                } else {
+                    let out_of_cycle_int_flow = int_flow.out_of_cycle();
 
-                Ok(Some(ExprResult {
-                    type_id: self
-                        .get_scope_by_id(block.id)
-                        .kind
-                        .as_loop()
-                        .unwrap()
-                        .unwrap_or(Self::never_type()),
-                    category: ExprCategory::Not,
-                    int_flow: out_of_cycle_int_flow,
-                }))
+                    Ok(Some(ExprResult {
+                        type_id: self
+                            .get_scope_by_id(block.id)
+                            .kind
+                            .as_loop()
+                            .unwrap()
+                            .unwrap_or(Self::never_type()),
+                        category: ExprCategory::Not,
+                        int_flow: out_of_cycle_int_flow,
+                    }))
+                }
             }
             None => Ok(None),
         }
