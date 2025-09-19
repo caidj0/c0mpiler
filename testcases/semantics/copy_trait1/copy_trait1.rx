@@ -1,0 +1,10 @@
+struct A;
+
+fn foo(a: A) {}
+
+fn main() {
+    let a: A = A;
+    let b: &A = &a;
+    foo(*b);
+    exit(0);
+}

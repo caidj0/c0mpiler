@@ -22,12 +22,10 @@ impl SemanticAnalyzer {
                 let info = self.get_type_info(full_name);
 
                 match &info.kind {
-                    TypeKind::Placeholder | TypeKind::Trait { .. } => false,
-                    TypeKind::Struct { fields } => fields.iter().all(|(_, x)| {
-                        let id = self.get_type_by_id(*x);
-                        self.has_copy_trait(&id)
-                    }),
-                    TypeKind::Enum { fields: _ } => true,
+                    TypeKind::Placeholder | TypeKind::Trait { .. } | TypeKind::Struct { .. } => {
+                        false
+                    }
+                    TypeKind::Enum { .. } => true,
                 }
             }
             ResolvedTy::Ref(_, mutability) => mutability.is_not(),

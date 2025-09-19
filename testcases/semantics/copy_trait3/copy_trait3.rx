@@ -1,0 +1,6 @@
+struct A;
+
+fn main() {
+    let a: [A; 3] = [A; 3];
+    exit(0);
+}

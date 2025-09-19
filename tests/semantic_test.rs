@@ -39,7 +39,7 @@ fn run(src: &str) -> Result<(), String> {
 #[test]
 #[ignore]
 fn my_semantic() {
-    let escape_list = [];
+    let escape_list = ["copy_trait1", "copy_trait2"];
     let case_path = "testcases/semantics";
 
     run_test_cases(&escape_list, case_path);

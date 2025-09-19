@@ -311,7 +311,6 @@ impl SemanticAnalyzer {
     fn enter_scope(&mut self) -> Result<(), SemanticError> {
         let id = self.state.current_ast_id;
         if !self.get_scope().children.contains(&id) {
-            println!("{:?}", self.get_scope());
             return Err(SemanticError::UndefinedScope);
         }
 
