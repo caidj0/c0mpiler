@@ -6,6 +6,8 @@ pub mod path;
 pub mod stmt;
 pub mod ty;
 
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::{
         item::Item,
@@ -250,7 +252,7 @@ impl Eatable for ByRef {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum Mutability {
     Not,
     Mut,

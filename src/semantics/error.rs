@@ -49,6 +49,7 @@ pub enum SemanticError {
     NotMainFunction,
     ExprAfterExit,
     MainFunctionNotExited,
+    NotSizedType,
 }
 
 impl From<ConstEvalError> for SemanticError {

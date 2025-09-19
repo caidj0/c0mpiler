@@ -1,13 +1,14 @@
 pub mod error;
 pub mod primitives;
 pub mod resolved_ty;
+pub mod super_trait;
 pub mod utils;
 pub mod visitor;
 
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    vec,
+    iter, vec,
 };
 
 use crate::{
@@ -36,6 +37,14 @@ macro_rules! no_assignee {
     ($id:expr) => {
         if matches!($id, ExprCategory::Only) {
             return Err(SemanticError::AssigneeOnlyExpr);
+        }
+    };
+}
+
+macro_rules! check_sized {
+    ($analyzer:expr, $id:expr) => {
+        if !$analyzer.has_sized_trait($id) {
+            return Err(SemanticError::NotSizedType);
         }
     };
 }
@@ -302,6 +311,7 @@ impl SemanticAnalyzer {
     fn enter_scope(&mut self) -> Result<(), SemanticError> {
         let id = self.state.current_ast_id;
         if !self.get_scope().children.contains(&id) {
+            println!("{:?}", self.get_scope());
             return Err(SemanticError::UndefinedScope);
         }
 
@@ -817,7 +827,11 @@ impl SemanticAnalyzer {
                 self.resolve_ty_self_kind_specified(&slice_ty.0, expand_self)?,
             ))),
             TyKind::Array(array_ty) => Ok(ResolvedTy::Array(
-                Box::new(self.resolve_ty_self_kind_specified(&array_ty.0, expand_self)?),
+                Box::new({
+                    let inner = self.resolve_ty_self_kind_specified(&array_ty.0, expand_self)?;
+                    check_sized!(self, &inner);
+                    inner
+                }),
                 self.const_eval(ResolvedTy::usize(), &array_ty.1.value)?
                     .into_u_size()
                     .unwrap(),
@@ -1314,6 +1328,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                     if var.kind.as_constant().unwrap().is_un_evaled() {
                         let ty = self.resolve_ty(&item.ty)?;
+                        check_sized!(self, &ty);
                         let value = self.const_eval(ty.clone(), item.expr.as_ref().unwrap())?;
                         let ty_id = self.intern_type(ty);
 
@@ -1365,6 +1380,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     .iter()
                     .map(|x| self.resolve_ty(&x.ty))
                     .collect::<Result<Vec<_>, SemanticError>>()?;
+
+                for x in param_tys.iter().chain(iter::once(&ret_ty)) {
+                    check_sized!(self, x);
+                }
 
                 let is_free_scope = if let ScopeKind::Trait(self_ty) | ScopeKind::Impl(self_ty) =
                     self.get_scope().kind
@@ -1543,6 +1562,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                     .clone(),
                                 {
                                     let ty = self.resolve_ty(&x.ty)?;
+                                    check_sized!(self, &ty); // 暂时让 struct 的成员均为 sized type
                                     self.intern_type(ty)
                                 },
                             ))
@@ -1821,48 +1841,44 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             return Err(SemanticError::Unimplemented);
         };
 
-        match &stmt.kind {
-            LocalKind::Decl => {
-                // TODO: 检查变量是否完成初始化，需要进行控制流分析，需要允许回退内层 scope 对外层 TypeTable 的修改
+        let expr_res = if let LocalKind::Init(expr) = &stmt.kind {
+            self.visit_expr(expr)?
+        } else {
+            None
+        };
 
-                if matches!(self.stage, AnalyzeStage::Body) {
-                    // 从下面复制上来的，因为不用检查变量是否初始化
-                    let expected_ty = self.resolve_ty(ty)?;
-                    let expected_ty_id = self.intern_type(expected_ty.clone());
-                    let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
-                    self.add_bindings(vec![pat_res], VariableKind::Inited)?;
-                    Ok(Some(StmtResult::Else {
-                        int_flow: InterruptControlFlow::Not,
-                    }))
-                } else {
-                    Ok(None)
+        if matches!(self.stage, AnalyzeStage::Body) {
+            let expected_ty = self.resolve_ty(ty)?;
+            check_sized!(self, &expected_ty);
+            let expected_ty_id = self.intern_type(expected_ty.clone());
+            let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
+
+            let int_flow = match &stmt.kind {
+                LocalKind::Decl => {
+                    // TODO: 检查变量是否完成初始化，需要进行控制流分析，需要允许回退内层 scope 对外层 TypeTable 的修改
+                    InterruptControlFlow::Not
                 }
-            }
-            LocalKind::Init(expr) => {
-                let res = self.visit_expr(expr)?;
-                match res {
-                    Some(ExprResult {
+                LocalKind::Init(_) => {
+                    let ExprResult {
                         type_id,
                         category,
                         int_flow,
-                    }) => {
-                        debug_assert!(matches!(self.stage, AnalyzeStage::Body));
-                        no_assignee!(category);
-                        let expected_ty = self.resolve_ty(ty)?;
-                        let expected_ty_id = self.intern_type(expected_ty.clone());
-                        let expr_ty = self.get_type_by_id(type_id);
-                        if expr_ty.can_trans_to_target_type(&expected_ty) {
-                            let pat_res = self.visit_pat(&stmt.pat, expected_ty_id)?;
-                            self.add_bindings(vec![pat_res], VariableKind::Inited)?;
-                        } else {
-                            return Err(SemanticError::TypeMismatch);
-                        }
+                    } = expr_res.unwrap();
 
-                        Ok(Some(StmtResult::Else { int_flow }))
+                    no_assignee!(category);
+                    let expr_ty = self.get_type_by_id(type_id);
+                    if !expr_ty.can_trans_to_target_type(&expected_ty) {
+                        return Err(SemanticError::TypeMismatch);
                     }
-                    None => Ok(None),
+                    int_flow
                 }
-            }
+            };
+
+            self.add_bindings(vec![pat_res], VariableKind::Inited)?;
+
+            Ok(Some(StmtResult::Else { int_flow }))
+        } else {
+            Ok(None)
         }
     }
 

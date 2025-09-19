@@ -52,9 +52,9 @@ dependencies = [
 
 [[package]]
 name = "fancy-regex"
-version = "0.16.1"
+version = "0.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf04c5ec15464ace8355a7b440a33aece288993475556d461154d7a62ad9947c"
+checksum = "998b056554fbe42e03ae0e152895cd1a7e1002aec800fdc6635d20270260c46f"
 dependencies = [
  "bit-set",
  "regex-automata",
@@ -81,9 +81,9 @@ checksum = "32a282da65faaf38286cf3be983213fcf1d2e2a58700e808f83f4ea9a4804bc0"
 
 [[package]]
 name = "pastey"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3a8cb46bdc156b1c90460339ae6bfd45ba0394e5effbaa640badb4987fdc261"
+checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
 name = "proc-macro2"
