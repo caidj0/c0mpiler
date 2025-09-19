@@ -81,7 +81,24 @@ pub struct SemanticAnalyzer {
 }
 
 impl SemanticAnalyzer {
-    pub fn new() -> Self {
+    pub fn visit<'ast>(krate: &'ast crate::ast::Crate) -> (Self, Result<(), SemanticError>) {
+        let mut analyzer = Self::new();
+        let result = || -> Result<(), SemanticError> {
+            for stage in [
+                AnalyzeStage::SymbolCollect,
+                AnalyzeStage::Definition,
+                AnalyzeStage::Impl,
+                AnalyzeStage::Body,
+            ] {
+                analyzer.stage = stage;
+                analyzer.visit_crate(krate)?;
+            }
+            Ok(())
+        }();
+        (analyzer, result)
+    }
+
+    fn new() -> Self {
         let mut type_table: TypeTable = TypeTable::default();
         type_table.intern(ResolvedTy::unit()); // Unit -> 0
         type_table.intern(ResolvedTy::Infer); // Infer -> 1
@@ -153,7 +170,7 @@ impl SemanticAnalyzer {
                 Variable {
                     ty: type_table.intern(ResolvedTy::Fn(
                         vec![ResolvedTy::i32()],
-                        Box::new(ResolvedTy::unit()),
+                        Box::new(ResolvedTy::Never),
                     )),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
@@ -214,7 +231,7 @@ impl SemanticAnalyzer {
                 | ScopeKind::Crate
                 | ScopeKind::Trait(_)
                 | ScopeKind::Impl(_)
-                | ScopeKind::Fn { ret_ty: _ } => return Err(SemanticError::NoLoopScope),
+                | ScopeKind::Fn { .. } => return Err(SemanticError::NoLoopScope),
                 ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {
                     return Ok(self.scopes.get_mut(&id).unwrap());
                 }
@@ -233,7 +250,23 @@ impl SemanticAnalyzer {
                 ScopeKind::Root | ScopeKind::Crate | ScopeKind::Trait(_) | ScopeKind::Impl(_) => {
                     return Err(SemanticError::NoFnScope);
                 }
-                ScopeKind::Fn { ret_ty: _ } => return Ok(scope),
+                ScopeKind::Fn { .. } => return Ok(scope),
+            }
+            id = scope.father;
+        }
+    }
+
+    fn get_fn_scope_mut(&mut self) -> Result<&mut Scope, SemanticError> {
+        let mut id = self.current_scope;
+
+        loop {
+            let scope = self.scopes.get(&id).unwrap();
+            match scope.kind {
+                ScopeKind::Lambda | ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {}
+                ScopeKind::Root | ScopeKind::Crate | ScopeKind::Trait(_) | ScopeKind::Impl(_) => {
+                    return Err(SemanticError::NoFnScope);
+                }
+                ScopeKind::Fn { .. } => return Ok(self.scopes.get_mut(&id).unwrap()),
             }
             id = scope.father;
         }
@@ -402,7 +435,7 @@ impl SemanticAnalyzer {
             } else {
                 id = scope.father;
 
-                if matches!(scope.kind, ScopeKind::Fn { ret_ty: _ }) {
+                if matches!(scope.kind, ScopeKind::Fn { .. }) {
                     include_local &= false;
                 }
             }
@@ -442,7 +475,7 @@ impl SemanticAnalyzer {
             } else {
                 id = scope.father;
 
-                if matches!(scope.kind, ScopeKind::Fn { ret_ty: _ }) {
+                if matches!(scope.kind, ScopeKind::Fn { .. }) {
                     include_local &= false;
                 }
             }
@@ -698,19 +731,6 @@ impl SemanticAnalyzer {
         let scope_id: NodeId = scope_symbol.0.strip_prefix("$").unwrap().parse().unwrap();
         let scope = self.scopes.get(&scope_id).unwrap();
         scope.types.get(symbols.last().unwrap()).unwrap()
-    }
-
-    pub fn visit<'ast>(&mut self, krate: &'ast crate::ast::Crate) -> Result<(), SemanticError> {
-        for stage in [
-            AnalyzeStage::SymbolCollect,
-            AnalyzeStage::Definition,
-            AnalyzeStage::Impl,
-            AnalyzeStage::Body,
-        ] {
-            self.stage = stage;
-            self.visit_crate(krate)?;
-        }
-        Ok(())
     }
 
     fn get_prefix_name_from(&self, mut id: NodeId) -> Vec<Symbol> {
@@ -1323,7 +1343,16 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                self.add_scope(ScopeKind::Fn { ret_ty: TypeId(0) })?;
+                let is_main_fn =
+                    ident.symbol.0.as_str() == "main" && self.get_scope().kind.is_crate(); // 现在只允许存在一个 Crate，因此满足这个条件的就是 main fn
+                self.add_scope(ScopeKind::Fn {
+                    ret_ty: TypeId(0),
+                    main_fn: if is_main_fn {
+                        MainFunctionState::UnExited
+                    } else {
+                        MainFunctionState::Not
+                    },
+                })?;
             }
             AnalyzeStage::Definition => {
                 let mut ret_ty = match &sig.decl.output {
@@ -1392,7 +1421,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let ret_ty_id = self.intern_type(ret_ty);
                 // local 函数参数能被 item 遮蔽，从而应该是在此处添加到 scope 的
                 self.add_bindings(bindings, VariableKind::Inited)?;
-                *self.get_scope_mut().kind.as_fn_mut().unwrap() = ret_ty_id;
+                *self.get_scope_mut().kind.as_fn_mut().unwrap().0 = ret_ty_id;
 
                 self.exit_scope()?;
             }
@@ -1403,7 +1432,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if let Some(b) = body {
             let res = self.visit_block_expr_with_kind(b, ScopeKind::Lambda)?;
             if let Some(res) = res {
-                let target_ty_id = self.get_scope().kind.as_fn().unwrap();
+                let (target_ty_id, main_fn_state) = self.get_scope().kind.as_fn().unwrap();
+
+                if main_fn_state.is_un_exited() {
+                    return Err(SemanticError::MainFunctionNotExited);
+                }
+
                 match res {
                     StmtResult::Expr(expr_result) => {
                         let target_ty = self.get_type_by_id(*target_ty_id);
@@ -1957,6 +1991,23 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                         if !income_ty.can_trans_to_target_type(target) {
                             return Err(SemanticError::TypeMismatch);
+                        }
+                    }
+
+                    if let Ok(fn_scope) = self.get_fn_scope_mut() {
+                        let (_, main_fn_state) = fn_scope.kind.as_fn_mut().unwrap();
+                        match (&main_fn_state, ret_ty.is_never()) {
+                            // 只有 Exit 函数返回类型为 Never
+                            (MainFunctionState::Not, true) => {
+                                return Err(SemanticError::NotMainFunction);
+                            }
+                            (MainFunctionState::UnExited, true) => {
+                                *main_fn_state = MainFunctionState::Exited
+                            }
+                            (MainFunctionState::Exited, _) => {
+                                return Err(SemanticError::ExprAfterExit);
+                            }
+                            _ => {}
                         }
                     }
 
@@ -2921,7 +2972,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             Some(res) => {
                 no_assignee!(res.category);
                 let scope = self.get_fn_scope()?;
-                let target_id = scope.kind.as_fn().unwrap();
+                let target_id = scope.kind.as_fn().unwrap().0;
 
                 let ret_ty = self.get_type_by_id(res.type_id);
                 let target_ty = self.get_type_by_id(*target_id);

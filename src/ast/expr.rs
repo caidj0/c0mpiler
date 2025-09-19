@@ -1,3 +1,5 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::{
         ASTError, ASTResult, Eatable, Ident, Mutability, NodeId, OptionEatable, Span,
@@ -40,7 +42,7 @@ pub struct Expr {
     pub id: NodeId,
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum ExprKind {
     Array(ArrayExpr),
     ConstBlock(ConstBlockExpr),

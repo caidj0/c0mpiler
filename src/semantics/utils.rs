@@ -149,8 +149,13 @@ pub enum ScopeKind {
     Crate,
     Trait(TypeId),
     Impl(TypeId),
-    Fn { ret_ty: TypeId },
-    Loop { ret_ty: Option<TypeId> },
+    Fn {
+        ret_ty: TypeId,
+        main_fn: MainFunctionState,
+    },
+    Loop {
+        ret_ty: Option<TypeId>,
+    },
     CycleExceptLoop,
 }
 
@@ -330,4 +335,11 @@ pub enum ValueContainer<'a> {
     Temp(Variable),
     Variable(&'a Variable),
     ImplInfoItem(TypeId, ImplInfoItem<'a>),
+}
+
+#[derive(Debug, Clone, EnumAsInner)]
+pub enum MainFunctionState {
+    Not,
+    UnExited,
+    Exited,
 }
