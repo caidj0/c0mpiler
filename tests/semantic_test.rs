@@ -18,7 +18,7 @@ fn run(src: &str) -> Result<(), String> {
             match result {
                 Ok(_) => Ok(()),
                 Err(err) => Err(format!(
-                    "Semantic error occured: {:#?}, analyze stage: {:?}, state: {:?}.\n{:#?}",
+                    "Semantic error occured: {}, analyze stage: {:?}, state: {:?}.\n{:#?}",
                     err,
                     analyzer.get_stage(),
                     analyzer.get_state(),
@@ -41,12 +41,10 @@ fn run(src: &str) -> Result<(), String> {
 fn my_semantic() {
     let escape_list = [
         "autoderef1", // TODO: &&A -> &A, &mut &mut A -> &mut A
-
         "copy_trait1",
         "copy_trait2",
         "copy_trait3", // 不清楚 Copy Trait 要实现到哪一步
-
-        "operator1", // TODO: &1 == &1, 
+        "operator1",   // TODO: &1 == &1,
     ];
     let case_path = "testcases/semantics";
 
@@ -56,7 +54,6 @@ fn my_semantic() {
 #[test]
 fn semantics_1() {
     let escape_list = [
-        "loop1", "misc29", // let 缺失类型标注
         // "misc15", // 仅从控制流上分析不能确保 loop 能退出
         "misc28", // TODO: Copy Trait
     ];

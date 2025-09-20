@@ -28,15 +28,16 @@ use crate::{
         stmt::{LocalKind, StmtKind},
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
-    const_eval::{ConstEvalError, ConstEvalValue, ConstEvaler},
+    const_eval::{ConstEvalValue, ConstEvaler},
     lexer::TokenPosition,
+    make_semantic_err,
     semantics::{error::SemanticError, resolved_ty::ResolvedTy, utils::*, visitor::Visitor},
 };
 
 macro_rules! no_assignee {
     ($id:expr) => {
         if matches!($id, ExprCategory::Only) {
-            return Err(SemanticError::AssigneeOnlyExpr);
+            return Err(make_semantic_err!(AssigneeOnlyExpr));
         }
     };
 }
@@ -44,7 +45,7 @@ macro_rules! no_assignee {
 macro_rules! check_sized {
     ($analyzer:expr, $id:expr) => {
         if !$analyzer.has_sized_trait($id) {
-            return Err(SemanticError::NotSizedType);
+            return Err(make_semantic_err!(NotSizedType));
         }
     };
 }
@@ -52,7 +53,7 @@ macro_rules! check_sized {
 macro_rules! get_mutbl {
     ($id:expr) => {
         match $id {
-            ExprCategory::Only => return Err(SemanticError::AssigneeOnlyExpr),
+            ExprCategory::Only => return Err(make_semantic_err!(AssigneeOnlyExpr)),
             ExprCategory::Place(mutbl) => mutbl,
             ExprCategory::Not => Mutability::Mut,
         }
@@ -242,7 +243,7 @@ impl SemanticAnalyzer {
                 | ScopeKind::Crate
                 | ScopeKind::Trait(_)
                 | ScopeKind::Impl(_)
-                | ScopeKind::Fn { .. } => return Err(SemanticError::NoLoopScope),
+                | ScopeKind::Fn { .. } => return Err(make_semantic_err!(NoLoopScope)),
                 ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {
                     return Ok(self.scopes.get_mut(&id).unwrap());
                 }
@@ -259,7 +260,7 @@ impl SemanticAnalyzer {
             match scope.kind {
                 ScopeKind::Lambda | ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {}
                 ScopeKind::Root | ScopeKind::Crate | ScopeKind::Trait(_) | ScopeKind::Impl(_) => {
-                    return Err(SemanticError::NoFnScope);
+                    return Err(make_semantic_err!(NoFnScope));
                 }
                 ScopeKind::Fn { .. } => return Ok(scope),
             }
@@ -275,7 +276,7 @@ impl SemanticAnalyzer {
             match scope.kind {
                 ScopeKind::Lambda | ScopeKind::Loop { ret_ty: _ } | ScopeKind::CycleExceptLoop => {}
                 ScopeKind::Root | ScopeKind::Crate | ScopeKind::Trait(_) | ScopeKind::Impl(_) => {
-                    return Err(SemanticError::NoFnScope);
+                    return Err(make_semantic_err!(NoFnScope));
                 }
                 ScopeKind::Fn { .. } => return Ok(self.scopes.get_mut(&id).unwrap()),
             }
@@ -289,7 +290,7 @@ impl SemanticAnalyzer {
         let id = self.state.current_ast_id;
 
         if self.scopes.contains_key(&id) || self.get_scope().children.contains(&id) {
-            return Err(SemanticError::InvalidScope);
+            return Err(make_semantic_err!(InvalidScope));
         }
 
         self.get_scope_mut().children.insert(id);
@@ -311,7 +312,7 @@ impl SemanticAnalyzer {
     fn enter_scope(&mut self) -> Result<(), SemanticError> {
         let id = self.state.current_ast_id;
         if !self.get_scope().children.contains(&id) {
-            return Err(SemanticError::UndefinedScope);
+            return Err(make_semantic_err!(UndefinedScope));
         }
 
         self.current_scope = id;
@@ -321,7 +322,7 @@ impl SemanticAnalyzer {
 
     fn exit_scope(&mut self) -> Result<(), SemanticError> {
         if matches!(self.get_scope().kind, ScopeKind::Root) {
-            return Err(SemanticError::InvalidScope);
+            return Err(make_semantic_err!(InvalidScope));
         }
 
         self.current_scope = self.get_scope().father;
@@ -333,7 +334,7 @@ impl SemanticAnalyzer {
         let s = self.get_scope_mut();
 
         if s.types.contains_key(&ident) {
-            return Err(SemanticError::MultiDefined);
+            return Err(make_semantic_err!(MultiDefined));
         }
 
         s.types.insert(ident.clone(), info);
@@ -356,7 +357,7 @@ impl SemanticAnalyzer {
             && !shadow
             && !var.kind.can_shadow_unconditionally(&exist.kind)
         {
-            return Err(SemanticError::MultiDefined);
+            return Err(make_semantic_err!(MultiDefined));
         }
 
         s.values.insert(ident, var);
@@ -373,7 +374,7 @@ impl SemanticAnalyzer {
             let scope = if let Some(scope) = self.scopes.get(&id) {
                 scope
             } else {
-                return Err(SemanticError::UndefinedScope);
+                return Err(make_semantic_err!(UndefinedScope));
             };
 
             if let Some(info) = scope.types.get(ident) {
@@ -381,7 +382,7 @@ impl SemanticAnalyzer {
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
-                return Err(SemanticError::UnknownType);
+                return Err(make_semantic_err!(UnknownType));
             } else {
                 id = scope.father;
             }
@@ -397,7 +398,7 @@ impl SemanticAnalyzer {
             let scope = if let Some(scope) = self.scopes.get_mut(&id) {
                 scope
             } else {
-                return Err(SemanticError::UndefinedScope);
+                return Err(make_semantic_err!(UndefinedScope));
             };
 
             if scope.types.contains_key(ident) {
@@ -414,7 +415,7 @@ impl SemanticAnalyzer {
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
-                return Err(SemanticError::UnknownType);
+                return Err(make_semantic_err!(UnknownType));
             } else {
                 id = scope.father;
             }
@@ -431,18 +432,18 @@ impl SemanticAnalyzer {
             let scope = if let Some(scope) = self.scopes.get(&id) {
                 scope
             } else {
-                return Err(SemanticError::UndefinedScope);
+                return Err(make_semantic_err!(UndefinedScope));
             };
 
             if let Some(var) = scope.values.get(ident) {
                 if !include_local && matches!(var.kind, VariableKind::Decl | VariableKind::Inited) {
-                    return Err(SemanticError::LocalVarOutOfFn);
+                    return Err(make_semantic_err!(LocalVarOutOfFn));
                 }
                 return Ok((id, var));
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
-                return Err(SemanticError::UnknownVariable);
+                return Err(make_semantic_err!(UnknownVariable));
             } else {
                 id = scope.father;
 
@@ -463,12 +464,12 @@ impl SemanticAnalyzer {
             let scope = if let Some(scope) = self.scopes.get(&id) {
                 scope
             } else {
-                return Err(SemanticError::UndefinedScope);
+                return Err(make_semantic_err!(UndefinedScope));
             };
 
             if let Some(var) = scope.values.get(ident) {
                 if !include_local && matches!(var.kind, VariableKind::Decl | VariableKind::Inited) {
-                    return Err(SemanticError::LocalVarOutOfFn);
+                    return Err(make_semantic_err!(LocalVarOutOfFn));
                 }
                 return Ok((
                     id,
@@ -482,7 +483,7 @@ impl SemanticAnalyzer {
             }
 
             if matches!(scope.kind, ScopeKind::Root) {
-                return Err(SemanticError::UnknownVariable);
+                return Err(make_semantic_err!(UnknownVariable));
             } else {
                 id = scope.father;
 
@@ -527,7 +528,7 @@ impl SemanticAnalyzer {
                     } => {}
                 }
 
-                Err(SemanticError::NonProvidedField)
+                Err(make_semantic_err!(NonProvidedField))
             }
             ResolvedTy::Ref(resolved_ty, mutability) => {
                 let de_refed_id = self.intern_type(resolved_ty.as_ref().clone());
@@ -537,7 +538,7 @@ impl SemanticAnalyzer {
                 Ok((var, deref_level.merge(DerefLevel::Deref(*mutability))))
             }
             ResolvedTy::ImplicitSelf => self.get_type_fields(self.get_self_type()?, symbol),
-            _ => Err(SemanticError::NonProvidedField),
+            _ => Err(make_semantic_err!(NonProvidedField)),
         }
     }
 
@@ -594,7 +595,7 @@ impl SemanticAnalyzer {
                     if let Some(replacer) = replacer
                         && candidate.replace((replacer, item)).is_some()
                     {
-                        return Err(SemanticError::MultipleApplicable);
+                        return Err(make_semantic_err!(MultipleApplicable));
                     }
                 }
             }
@@ -624,7 +625,7 @@ impl SemanticAnalyzer {
                     id = self.intern_type(resolved_ty.as_ref().clone());
                     deref_level = deref_level.merge(DerefLevel::Deref(mutability))
                 }
-                _ => return Err(SemanticError::NonMethodCall),
+                _ => return Err(make_semantic_err!(NonMethodCall)),
             }
         }
     }
@@ -644,16 +645,16 @@ impl SemanticAnalyzer {
         // TODO: 将 resolve_ty 统一过来，实现 Self::Ty 的结构
 
         if qself.is_some() {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         }
 
         if path.segments.len() > 1 {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         }
 
         let first = path.segments.first().unwrap();
         if first.args.is_some() {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         }
 
         self.search_type(&first.ident.symbol)
@@ -665,7 +666,7 @@ impl SemanticAnalyzer {
         path: &Path,
     ) -> Result<ValueContainer<'_>, SemanticError> {
         if qself.is_some() {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         }
 
         // 在没有 module 时，path expr 应该只可能为 value 或 ty::value 格式 (错误)
@@ -711,9 +712,9 @@ impl SemanticAnalyzer {
 
                 self.get_type_items_no_deref(type_id, false, &value_seg.ident.symbol)?
                     .map(|(id, v)| ValueContainer::ImplInfoItem(id, v))
-                    .ok_or(SemanticError::UnknownVariable)
+                    .ok_or(make_semantic_err!(UnknownVariable))
             }
-            _ => Err(SemanticError::InvalidPath),
+            _ => Err(make_semantic_err!(InvalidPath)),
         }
     }
 
@@ -801,11 +802,11 @@ impl SemanticAnalyzer {
             let scope = if let Some(scope) = self.scopes.get(&id) {
                 scope
             } else {
-                return Err(SemanticError::UndefinedScope);
+                return Err(make_semantic_err!(UndefinedScope));
             };
 
             match scope.kind {
-                ScopeKind::Crate => return Err(SemanticError::UnknownType),
+                ScopeKind::Crate => return Err(make_semantic_err!(UnknownType)),
                 ScopeKind::Trait(type_id) | ScopeKind::Impl(type_id) => return Ok(type_id),
                 _ => id = scope.father,
             }
@@ -849,11 +850,11 @@ impl SemanticAnalyzer {
             TyKind::Path(path_ty) => {
                 let PathTy(qself, path) = path_ty;
                 if qself.is_some() {
-                    return Err(SemanticError::Unimplemented);
+                    return Err(make_semantic_err!(Unimplemented));
                 }
 
                 if path.segments.len() > 1 {
-                    return Err(SemanticError::InvalidPath);
+                    return Err(make_semantic_err!(InvalidPath));
                 }
 
                 let seg = path.segments.first().unwrap();
@@ -861,7 +862,7 @@ impl SemanticAnalyzer {
                 if s.is_path_segment() {
                     if s.is_big_self() {
                         if seg.args.is_some() {
-                            return Err(SemanticError::InvalidPath);
+                            return Err(make_semantic_err!(InvalidPath));
                         }
                         return Ok(if expand_self {
                             self.get_type_by_id(self.get_self_type()?).clone()
@@ -869,7 +870,7 @@ impl SemanticAnalyzer {
                             ResolvedTy::big_self()
                         });
                     }
-                    return Err(SemanticError::InvalidPath);
+                    return Err(make_semantic_err!(InvalidPath));
                 }
                 match self.search_type(s) {
                     Ok((id, _)) => Ok(self.resolve_ty_in_scope_by_symbol(s, id)),
@@ -914,8 +915,8 @@ impl SemanticAnalyzer {
                     }
                 }
             }
-            TyKind::TraitObject(_) => Err(SemanticError::Unimplemented),
-            TyKind::ImplTrait(_) => Err(SemanticError::Unimplemented),
+            TyKind::TraitObject(_) => Err(make_semantic_err!(Unimplemented)),
+            TyKind::ImplTrait(_) => Err(make_semantic_err!(Unimplemented)),
             TyKind::Infer(_) => Ok(ResolvedTy::Infer),
             TyKind::ImplicitSelf => Ok(ResolvedTy::implicit_self()),
         }
@@ -980,10 +981,7 @@ impl SemanticAnalyzer {
             Ok(x) => x.cast(&ty),
             Err(err) => Err(err),
         }
-        .map_err(|x| match x {
-            ConstEvalError::Semantic(s) => *s,
-            _ => SemanticError::ConstEvalError(x),
-        })
+        .map_err(|x| x.into())
     }
 
     // 尝试统一传入的 type （主要是为了 integer）
@@ -994,7 +992,7 @@ impl SemanticAnalyzer {
             .map(|x| self.get_type_by_id(x))
             .collect();
 
-        Ok(self.intern_type(ResolvedTy::utilize(types).ok_or(SemanticError::TypeMismatch)?))
+        Ok(self.intern_type(ResolvedTy::utilize(types).ok_or(make_semantic_err!(TypeMismatch))?))
     }
 
     fn utilize_category(cats: Vec<ExprCategory>) -> Result<ExprCategory, SemanticError> {
@@ -1005,8 +1003,8 @@ impl SemanticAnalyzer {
             .any(|x| matches!(x, ExprCategory::Place(Mutability::Not)));
 
         match (has_only, has_value, has_const) {
-            (true, true, _) => Err(SemanticError::ConflictAssignee),
-            (true, false, true) => Err(SemanticError::ImmutableVar),
+            (true, true, _) => Err(make_semantic_err!(ConflictAssignee)),
+            (true, false, true) => Err(make_semantic_err!(ImmutableVar)),
             (true, false, false) => Ok(ExprCategory::Only),
             (false, true, _) => Ok(ExprCategory::Not),
             (false, false, true) => Ok(ExprCategory::Place(Mutability::Not)),
@@ -1049,7 +1047,7 @@ impl SemanticAnalyzer {
                 match new_ret {
                     StmtResult::Expr(expr_result) => {
                         if index + 1 != expr.stmts.len() {
-                            return Err(SemanticError::TypeMismatch);
+                            return Err(make_semantic_err!(TypeMismatch));
                         }
 
                         *mut_ret = StmtResult::Expr(ExprResult {
@@ -1105,7 +1103,7 @@ impl SemanticAnalyzer {
                             if is_trait_item {
                                 ConstEvalValue::Placeholder
                             } else {
-                                return Err(SemanticError::ConstantWithoutBody);
+                                return Err(make_semantic_err!(ConstantWithoutBody));
                             }
                         }
                     };
@@ -1113,7 +1111,7 @@ impl SemanticAnalyzer {
 
                     if methods.contains_key(&ident.symbol) || constants.contains_key(&ident.symbol)
                     {
-                        return Err(SemanticError::MultiDefined);
+                        return Err(make_semantic_err!(MultiDefined));
                     }
 
                     constants.insert(ident.symbol.clone(), Constant { ty: ty_id, value });
@@ -1139,11 +1137,11 @@ impl SemanticAnalyzer {
 
                     if methods.contains_key(&ident.symbol) || constants.contains_key(&ident.symbol)
                     {
-                        return Err(SemanticError::MultiDefined);
+                        return Err(make_semantic_err!(MultiDefined));
                     }
 
                     if body.is_none() && !is_trait_item {
-                        return Err(SemanticError::FnWithoutBody);
+                        return Err(make_semantic_err!(FnWithoutBody));
                     }
 
                     methods.insert(
@@ -1207,7 +1205,7 @@ impl SemanticAnalyzer {
         for pat_res in pat_res_es {
             for (symbol, type_id, mutbl) in pat_res.bindings {
                 if !set.insert(symbol.clone()) {
-                    return Err(SemanticError::MultiBinding);
+                    return Err(make_semantic_err!(MultiBinding));
                 }
 
                 // bindings 不能遮蔽 const, 即使不同作用域
@@ -1215,7 +1213,7 @@ impl SemanticAnalyzer {
                 if let Ok(var) = self.search_value(&symbol)
                     && var.kind.is_constant()
                 {
-                    return Err(SemanticError::ShadowedConstantByBinding);
+                    return Err(make_semantic_err!(ShadowedConstantByBinding));
                 }
 
                 self.add_value(
@@ -1302,7 +1300,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect => {
                 if self.is_free_scope() {
                     if item.expr.is_none() {
-                        return Err(SemanticError::ConstantWithoutBody);
+                        return Err(make_semantic_err!(ConstantWithoutBody));
                     }
 
                     self.add_value(
@@ -1401,7 +1399,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             .iter()
                             .any(|x| x.is_implicit_self_or_ref_implicit_self())
                     {
-                        return Err(SemanticError::SelfInNoAssocFn);
+                        return Err(make_semantic_err!(SelfInNoAssocFn));
                     }
 
                     true
@@ -1453,7 +1451,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let (target_ty_id, main_fn_state) = self.get_scope().kind.as_fn().unwrap();
 
                 if main_fn_state.is_un_exited() {
-                    return Err(SemanticError::MainFunctionNotExited);
+                    return Err(make_semantic_err!(MainFunctionNotExited));
                 }
 
                 match res {
@@ -1461,13 +1459,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         let target_ty = self.get_type_by_id(*target_ty_id);
                         let ret_ty = self.get_type_by_id(expr_result.type_id);
                         if !ret_ty.can_trans_to_target_type(&target_ty) {
-                            return Err(SemanticError::TypeMismatch);
+                            return Err(make_semantic_err!(TypeMismatch));
                         }
                     }
                     StmtResult::Else { int_flow } => match int_flow {
                         InterruptControlFlow::Not => {
                             if *target_ty_id != Self::unit_type() {
-                                return Err(SemanticError::NoReturnFunction);
+                                return Err(make_semantic_err!(NoReturnFunction));
                             }
                         }
                         InterruptControlFlow::Loop => panic!("Impossible!"),
@@ -1481,7 +1479,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     }
 
     fn visit_mod_item(&mut self, _: &'ast crate::ast::item::ModItem) -> Result<(), SemanticError> {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_enum_item(
@@ -1507,7 +1505,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         if !matches!(x.data, crate::ast::item::VariantData::Unit)
                             || x.disr_expr.is_some()
                         {
-                            Err(SemanticError::Unimplemented)
+                            Err(make_semantic_err!(Unimplemented))
                         } else {
                             Ok(x.ident.symbol.clone())
                         }
@@ -1517,7 +1515,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let vec_len = fields.len();
                 let fields: HashSet<Symbol> = HashSet::from_iter(fields);
                 if vec_len != fields.len() {
-                    return Err(SemanticError::MultiDefined);
+                    return Err(make_semantic_err!(MultiDefined));
                 }
 
                 *self
@@ -1557,7 +1555,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             Ok((
                                 x.ident
                                     .as_ref()
-                                    .ok_or(SemanticError::Unimplemented)?
+                                    .ok_or(make_semantic_err!(Unimplemented))?
                                     .symbol
                                     .clone(),
                                 {
@@ -1569,7 +1567,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         })
                         .collect::<Result<Vec<_>, SemanticError>>()?,
                     crate::ast::item::VariantData::Tuple(_) => {
-                        return Err(SemanticError::Unimplemented);
+                        return Err(make_semantic_err!(Unimplemented));
                     }
                     crate::ast::item::VariantData::Unit => Vec::new(),
                 };
@@ -1577,7 +1575,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let vec_len = fields.len();
                 let fields: HashMap<Symbol, TypeId> = HashMap::from_iter(fields);
                 if vec_len != fields.len() {
-                    return Err(SemanticError::MultiDefined);
+                    return Err(make_semantic_err!(MultiDefined));
                 }
 
                 let (id, info) = self.search_type_mut(&ident.symbol)?;
@@ -1685,7 +1683,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             constants: trait_constants,
                         } = &info.kind
                         else {
-                            return Err(SemanticError::NotTrait);
+                            return Err(make_semantic_err!(NotTrait));
                         };
 
                         let mut musts = HashSet::new();
@@ -1711,11 +1709,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                 ),
                                 ..*x
                             }) else {
-                                return Err(SemanticError::NotTraitMember);
+                                return Err(make_semantic_err!(NotTraitMember));
                             };
 
                             if sig.type_id != trait_sig.type_id {
-                                return Err(SemanticError::IncompatibleFn);
+                                return Err(make_semantic_err!(IncompatibleFn));
                             }
 
                             musts.remove(&symbol);
@@ -1730,24 +1728,24 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                     value: x.value.clone(),
                                 })
                             else {
-                                return Err(SemanticError::NotTraitMember);
+                                return Err(make_semantic_err!(NotTraitMember));
                             };
 
                             if constant.ty != trait_constant.ty {
-                                return Err(SemanticError::TypeMismatch);
+                                return Err(make_semantic_err!(TypeMismatch));
                             }
 
                             musts.remove(&symbol);
                         }
 
                         if !musts.is_empty() {
-                            return Err(SemanticError::NotAllTraitItemsImplemented);
+                            return Err(make_semantic_err!(NotAllTraitItemsImplemented));
                         }
 
                         let (_, trait_impls) = self.get_impl_mut(&self_ty_id);
 
                         if trait_impls.contains_key(&full_name) {
-                            return Err(SemanticError::MultiImplemented);
+                            return Err(make_semantic_err!(MultiImplemented));
                         }
 
                         trait_impls.insert(full_name, ImplInfo { methods, constants });
@@ -1757,14 +1755,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                         for (symbol, sig) in methods {
                             if inherent_impl.contains_key(&symbol) {
-                                return Err(SemanticError::MultiDefined);
+                                return Err(make_semantic_err!(MultiDefined));
                             }
                             inherent_impl.methods.insert(symbol, sig);
                         }
 
                         for (symbol, constant) in constants {
                             if inherent_impl.contains_key(&symbol) {
-                                return Err(SemanticError::MultiDefined);
+                                return Err(make_semantic_err!(MultiDefined));
                             }
                             inherent_impl.constants.insert(symbol, constant);
                         }
@@ -1838,7 +1836,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_let_stmt(&mut self, stmt: &'ast crate::ast::stmt::LocalStmt) -> Self::StmtRes {
         let Some(ty) = &stmt.ty else {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         };
 
         let expr_res = if let LocalKind::Init(expr) = &stmt.kind {
@@ -1868,7 +1866,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     no_assignee!(category);
                     let expr_ty = self.get_type_by_id(type_id);
                     if !expr_ty.can_trans_to_target_type(&expected_ty) {
-                        return Err(SemanticError::TypeMismatch);
+                        return Err(make_semantic_err!(TypeMismatch));
                     }
                     int_flow
                 }
@@ -1968,7 +1966,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         &mut self,
         _expr: &'ast crate::ast::expr::ConstBlockExpr,
     ) -> Self::ExprRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_call_expr(&mut self, CallExpr(expr, params): &'ast CallExpr) -> Self::ExprRes {
@@ -1989,7 +1987,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let ty = self.get_type_by_id(res.type_id);
                 if let ResolvedTy::Fn(required, ret_ty) = ty {
                     if required.len() != params_res.len() {
-                        return Err(SemanticError::MismatchArgNum);
+                        return Err(make_semantic_err!(MismatchArgNum));
                     }
 
                     let mut int_flow = res.int_flow;
@@ -1999,7 +1997,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow = int_flow.concat(income.int_flow);
 
                         if !income_ty.can_trans_to_target_type(target) {
-                            return Err(SemanticError::TypeMismatch);
+                            return Err(make_semantic_err!(TypeMismatch));
                         }
                     }
 
@@ -2008,13 +2006,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         match (&main_fn_state, ret_ty.is_never()) {
                             // 只有 Exit 函数返回类型为 Never
                             (MainFunctionState::Not, true) => {
-                                return Err(SemanticError::NotMainFunction);
+                                return Err(make_semantic_err!(NotMainFunction));
                             }
                             (MainFunctionState::UnExited, true) => {
                                 *main_fn_state = MainFunctionState::Exited
                             }
                             (MainFunctionState::Exited, _) => {
-                                return Err(SemanticError::ExprAfterExit);
+                                return Err(make_semantic_err!(ExprAfterExit));
                             }
                             _ => {}
                         }
@@ -2026,7 +2024,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow,
                     }))
                 } else {
-                    Err(SemanticError::NonFunctionCall)
+                    Err(make_semantic_err!(NonFunctionCall))
                 }
             }
             None => {
@@ -2064,7 +2062,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 }
                 let ident = &seg.ident;
                 if seg.args.is_some() {
-                    return Err(SemanticError::Unimplemented);
+                    return Err(make_semantic_err!(Unimplemented));
                 }
 
                 let (fn_id, deref_level) = self.get_type_items(
@@ -2077,19 +2075,19 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let (required_tys, ret_ty) = fn_ty.into_fn().unwrap();
 
                 if required_tys.len() != params_res.len() + 1 {
-                    return Err(SemanticError::MismatchArgNum);
+                    return Err(make_semantic_err!(MismatchArgNum));
                 }
 
                 match required_tys.first().unwrap() {
                     ResolvedTy::Ref(_, target_mut) => {
                         let self_mut = get_mutbl!(category).merge_with_deref_level(deref_level);
                         if !self_mut.can_trans_to(target_mut) {
-                            return Err(SemanticError::ImmutableVar);
+                            return Err(make_semantic_err!(ImmutableVar));
                         }
                     }
                     ResolvedTy::ImplicitSelf => {
                         if matches!(deref_level, DerefLevel::Deref(_)) {
-                            return Err(SemanticError::UnDereferenceable);
+                            return Err(make_semantic_err!(UnDereferenceable));
                         }
                     }
                     _ => panic!("Impossible"),
@@ -2101,7 +2099,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     int_flow = int_flow.concat(income.int_flow);
 
                     if !income_ty.can_trans_to_target_type(target) {
-                        return Err(SemanticError::TypeMismatch);
+                        return Err(make_semantic_err!(TypeMismatch));
                     }
                 }
 
@@ -2130,7 +2128,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 None
             }),
             [e] => self.visit_expr(e),
-            _ => Err(SemanticError::Unimplemented),
+            _ => Err(make_semantic_err!(Unimplemented)),
         }
     }
 
@@ -2312,7 +2310,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow,
                     }))
                 } else {
-                    Err(SemanticError::NoBinaryOperation(*bin_op, ty1, ty2))
+                    Err(make_semantic_err!(NoBinaryOperation(
+                        *bin_op,
+                        Box::new(ty1),
+                        Box::new(ty2)
+                    )))
                 }
             }
             (None, Some(_)) | (Some(_), None) => panic!("Impossible!"),
@@ -2343,7 +2345,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                 int_flow,
                             }))
                         } else {
-                            Err(SemanticError::UnDereferenceable)
+                            Err(make_semantic_err!(UnDereferenceable))
                         }
                     }
                     UnOp::Not => {
@@ -2355,7 +2357,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                 int_flow,
                             }))
                         } else {
-                            Err(SemanticError::NoImplementation)
+                            Err(make_semantic_err!(NoImplementation))
                         }
                     }
                     UnOp::Neg => {
@@ -2373,7 +2375,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                 int_flow,
                             }))
                         } else {
-                            Err(SemanticError::NoImplementation)
+                            Err(make_semantic_err!(NoImplementation))
                         }
                     }
                 }
@@ -2400,7 +2402,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             } else if s == "usize" {
                                 self.intern_type(ResolvedTy::usize())
                             } else {
-                                return Err(SemanticError::UnknownSuffix);
+                                return Err(make_semantic_err!(UnknownSuffix));
                             }
                         }
                         None => self.intern_type(ResolvedTy::integer()),
@@ -2409,10 +2411,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         if expr.suffix.is_none() {
                             self.intern_type(ResolvedTy::ref_str())
                         } else {
-                            return Err(SemanticError::UnknownSuffix);
+                            return Err(make_semantic_err!(UnknownSuffix));
                         }
                     }
-                    _ => return Err(SemanticError::Unimplemented),
+                    _ => return Err(make_semantic_err!(Unimplemented)),
                 },
                 category: ExprCategory::Not,
                 int_flow: InterruptControlFlow::Not,
@@ -2448,7 +2450,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow,
                     }))
                 } else {
-                    Err(SemanticError::IncompatibleCast)
+                    Err(make_semantic_err!(IncompatibleCast))
                 }
             }
             None => Ok(None),
@@ -2456,7 +2458,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     }
 
     fn visit_let_expr(&mut self, _: &'ast crate::ast::expr::LetExpr) -> Self::ExprRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_if_expr(&mut self, IfExpr(condition, take, els): &'ast IfExpr) -> Self::ExprRes {
@@ -2474,7 +2476,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 let con_ty = self.get_type_by_id(con_res.type_id);
                 if con_ty != ResolvedTy::bool() {
-                    return Err(SemanticError::TypeMismatch);
+                    return Err(make_semantic_err!(TypeMismatch));
                 }
 
                 if let Some(els_res) = els_res {
@@ -2491,7 +2493,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 {
                     Ok(Some(Self::unit_expr_result_int_specified(con_res.int_flow)))
                 } else {
-                    Err(SemanticError::TypeMismatch)
+                    Err(make_semantic_err!(TypeMismatch))
                 }
             }
             (None, None) => Ok(None),
@@ -2509,13 +2511,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 let con_ty = self.get_type_by_id(con_res.type_id);
                 if con_ty != ResolvedTy::bool() {
-                    return Err(SemanticError::TypeMismatch);
+                    return Err(make_semantic_err!(TypeMismatch));
                 }
 
                 let body_int_flow = match body_res {
                     StmtResult::Expr(expr_result) => {
                         if expr_result.type_id != Self::unit_type() {
-                            return Err(SemanticError::TypeMismatch);
+                            return Err(make_semantic_err!(TypeMismatch));
                         }
                         expr_result.int_flow
                     }
@@ -2534,7 +2536,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     }
 
     fn visit_for_loop_expr(&mut self, _: &'ast crate::ast::expr::ForLoopExpr) -> Self::ExprRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_loop_expr(&mut self, LoopExpr(block): &'ast LoopExpr) -> Self::ExprRes {
@@ -2546,13 +2548,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     .as_expr()
                     .is_some_and(|x| x.type_id != Self::unit_type())
                 {
-                    return Err(SemanticError::TypeMismatch);
+                    return Err(make_semantic_err!(TypeMismatch));
                 }
 
                 let int_flow = match res {
                     StmtResult::Expr(expr_result) => {
                         if expr_result.type_id != Self::unit_type() {
-                            return Err(SemanticError::TypeMismatch);
+                            return Err(make_semantic_err!(TypeMismatch));
                         }
                         expr_result.int_flow
                     }
@@ -2583,7 +2585,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     }
 
     fn visit_match_expr(&mut self, _: &'ast crate::ast::expr::MatchExpr) -> Self::ExprRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_block_expr(&mut self, expr: &'ast crate::ast::expr::BlockExpr) -> Self::ExprRes {
@@ -2610,9 +2612,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             (Some(left_res), Some(right_res)) => {
                 match left_res.category {
                     ExprCategory::Place(Mutability::Not) => {
-                        return Err(SemanticError::ImmutableVar);
+                        return Err(make_semantic_err!(ImmutableVar));
                     }
-                    ExprCategory::Not => return Err(SemanticError::NonAssigneeExpr),
+                    ExprCategory::Not => return Err(make_semantic_err!(NonAssigneeExpr)),
                     ExprCategory::Only | ExprCategory::Place(Mutability::Mut) => {}
                 }
                 no_assignee!(right_res.category);
@@ -2620,7 +2622,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let left_ty = self.get_type_by_id(left_res.type_id);
                 let right_ty = self.get_type_by_id(right_res.type_id);
                 if !right_ty.can_trans_to_target_type(&left_ty) {
-                    return Err(SemanticError::TypeMismatch);
+                    return Err(make_semantic_err!(TypeMismatch));
                 }
 
                 Ok(Some(Self::unit_expr_result_int_specified(
@@ -2643,10 +2645,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             (Some(left_res), Some(right_res)) => {
                 match left_res.category {
                     ExprCategory::Place(Mutability::Not) => {
-                        return Err(SemanticError::ImmutableVar);
+                        return Err(make_semantic_err!(ImmutableVar));
                     }
                     ExprCategory::Only | ExprCategory::Not => {
-                        return Err(SemanticError::NonPlaceExpr);
+                        return Err(make_semantic_err!(NonPlaceExpr));
                     }
                     ExprCategory::Place(Mutability::Mut) => {}
                 }
@@ -2723,7 +2725,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         right_res.int_flow.concat(left_res.int_flow),
                     )))
                 } else {
-                    Err(SemanticError::Unimplemented)
+                    Err(make_semantic_err!(Unimplemented))
                 }
             }
         }
@@ -2759,14 +2761,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let res1_mut = match res1.category {
                     ExprCategory::Place(mutability) => mutability,
                     ExprCategory::Not => Mutability::Mut,
-                    ExprCategory::Only => return Err(SemanticError::AssigneeOnlyExpr),
+                    ExprCategory::Only => return Err(make_semantic_err!(AssigneeOnlyExpr)),
                 };
                 no_assignee!(res2.category);
                 let (ty1, level) = self.get_type_by_id(res1.type_id).deref_all();
                 let ty2 = self.get_type_by_id(res2.type_id);
 
                 if !ty2.can_trans_to_target_type(&ResolvedTy::usize()) {
-                    return Err(SemanticError::TypeMismatch);
+                    return Err(make_semantic_err!(TypeMismatch));
                 }
 
                 if let ResolvedTy::Array(ele_ty, _) | ResolvedTy::Slice(ele_ty) = ty1 {
@@ -2779,7 +2781,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow: res1.int_flow.concat(res2.int_flow),
                     }))
                 } else {
-                    Err(SemanticError::TypeMismatch)
+                    Err(make_semantic_err!(TypeMismatch))
                 }
             }
             (None, None) => Ok(None),
@@ -2788,7 +2790,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     }
 
     fn visit_range_expr(&mut self, _: &'ast crate::ast::expr::RangeExpr) -> Self::ExprRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_underscore_expr(
@@ -2922,7 +2924,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         (None, None) => {}
                         (None, Some(exist)) => {
                             if *exist != Self::unit_type() {
-                                return Err(SemanticError::TypeMismatch);
+                                return Err(make_semantic_err!(TypeMismatch));
                             }
                         }
                         (Some(new), None) => {
@@ -2934,13 +2936,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             no_assignee!(new.category);
                             int_flow = new.int_flow;
                             if new.type_id != *exist {
-                                return Err(SemanticError::TypeMismatch);
+                                return Err(make_semantic_err!(TypeMismatch));
                             }
                         }
                     },
                     ScopeKind::CycleExceptLoop => {
                         if expr.0.is_some() {
-                            return Err(SemanticError::BreakWithValue);
+                            return Err(make_semantic_err!(BreakWithValue));
                         }
                     }
                     _ => panic!("Impossible"),
@@ -2985,7 +2987,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let target_ty = self.get_type_by_id(*target_id);
 
                 if !ret_ty.can_trans_to_target_type(&target_ty) {
-                    Err(SemanticError::TypeMismatch)
+                    Err(make_semantic_err!(TypeMismatch))
                 } else {
                     Ok(Some(Self::never_expr_result_int_specified(
                         res.int_flow.concat(InterruptControlFlow::Return),
@@ -3006,7 +3008,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         }: &'ast StructExpr,
     ) -> Self::ExprRes {
         if !matches!(rest, StructRest::None) {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         };
 
         let exp_fields = fields
@@ -3050,18 +3052,18 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                         for x in exp_fields.into_iter() {
                             if dic.insert(x.0, x.1).is_some() {
-                                return Err(SemanticError::MultiSpecifiedField);
+                                return Err(make_semantic_err!(MultiSpecifiedField));
                             }
                         }
 
                         for (field_ident, field_type_id) in fields {
                             let Some(res) = dic.get(field_ident) else {
-                                return Err(SemanticError::MissingField);
+                                return Err(make_semantic_err!(MissingField));
                             };
                             let res_ty = self.get_type_by_id(res.type_id);
                             let field_ty = self.get_type_by_id(*field_type_id);
                             if !res_ty.can_trans_to_target_type(&field_ty) {
-                                return Err(SemanticError::TypeMismatch);
+                                return Err(make_semantic_err!(TypeMismatch));
                             }
                         }
 
@@ -3078,7 +3080,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     | TypeKind::Trait {
                         methods: _,
                         constants: _,
-                    } => Err(SemanticError::NotStructType),
+                    } => Err(make_semantic_err!(NotStructType)),
                 }
             }
         }
@@ -3124,7 +3126,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         expected_ty: TypeId,
     ) -> Self::PatRes {
         if guarder.is_some() {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         }
 
         let (target_ty, mutbl) = match mode.0 {
@@ -3148,7 +3150,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         _pat: &'ast crate::ast::pat::StructPat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_or_pat(
@@ -3156,7 +3158,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         _pat: &'ast crate::ast::pat::OrPat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_path_pat(
@@ -3168,7 +3170,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             && let ValueContainer::Variable(var) = var
             && var.kind.is_constant()
         {
-            return Err(SemanticError::Unimplemented);
+            return Err(make_semantic_err!(Unimplemented));
         }
 
         let new_pat = IdentPat(
@@ -3185,7 +3187,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         _pat: &'ast crate::ast::pat::TuplePat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_ref_pat(
@@ -3200,10 +3202,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 if mutbl == mutability {
                     self.visit_pat(pat, self.intern_type(resolved_ty.as_ref().clone()))
                 } else {
-                    Err(SemanticError::PatMismatch)
+                    Err(make_semantic_err!(PatMismatch))
                 }
             }
-            _ => Err(SemanticError::PatMismatch),
+            _ => Err(make_semantic_err!(PatMismatch)),
         }
     }
 
@@ -3220,7 +3222,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         _pat: &'ast crate::ast::pat::RangePat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_slice_pat(
@@ -3228,7 +3230,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         _pat: &'ast crate::ast::pat::SlicePat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 
     fn visit_rest_pat(
@@ -3236,6 +3238,6 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         _pat: &'ast crate::ast::pat::RestPat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
-        Err(SemanticError::Unimplemented)
+        Err(make_semantic_err!(Unimplemented))
     }
 }

@@ -12,6 +12,7 @@ impl SemanticAnalyzer {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn has_copy_trait(&self, ty: &ResolvedTy) -> bool {
         if ty.is_number_type() || *ty == ResolvedTy::char() || *ty == ResolvedTy::bool() {
             return true;
