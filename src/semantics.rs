@@ -974,7 +974,7 @@ impl SemanticAnalyzer {
         expr: &Expr,
     ) -> Result<ConstEvalValue, SemanticError> {
         match ConstEvaler::eval(self, expr) {
-            Ok(x) => x.cast(&ty),
+            Ok(x) => x.cast(&ty, false),
             Err(err) => Err(err),
         }
         .map_err(|x| x.into())

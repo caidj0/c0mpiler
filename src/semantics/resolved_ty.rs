@@ -39,7 +39,7 @@ impl ResolvedTy {
     }
 
     pub fn signed_integer() -> Self {
-        Self::BuiltIn(Symbol("integer".to_string()), Vec::new())
+        Self::BuiltIn(Symbol("signed_integer".to_string()), Vec::new())
     }
 
     pub fn i32() -> Self {

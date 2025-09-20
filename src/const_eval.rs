@@ -59,7 +59,7 @@ impl ConstEvalValue {
         matches!(self, Self::I32(_) | Self::ISize(_) | Self::SignedInteger(_))
     }
 
-    pub fn cast(self, ty: &ResolvedTy) -> Result<Self, ConstEvalError> {
+    pub fn cast(self, ty: &ResolvedTy, explicit: bool) -> Result<Self, ConstEvalError> {
         fn cast_to_integer<T>(num: T, ty: &ResolvedTy) -> Result<ConstEvalValue, ConstEvalError>
         where
             T: TryInto<u32> + TryInto<i32>,
@@ -88,6 +88,18 @@ impl ConstEvalValue {
             })
         }
 
+        if Into::<ResolvedTy>::into(&self) == *ty {
+            return Ok(self);
+        }
+
+        if !(explicit
+            || self.is_integer()
+            || (self.is_signed_integer() && ty.is_signed_number_type())
+            || self.is_array())
+        {
+            return Err(make_const_eval_error!(TypeMisMatch));
+        }
+
         match self {
             ConstEvalValue::U32(u32)
             | ConstEvalValue::USize(u32)
@@ -108,7 +120,7 @@ impl ConstEvalValue {
 
                 let elms = values
                     .into_iter()
-                    .map(|x| x.cast(elm_ty))
+                    .map(|x| x.cast(elm_ty, explicit))
                     .collect::<Result<Vec<ConstEvalValue>, ConstEvalError>>()?;
 
                 Ok(ConstEvalValue::Array(elms))
@@ -274,7 +286,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
 
         let values = values
             .into_iter()
-            .map(|x| x.cast(&ut_ty))
+            .map(|x| x.cast(&ut_ty, false))
             .collect::<Result<Vec<_>, ConstEvalError>>()?;
 
         Ok(ConstEvalValue::Array(values))
@@ -330,7 +342,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         } else if value1.is_number() && value2.is_number() {
             match binop {
                 BinOp::Shl | BinOp::Shr => {
-                    let value2 = value2.cast(&ResolvedTy::u32())?.into_u32().unwrap();
+                    let value2 = value2.cast(&ResolvedTy::u32(), true)?.into_u32().unwrap();
 
                     macro_rules! number_operation {
                         ($value1:expr, $value2:expr, [$($num_ty:ident),*]) => {
@@ -361,8 +373,8 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                     let ty = ResolvedTy::utilize(vec![(&value1).into(), (&value2).into()])
                         .ok_or(make_const_eval_error!(NotSupportedBinary))?;
 
-                    let value1 = value1.cast(&ty).unwrap();
-                    let value2 = value2.cast(&ty).unwrap();
+                    let value1 = value1.cast(&ty, false).unwrap();
+                    let value2 = value2.cast(&ty, false).unwrap();
 
                     macro_rules! number_operation {
                         ($value1:expr, $value2: expr, [$($num_ty:ident),*]) => {
@@ -457,7 +469,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         let cast_ty = self.analyzer.resolve_ty(cast_ty)?;
 
         let expr_res = self.visit_expr(expr)?;
-        expr_res.cast(&cast_ty)
+        expr_res.cast(&cast_ty, true)
     }
 
     fn visit_let_expr(&mut self, _expr: &'ast crate::ast::expr::LetExpr) -> Self::ExprRes {
@@ -654,7 +666,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                         return Err(make_semantic_error!(MissingField).into());
                     };
                     let field_ty = self.analyzer.get_type_by_id(*field_type_id);
-                    dic.insert(s, res.cast(&field_ty)?);
+                    dic.insert(s, res.cast(&field_ty, false)?);
                 }
 
                 Ok(ConstEvalValue::Struct(
