@@ -1,7 +1,7 @@
 use crate::{
     ast::expr::{LitExpr, LitKind},
     const_eval::{ConstEvalError, ConstEvalValue},
-    make_const_eval_err,
+    make_const_eval_error,
 };
 
 impl LitExpr {
@@ -21,18 +21,18 @@ impl LitExpr {
                 };
 
                 if digits.is_empty() {
-                    return Err(make_const_eval_err!(InvalidDigit));
+                    return Err(make_const_eval_error!(InvalidDigit));
                 }
 
                 let mut value: u32 = 0;
                 for ch in digits.chars() {
                     let digit = ch
                         .to_digit(radix)
-                        .ok_or(make_const_eval_err!(InvalidDigit))?;
+                        .ok_or(make_const_eval_error!(InvalidDigit))?;
                     value = value
                         .checked_mul(radix)
                         .and_then(|v| v.checked_add(digit))
-                        .ok_or(make_const_eval_err!(Overflow))?;
+                        .ok_or(make_const_eval_error!(Overflow))?;
                 } // 此处不会出现负数
 
                 match &self.suffix {
@@ -42,19 +42,19 @@ impl LitExpr {
                         "i32" => Ok(ConstEvalValue::I32(
                             value
                                 .try_into()
-                                .map_err(|_| make_const_eval_err!(Overflow))?,
+                                .map_err(|_| make_const_eval_error!(Overflow))?,
                         )),
                         "isize" => Ok(ConstEvalValue::ISize(
                             value
                                 .try_into()
-                                .map_err(|_| make_const_eval_err!(Overflow))?,
+                                .map_err(|_| make_const_eval_error!(Overflow))?,
                         )),
-                        _ => Err(make_const_eval_err!(IncorrectSuffix)),
+                        _ => Err(make_const_eval_error!(IncorrectSuffix)),
                     },
                     None => Ok(ConstEvalValue::Integer(value)),
                 }
             }
-            _ => Err(make_const_eval_err!(TypeMisMatch)),
+            _ => Err(make_const_eval_error!(TypeMisMatch)),
         }
     }
 }
@@ -72,7 +72,7 @@ impl TryInto<ConstEvalValue> for &LitExpr {
             }
 
             LitKind::Byte | LitKind::Float | LitKind::ByteStr | LitKind::ByteStrRaw(_) => {
-                Err(make_const_eval_err!(NotSupportedExpr))
+                Err(make_const_eval_error!(NotSupportedExpr))
             }
         }
     }
@@ -90,7 +90,7 @@ impl TryInto<bool> for &LitExpr {
                     Ok(false)
                 }
             }
-            _ => Err(make_const_eval_err!(TypeMisMatch)),
+            _ => Err(make_const_eval_error!(TypeMisMatch)),
         }
     }
 }
@@ -101,7 +101,7 @@ impl TryInto<char> for &LitExpr {
     fn try_into(self) -> Result<char, Self::Error> {
         match self.kind {
             LitKind::Char => Ok(self.symbol.chars().next().unwrap()),
-            _ => Err(make_const_eval_err!(TypeMisMatch)),
+            _ => Err(make_const_eval_error!(TypeMisMatch)),
         }
     }
 }
@@ -114,7 +114,7 @@ impl TryInto<String> for &LitExpr {
             LitKind::Str | LitKind::StrRaw(_) | LitKind::CStr | LitKind::CStrRaw(_) => {
                 Ok(self.symbol.clone())
             }
-            _ => Err(make_const_eval_err!(TypeMisMatch)),
+            _ => Err(make_const_eval_error!(TypeMisMatch)),
         }
     }
 }

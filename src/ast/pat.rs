@@ -1,7 +1,7 @@
 use crate::{
     ast::{
-        ASTError, ASTResult, BindingMode, Eatable, Ident, Mutability, NodeId, OptionEatable, Span,
-        Symbol,
+        ASTResult, BindingMode, Eatable, Ident, Mutability, NodeId, OptionEatable, Span, Symbol,
+        SyntaxError,
         expr::{Expr, ExprKind, LitExpr, PathExpr, UnaryExpr},
         path::{Path, PathSegment, QSelf},
         ty::{MutTy, RefTy, Ty},
@@ -271,8 +271,8 @@ impl Eatable for PatField {
 
         let pat = Pat::eat(iter)?;
 
-        let err = ASTError {
-            kind: crate::ast::ASTErrorKind::MisMatchPat,
+        let err = SyntaxError {
+            kind: crate::ast::SyntaxErrorKind::MisMatchPat,
             pos: iter.peek()?.pos,
         };
 
@@ -406,8 +406,8 @@ impl Eatable for RangePat {
                 ..
             } => RangeEnd::Included,
             t => {
-                return Err(ASTError {
-                    kind: crate::ast::ASTErrorKind::MisMatch {
+                return Err(SyntaxError {
+                    kind: crate::ast::SyntaxErrorKind::MisMatch {
                         expected: "Comma".to_owned(),
                         actual: format!("{:?}", t.token_type.clone()),
                     },

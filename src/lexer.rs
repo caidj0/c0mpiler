@@ -3,7 +3,7 @@ use std::fmt::Display;
 use fancy_regex::Regex;
 
 use crate::{
-    ast::{ASTError, ASTResult, NodeId},
+    ast::{ASTResult, NodeId, SyntaxError},
     tokens::{TokenType, get_all_tokens},
 };
 
@@ -186,8 +186,8 @@ impl<'a> TokenIter<'a> {
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> ASTResult<&'a Token<'a>> {
         if self.pos >= self.buffer.len() {
-            return Err(ASTError {
-                kind: crate::ast::ASTErrorKind::EOF,
+            return Err(SyntaxError {
+                kind: crate::ast::SyntaxErrorKind::EOF,
                 pos: self.get_last_pos(),
             });
         }
@@ -199,8 +199,8 @@ impl<'a> TokenIter<'a> {
 
     pub fn peek(&self) -> ASTResult<&'a Token<'a>> {
         if self.pos >= self.buffer.len() {
-            return Err(ASTError {
-                kind: crate::ast::ASTErrorKind::EOF,
+            return Err(SyntaxError {
+                kind: crate::ast::SyntaxErrorKind::EOF,
                 pos: self.get_last_pos(),
             });
         }

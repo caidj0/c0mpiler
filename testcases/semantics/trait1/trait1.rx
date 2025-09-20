@@ -1,0 +1,22 @@
+struct A;
+
+trait Trait {
+    fn foo() -> Self;
+
+    fn goo(&self) -> &Self {
+        self
+    }
+}
+
+impl Trait for A {
+    fn foo() -> Self {
+        A
+    }
+}
+
+fn main() {
+    let a: A = A::foo();
+    let b: &A = a.goo();
+
+    exit(0);
+}

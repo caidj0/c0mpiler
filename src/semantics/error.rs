@@ -64,7 +64,7 @@ pub enum SemanticErrorKind {
 }
 
 #[macro_export]
-macro_rules! make_semantic_err {
+macro_rules! make_semantic_error {
     ($kind:ident $($tail:tt)*) => {
         $crate::semantics::error::SemanticError {
             kind: $crate::semantics::error::SemanticErrorKind::$kind $($tail)*,
@@ -132,7 +132,7 @@ pub enum ConstEvalErrorKind {
 }
 
 #[macro_export]
-macro_rules! make_const_eval_err {
+macro_rules! make_const_eval_error {
     ($kind:ident $($tail:tt)*) => {
         $crate::semantics::error::ConstEvalError {
             kind: $crate::semantics::error::ConstEvalErrorKind::$kind $($tail)*,

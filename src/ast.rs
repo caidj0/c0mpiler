@@ -54,15 +54,15 @@ pub trait OptionEatable: Sized {
 }
 
 #[derive(Debug)]
-pub struct ASTError {
-    pub kind: ASTErrorKind,
+pub struct SyntaxError {
+    pub kind: SyntaxErrorKind,
     pub pos: TokenPosition,
 }
 
-impl ASTError {
-    pub fn select(self, right: ASTError) -> ASTError {
-        if (matches!(self.kind, ASTErrorKind::Empty) || self.pos < right.pos)
-            && !matches!(right.kind, ASTErrorKind::Empty)
+impl SyntaxError {
+    pub fn select(self, right: SyntaxError) -> SyntaxError {
+        if (matches!(self.kind, SyntaxErrorKind::Empty) || self.pos < right.pos)
+            && !matches!(right.kind, SyntaxErrorKind::Empty)
         {
             right
         } else {
@@ -71,17 +71,17 @@ impl ASTError {
     }
 }
 
-impl Default for ASTError {
+impl Default for SyntaxError {
     fn default() -> Self {
         Self {
-            kind: ASTErrorKind::Empty,
+            kind: SyntaxErrorKind::Empty,
             pos: TokenPosition { line: 0, col: 0 },
         }
     }
 }
 
 #[derive(Debug)]
-pub enum ASTErrorKind {
+pub enum SyntaxErrorKind {
     Empty,
     EOF,
     MisMatch { expected: String, actual: String },
@@ -90,7 +90,17 @@ pub enum ASTErrorKind {
     MissingSemi,
 }
 
-pub type ASTResult<T> = Result<T, ASTError>;
+pub type ASTResult<T> = Result<T, SyntaxError>;
+
+#[macro_export]
+macro_rules! make_syntax_error {
+    ($token:expr, $kind:ident $($t:tt)*) => {
+        $crate::ast::SyntaxError {
+            kind: $crate::ast::SyntaxErrorKind::$kind $($t)*,
+            pos: $token.pos.clone(),
+        }
+    };
+}
 
 #[macro_export]
 macro_rules! match_keyword {
@@ -100,13 +110,13 @@ macro_rules! match_keyword {
         if token.token_type == $e {
             $iter.advance();
         } else {
-            return Err($crate::ast::ASTError {
-                kind: $crate::ast::ASTErrorKind::MisMatch {
+            return Err($crate::make_syntax_error!(
+                token,
+                MisMatch {
                     expected: stringify!($e).to_owned(),
                     actual: format!("{:?}", token),
-                },
-                pos: token.pos.clone(),
-            });
+                }
+            ));
         }
     }};
 }
@@ -117,13 +127,13 @@ macro_rules! peek_keyword {
         let token = $iter.peek()?;
 
         if token.token_type != $e {
-            return Err($crate::ast::ASTError {
-                kind: $crate::ast::ASTErrorKind::MisMatch {
+            return Err($crate::make_syntax_error!(
+                token,
+                MisMatch {
                     expected: stringify!($e).to_owned(),
                     actual: format!("{:?}", token),
-                },
-                pos: token.pos.clone(),
-            });
+                }
+            ));
         }
     }};
 }
@@ -162,13 +172,14 @@ macro_rules! skip_keyword_or_break {
         } else if token.token_type == $fi {
             break;
         } else {
-            return Err($crate::ast::ASTError {
-                kind: $crate::ast::ASTErrorKind::MisMatch {
+            return Err($crate::make_syntax_error!(
+                token,
+                MisMatch {
                     expected: stringify!($e $fi).to_owned(),
                     actual: format!("{:?}", token),
-                },
-                pos: token.pos.clone(),
-            });
+                }
+            )
+        );
         }
     };
 }
@@ -204,7 +215,7 @@ macro_rules! loop_while {
 macro_rules! kind_check {
     ($iter:ident, $enum_name:ident, $suffix:ident, ($($member:ident),*)) => {
         {
-            let mut kind = Err($crate::ast::ASTError::default());
+            let mut kind = Err($crate::ast::SyntaxError::default());
 
             paste::paste!{
                 $(
@@ -333,7 +344,7 @@ impl From<Ident> for Path {
 }
 
 impl<'a> TryInto<Ident> for &Token<'a> {
-    type Error = ASTError;
+    type Error = SyntaxError;
 
     fn try_into(self) -> Result<Ident, Self::Error> {
         match self.token_type {
@@ -357,8 +368,8 @@ impl<'a> TryInto<Ident> for &Token<'a> {
                     },
                 },
             }),
-            _ => Err(ASTError {
-                kind: ASTErrorKind::MisMatch {
+            _ => Err(SyntaxError {
+                kind: SyntaxErrorKind::MisMatch {
                     expected: r#"Identifier, "self" or "Self""#.to_owned(),
                     actual: format!("{self:?}"),
                 },

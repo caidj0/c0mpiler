@@ -13,7 +13,7 @@ use crate::{
         },
         item::ConstItem,
     },
-    make_const_eval_err, make_semantic_err,
+    make_const_eval_error, make_semantic_error,
     semantics::{
         AnalyzerState, SemanticAnalyzer,
         error::ConstEvalError,
@@ -68,7 +68,7 @@ impl ConstEvalValue {
             where
                 T: TryInto<S>,
             {
-                num.try_into().map_err(|_| make_const_eval_err!(Overflow))
+                num.try_into().map_err(|_| make_const_eval_error!(Overflow))
             }
 
             Ok(if *ty == ResolvedTy::u32() {
@@ -84,7 +84,7 @@ impl ConstEvalValue {
             } else if *ty == ResolvedTy::integer() {
                 ConstEvalValue::Integer(try_into(num)?)
             } else {
-                return Err(make_const_eval_err!(NotSupportedCast));
+                return Err(make_const_eval_error!(NotSupportedCast));
             })
         }
 
@@ -99,11 +99,11 @@ impl ConstEvalValue {
             ConstEvalValue::Char(c) => cast_to_integer(c as u32, ty),
             ConstEvalValue::Array(values) => {
                 let ResolvedTy::Array(elm_ty, size) = ty else {
-                    return Err(make_const_eval_err!(TypeMisMatch));
+                    return Err(make_const_eval_error!(TypeMisMatch));
                 };
 
                 if values.len() != *size as usize {
-                    return Err(make_const_eval_err!(TypeMisMatch));
+                    return Err(make_const_eval_error!(TypeMisMatch));
                 }
 
                 let elms = values
@@ -121,7 +121,7 @@ impl ConstEvalValue {
                 if Into::<ResolvedTy>::into(&self) == *ty {
                     Ok(self)
                 } else {
-                    Err(make_const_eval_err!(NotSupportedCast))
+                    Err(make_const_eval_error!(NotSupportedCast))
                 }
             }
             ConstEvalValue::UnEvaled(..) => panic!("Impossible!"),
@@ -179,54 +179,54 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     type StmtRes = Self::DefaultRes;
 
     fn visit_crate(&mut self, _krate: &'ast crate::ast::Crate) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_item(&mut self, _item: &'ast crate::ast::item::Item) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_associate_item(
         &mut self,
         _item: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
     ) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_const_item(&mut self, _item: &'ast crate::ast::item::ConstItem) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_fn_item(&mut self, _item: &'ast crate::ast::item::FnItem) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_mod_item(&mut self, _item: &'ast crate::ast::item::ModItem) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_enum_item(&mut self, _item: &'ast crate::ast::item::EnumItem) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_struct_item(&mut self, _item: &'ast crate::ast::item::StructItem) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_trait_item(&mut self, _item: &'ast crate::ast::item::TraitItem) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_impl_item(&mut self, _item: &'ast crate::ast::item::ImplItem) -> Self::DefaultRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_stmt(&mut self, _stmt: &'ast crate::ast::stmt::Stmt) -> Self::StmtRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_let_stmt(&mut self, _stmt: &'ast crate::ast::stmt::LocalStmt) -> Self::StmtRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_expr(&mut self, expr: &'ast crate::ast::expr::Expr) -> Self::ExprRes {
@@ -270,7 +270,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
             .collect::<Result<Vec<_>, ConstEvalError>>()?;
 
         let tys = values.iter().map(|x| x.into()).collect::<Vec<ResolvedTy>>();
-        let ut_ty = ResolvedTy::utilize(tys).ok_or(make_const_eval_err!(TypeMisMatch))?;
+        let ut_ty = ResolvedTy::utilize(tys).ok_or(make_const_eval_error!(TypeMisMatch))?;
 
         let values = values
             .into_iter()
@@ -284,24 +284,24 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         &mut self,
         _expr: &'ast crate::ast::expr::ConstBlockExpr,
     ) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_call_expr(&mut self, _expr: &'ast crate::ast::expr::CallExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_method_call_expr(
         &mut self,
         _expr: &'ast crate::ast::expr::MethodCallExpr,
     ) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_tup_expr(&mut self, TupExpr(exprs): &'ast TupExpr) -> Self::ExprRes {
         match &exprs[..] {
             [expr] => self.visit_expr(expr),
-            _ => Err(make_const_eval_err!(NotSupportedExpr)),
+            _ => Err(make_const_eval_error!(NotSupportedExpr)),
         }
     }
 
@@ -325,7 +325,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                 BinOp::Ne => value1 != value2,
                 BinOp::Ge => value1 >= value2,
                 BinOp::Gt => value1 > value2,
-                _ => return Err(make_const_eval_err!(NotSupportedBinary)),
+                _ => return Err(make_const_eval_error!(NotSupportedBinary)),
             }))
         } else if value1.is_number() && value2.is_number() {
             match binop {
@@ -338,12 +338,12 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                                 $(
                                     ConstEvalValue::$num_ty(value1) => Ok(match binop {
                                         BinOp::Shl => ConstEvalValue::$num_ty(
-                                            value1.checked_shl(value2).ok_or(make_const_eval_err!(Overflow))?,
+                                            value1.checked_shl(value2).ok_or(make_const_eval_error!(Overflow))?,
                                         ),
                                         BinOp::Shr => ConstEvalValue::$num_ty(
-                                            value1.checked_shr(value2).ok_or(make_const_eval_err!(Overflow))?,
+                                            value1.checked_shr(value2).ok_or(make_const_eval_error!(Overflow))?,
                                         ),
-                                        _ => return Err(make_const_eval_err!(NotSupportedBinary)),
+                                        _ => return Err(make_const_eval_error!(NotSupportedBinary)),
                                     }),
                                 )*
                                 _ => panic!("Impossible!"),
@@ -359,7 +359,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                 }
                 _ => {
                     let ty = ResolvedTy::utilize(vec![(&value1).into(), (&value2).into()])
-                        .ok_or(make_const_eval_err!(NotSupportedBinary))?;
+                        .ok_or(make_const_eval_error!(NotSupportedBinary))?;
 
                     let value1 = value1.cast(&ty).unwrap();
                     let value2 = value2.cast(&ty).unwrap();
@@ -379,21 +379,21 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                                         BinOp::Ge => ConstEvalValue::Bool(value1 >= value2),
                                         BinOp::Gt => ConstEvalValue::Bool(value1 > value2),
                                         BinOp::Add => ConstEvalValue::$num_ty(
-                                            value1.checked_add(value2).ok_or(make_const_eval_err!(Overflow))?,
+                                            value1.checked_add(value2).ok_or(make_const_eval_error!(Overflow))?,
                                         ),
                                         BinOp::Sub => ConstEvalValue::$num_ty(
-                                            value1.checked_sub(value2).ok_or(make_const_eval_err!(Overflow))?,
+                                            value1.checked_sub(value2).ok_or(make_const_eval_error!(Overflow))?,
                                         ),
                                         BinOp::Mul => ConstEvalValue::$num_ty(
-                                            value1.checked_mul(value2).ok_or(make_const_eval_err!(Overflow))?,
+                                            value1.checked_mul(value2).ok_or(make_const_eval_error!(Overflow))?,
                                         ),
                                         BinOp::Div => ConstEvalValue::$num_ty(
-                                            value1.checked_div(value2).ok_or(make_const_eval_err!(Overflow))?,
+                                            value1.checked_div(value2).ok_or(make_const_eval_error!(Overflow))?,
                                         ),
                                         BinOp::Rem => ConstEvalValue::$num_ty(
-                                            value1.checked_rem(value2).ok_or(make_const_eval_err!(Overflow))?,
+                                            value1.checked_rem(value2).ok_or(make_const_eval_error!(Overflow))?,
                                         ),
-                                        _ => return Err(make_const_eval_err!(NotSupportedBinary)),
+                                        _ => return Err(make_const_eval_error!(NotSupportedBinary)),
                                     }),
                                 )*
                                 _ => panic!("Impossible!"),
@@ -409,7 +409,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                 }
             }
         } else {
-            Err(make_const_eval_err!(NotSupportedBinary))
+            Err(make_const_eval_error!(NotSupportedBinary))
         }
     }
 
@@ -417,7 +417,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         let value = self.visit_expr(expr)?;
 
         match unop {
-            UnOp::Deref => Err(make_const_eval_err!(NotSupportedExpr)),
+            UnOp::Deref => Err(make_const_eval_error!(NotSupportedExpr)),
             UnOp::Not => match value {
                 ConstEvalValue::U32(v) => Ok(ConstEvalValue::U32(!v)),
                 ConstEvalValue::I32(v) => Ok(ConstEvalValue::I32(!v)),
@@ -426,25 +426,25 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                 ConstEvalValue::Integer(v) => Ok(ConstEvalValue::Integer(!v)),
                 ConstEvalValue::SignedInteger(v) => Ok(ConstEvalValue::SignedInteger(!v)),
                 ConstEvalValue::Bool(v) => Ok(ConstEvalValue::Bool(!v)),
-                _ => Err(make_const_eval_err!(NotSupportedExpr)),
+                _ => Err(make_const_eval_error!(NotSupportedExpr)),
             },
             UnOp::Neg => match value {
                 ConstEvalValue::I32(v) => Ok(ConstEvalValue::I32(
-                    v.checked_neg().ok_or(make_const_eval_err!(Overflow))?,
+                    v.checked_neg().ok_or(make_const_eval_error!(Overflow))?,
                 )),
                 ConstEvalValue::ISize(v) => Ok(ConstEvalValue::ISize(
-                    v.checked_neg().ok_or(make_const_eval_err!(Overflow))?,
+                    v.checked_neg().ok_or(make_const_eval_error!(Overflow))?,
                 )),
                 ConstEvalValue::Integer(v) => Ok(ConstEvalValue::SignedInteger(
                     TryInto::<i32>::try_into(v)
-                        .map_err(|_| make_const_eval_err!(Overflow))?
+                        .map_err(|_| make_const_eval_error!(Overflow))?
                         .checked_neg()
-                        .ok_or(make_const_eval_err!(Overflow))?,
+                        .ok_or(make_const_eval_error!(Overflow))?,
                 )),
                 ConstEvalValue::SignedInteger(v) => Ok(ConstEvalValue::SignedInteger(
-                    v.checked_neg().ok_or(make_const_eval_err!(Overflow))?,
+                    v.checked_neg().ok_or(make_const_eval_error!(Overflow))?,
                 )),
-                _ => Err(make_const_eval_err!(NotSupportedExpr)),
+                _ => Err(make_const_eval_error!(NotSupportedExpr)),
             },
         }
     }
@@ -461,51 +461,51 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     }
 
     fn visit_let_expr(&mut self, _expr: &'ast crate::ast::expr::LetExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_if_expr(&mut self, _expr: &'ast crate::ast::expr::IfExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_while_expr(&mut self, _expr: &'ast crate::ast::expr::WhileExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_for_loop_expr(&mut self, _expr: &'ast crate::ast::expr::ForLoopExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_loop_expr(&mut self, _expr: &'ast crate::ast::expr::LoopExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_match_expr(&mut self, _expr: &'ast crate::ast::expr::MatchExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_block_expr(&mut self, _expr: &'ast crate::ast::expr::BlockExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_assign_expr(&mut self, _expr: &'ast crate::ast::expr::AssignExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_assign_op_expr(
         &mut self,
         _expr: &'ast crate::ast::expr::AssignOpExpr,
     ) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_field_expr(&mut self, FieldExpr(expr, ident): &'ast FieldExpr) -> Self::ExprRes {
         let ret = match self.visit_expr(expr)? {
             ConstEvalValue::Struct(_, mut hash_map) => match hash_map.remove(&ident.symbol) {
                 Some(value) => value,
-                None => return Err(make_const_eval_err!(NotStructField)),
+                None => return Err(make_const_eval_error!(NotStructField)),
             },
-            _ => return Err(make_const_eval_err!(NotAStruct)),
+            _ => return Err(make_const_eval_error!(NotAStruct)),
         };
         Ok(ret)
     }
@@ -516,29 +516,29 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
 
         let index = match index {
             ConstEvalValue::USize(index) | ConstEvalValue::Integer(index) => index,
-            _ => return Err(make_const_eval_err!(TypeMisMatch)),
+            _ => return Err(make_const_eval_error!(TypeMisMatch)),
         } as usize;
 
         let ConstEvalValue::Array(mut array) = array else {
-            return Err(make_const_eval_err!(TypeMisMatch));
+            return Err(make_const_eval_error!(TypeMisMatch));
         };
 
         if index >= array.len() {
-            return Err(make_const_eval_err!(OutOfBound));
+            return Err(make_const_eval_error!(OutOfBound));
         }
 
         Ok(array.remove(index))
     }
 
     fn visit_range_expr(&mut self, _expr: &'ast crate::ast::expr::RangeExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_underscore_expr(
         &mut self,
         _expr: &'ast crate::ast::expr::UnderscoreExpr,
     ) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_path_expr(&mut self, PathExpr(qself, path): &'ast PathExpr) -> Self::ExprRes {
@@ -548,7 +548,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         match value {
             ValueContainer::Variable(v) => match &v.kind {
                 VariableKind::Decl | VariableKind::Inited | VariableKind::Fn => {
-                    Err(make_const_eval_err!(NonConstVariable))
+                    Err(make_const_eval_error!(NonConstVariable))
                 }
                 VariableKind::Constant(const_eval_value) => match const_eval_value {
                     ConstEvalValue::UnEvaled(node_id, span, item_ptr) => {
@@ -586,11 +586,11 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                 Ok(constant.value.clone())
             }
             ValueContainer::ImplInfoItem(_, ImplInfoItem::Method(_)) => {
-                Err(make_const_eval_err!(NotSupportedExpr))
+                Err(make_const_eval_error!(NotSupportedExpr))
             }
             ValueContainer::Temp(variable) => match &variable.kind {
                 VariableKind::Decl | VariableKind::Inited | VariableKind::Fn => {
-                    Err(make_const_eval_err!(NonConstVariable))
+                    Err(make_const_eval_error!(NonConstVariable))
                 }
                 VariableKind::Constant(const_eval_value) => Ok(const_eval_value.clone()),
             },
@@ -598,22 +598,22 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     }
 
     fn visit_addr_of_expr(&mut self, _expr: &'ast crate::ast::expr::AddrOfExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_break_expr(&mut self, _expr: &'ast crate::ast::expr::BreakExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_continue_expr(
         &mut self,
         _expr: &'ast crate::ast::expr::ContinueExpr,
     ) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_ret_expr(&mut self, _expr: &'ast crate::ast::expr::RetExpr) -> Self::ExprRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_struct_expr(
@@ -626,7 +626,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         }: &'ast StructExpr,
     ) -> Self::ExprRes {
         if !matches!(rest, crate::ast::expr::StructRest::None) {
-            return Err(make_const_eval_err!(NotSupportedExpr));
+            return Err(make_const_eval_error!(NotSupportedExpr));
         };
 
         let exp_fields = fields
@@ -645,13 +645,13 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
 
                 for x in exp_fields.into_iter() {
                     if dic.insert(x.0, x.1).is_some() {
-                        return Err(make_semantic_err!(MultiSpecifiedField).into());
+                        return Err(make_semantic_error!(MultiSpecifiedField).into());
                     }
                 }
 
                 for (field_ident, field_type_id) in fields {
                     let Some((s, res)) = dic.remove_entry(field_ident) else {
-                        return Err(make_semantic_err!(MissingField).into());
+                        return Err(make_semantic_error!(MissingField).into());
                     };
                     let field_ty = self.analyzer.get_type_by_id(*field_type_id);
                     dic.insert(s, res.cast(&field_ty)?);
@@ -667,7 +667,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
             | TypeKind::Trait {
                 methods: _,
                 constants: _,
-            } => Err(make_const_eval_err!(NotStructType)),
+            } => Err(make_const_eval_error!(NotStructType)),
         }
     }
 
@@ -692,7 +692,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::WildPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_ident_pat(
@@ -700,7 +700,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::IdentPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_struct_pat(
@@ -708,7 +708,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::StructPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_or_pat(
@@ -716,7 +716,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::OrPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_path_pat(
@@ -724,7 +724,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::PathPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_tuple_pat(
@@ -732,7 +732,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::TuplePat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_ref_pat(
@@ -740,7 +740,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::RefPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_lit_pat(
@@ -748,7 +748,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::LitPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_range_pat(
@@ -756,7 +756,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::RangePat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_slice_pat(
@@ -764,7 +764,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::SlicePat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_rest_pat(
@@ -772,7 +772,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::RestPat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 
     fn visit_pat(
@@ -780,6 +780,6 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         _pat: &'ast crate::ast::pat::Pat,
         _expected_ty: crate::semantics::utils::TypeId,
     ) -> Self::PatRes {
-        Err(make_const_eval_err!(NotSupportedExpr))
+        Err(make_const_eval_error!(NotSupportedExpr))
     }
 }

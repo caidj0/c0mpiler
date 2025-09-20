@@ -156,10 +156,22 @@ impl ResolvedTy {
                 ResolvedTy::Tup(items) => {
                     ResolvedTy::Tup(items.iter().map(|x| x.expand_self(self_ty)).collect())
                 }
-                ResolvedTy::Fn(items, resolved_ty) => ResolvedTy::Fn(
-                    items.iter().map(|x| x.expand_self(self_ty)).collect(),
-                    Box::new(resolved_ty.expand_self(self_ty)),
-                ),
+                ResolvedTy::Fn(items, resolved_ty) => {
+                    // fn 的首个参数若为 self，则不展开首个参数
+                    let mut iter = items.iter();
+                    let first = iter.next().map(|x| {
+                        if x.is_implicit_self_or_ref_implicit_self() {
+                            x.clone()
+                        } else {
+                            x.expand_self(self_ty)
+                        }
+                    });
+                    let params = first
+                        .into_iter()
+                        .chain(iter.map(|x| x.expand_self(self_ty)))
+                        .collect();
+                    ResolvedTy::Fn(params, Box::new(resolved_ty.expand_self(self_ty)))
+                }
                 ResolvedTy::ImplicitSelf => self_ty.clone(),
                 _ => self.clone(),
             }

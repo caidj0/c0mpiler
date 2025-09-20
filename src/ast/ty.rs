@@ -1,6 +1,6 @@
 use crate::{
     ast::{
-        ASTError, ASTResult, Eatable, Mutability, NodeId, OptionEatable, Span,
+        ASTResult, Eatable, Mutability, NodeId, OptionEatable, Span, SyntaxError,
         expr::AnonConst,
         generic::GenericBounds,
         path::{Path, QSelf},
@@ -182,8 +182,8 @@ impl Eatable for TraitObjectTy {
         let has_dyn = is_keyword!(iter, TokenType::Dyn);
         let bounds = GenericBounds::eat(iter)?;
         if !has_dyn && bounds.0.len() == 1 {
-            return Err(ASTError {
-                kind: crate::ast::ASTErrorKind::MisMatch {
+            return Err(SyntaxError {
+                kind: crate::ast::SyntaxErrorKind::MisMatch {
                     expected: "dyn".to_owned(),
                     actual: format!("{:?}", t.token_type.clone()),
                 },

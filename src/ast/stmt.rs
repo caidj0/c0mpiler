@@ -27,7 +27,7 @@ impl Eatable for Stmt {
     fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
         let begin = iter.get_pos();
 
-        let mut kind = Err(crate::ast::ASTError::default());
+        let mut kind = Err(crate::ast::SyntaxError::default());
         kind = kind.or_else(|err| {
             LocalStmt::eat(iter)
                 .map(StmtKind::Let)

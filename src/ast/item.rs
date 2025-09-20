@@ -2,7 +2,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        ASTError, ASTErrorKind, ASTResult, Eatable, Ident, NodeId, OptionEatable, Span,
+        ASTResult, Eatable, Ident, NodeId, OptionEatable, Span, SyntaxError, SyntaxErrorKind,
         expr::{AnonConst, BlockExpr, Expr},
         generic::{GenericBounds, Generics},
         pat::Pat,
@@ -11,7 +11,7 @@ use crate::{
     },
     is_keyword, kind_check,
     lexer::{Token, TokenIter},
-    loop_until, match_keyword, match_prefix, skip_keyword_or_break,
+    loop_until, make_syntax_error, match_keyword, match_prefix, skip_keyword_or_break,
     tokens::TokenType,
 };
 
@@ -131,7 +131,10 @@ impl Eatable for FnDecl {
         let mut inputs = Vec::new();
 
         loop_until!(iter, TokenType::ClosePar, {
-            inputs.push(Param::eat(iter)?);
+            inputs.push(Param::eat_with_self_specified_impl(
+                iter,
+                inputs.is_empty(),
+            )?);
             skip_keyword_or_break!(iter, TokenType::Comma, TokenType::ClosePar);
         });
 
@@ -171,20 +174,29 @@ pub struct Param {
     pub span: Span,
 }
 
-impl Eatable for Param {
-    fn eat_impl(iter: &mut crate::lexer::TokenIter) -> ASTResult<Self> {
+impl Param {
+    fn eat_with_self_specified_impl(
+        iter: &mut TokenIter,
+        can_be_implicit_self: bool,
+    ) -> ASTResult<Self> {
         let begin = iter.get_pos();
 
         let pat = Pat::eat_no_alt(iter)?;
 
-        let (pat, ty) = if iter.peek()?.token_type != TokenType::Colon {
-            Pat::to_self_pat_ty(pat, iter).ok_or(ASTError {
-                kind: ASTErrorKind::MisMatch {
-                    expected: stringify!($e).to_owned(),
+        let token = iter.peek()?;
+        let (pat, ty) = if token.token_type != TokenType::Colon {
+            let err = make_syntax_error!(
+                token,
+                MisMatch {
+                    expected: stringify!(:).to_string(),
                     actual: format!("{:?}", iter.peek()?.token_type),
-                },
-                pos: iter.peek()?.pos,
-            })?
+                }
+            );
+            if can_be_implicit_self {
+                Pat::to_self_pat_ty(pat, iter).ok_or(err)?
+            } else {
+                return Err(err);
+            }
         } else {
             iter.advance();
             (pat, Ty::eat(iter)?)
@@ -199,6 +211,16 @@ impl Eatable for Param {
                 end: iter.get_pos(),
             },
         })
+    }
+
+    pub fn eat_with_self_specified(
+        iter: &mut TokenIter,
+        can_be_implicit_self: bool,
+    ) -> ASTResult<Self> {
+        let mut using_iter = iter.clone();
+        let res = Self::eat_with_self_specified_impl(&mut using_iter, can_be_implicit_self)?;
+        iter.update(using_iter);
+        Ok(res)
     }
 }
 
@@ -417,8 +439,8 @@ impl Eatable for ImplItem {
             if let TyKind::Path(path_ty) = self_ty.kind {
                 (Some(TraitRef { path: path_ty.1 }), Ty::eat(iter)?)
             } else {
-                return Err(crate::ast::ASTError {
-                    kind: crate::ast::ASTErrorKind::MisMatch {
+                return Err(crate::ast::SyntaxError {
+                    kind: crate::ast::SyntaxErrorKind::MisMatch {
                         expected: "Path type".to_owned(),
                         actual: format!("{self_ty:?}"),
                     },
@@ -508,8 +530,8 @@ impl Eatable for ModItem {
                 lexeme: _,
                 pos,
             } => {
-                return Err(ASTError {
-                    kind: ASTErrorKind::MisMatch {
+                return Err(SyntaxError {
+                    kind: SyntaxErrorKind::MisMatch {
                         expected: "{ or ;".to_owned(),
                         actual: format!("{:?}", token_type.clone()),
                     },

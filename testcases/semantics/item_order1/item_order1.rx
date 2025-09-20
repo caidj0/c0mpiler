@@ -3,7 +3,7 @@ struct A;
 fn main() {
     let foo: i32 = 123;
     fn foo(i: i32) {
-        println("{i}");
+        printInt(i);
 
         impl A {
             fn aoo() {

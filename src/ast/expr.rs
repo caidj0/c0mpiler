@@ -2,7 +2,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        ASTError, ASTResult, Eatable, Ident, Mutability, NodeId, OptionEatable, Span,
+        ASTResult, Eatable, Ident, Mutability, NodeId, OptionEatable, Span, SyntaxError,
         pat::Pat,
         path::{Path, PathSegment, QSelf},
         stmt::{Stmt, StmtKind},
@@ -153,7 +153,7 @@ impl Expr {
         let mut kind = if has_struct {
             kind_check!(iter, ExprKind, Expr, (Struct))
         } else {
-            Err(ASTError::default())
+            Err(SyntaxError::default())
         };
         kind = kind.or_else(|err| {
             kind_check!(
@@ -274,11 +274,11 @@ impl Eatable for LitExpr {
 }
 
 impl<'a> TryInto<LitExpr> for &Token<'a> {
-    type Error = ASTError;
+    type Error = SyntaxError;
 
     fn try_into(self) -> Result<LitExpr, Self::Error> {
-        let err = || ASTError {
-            kind: crate::ast::ASTErrorKind::LiteralError,
+        let err = || SyntaxError {
+            kind: crate::ast::SyntaxErrorKind::LiteralError,
             pos: self.pos,
         };
 
@@ -301,8 +301,8 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
             TokenType::Character => {
                 let (symbol, suffix) = parse_quoted_content(self.lexeme, '\'').ok_or_else(err)?;
                 if symbol.len() != 1 {
-                    return Err(ASTError {
-                        kind: crate::ast::ASTErrorKind::LiteralError,
+                    return Err(SyntaxError {
+                        kind: crate::ast::SyntaxErrorKind::LiteralError,
                         pos: self.pos,
                     });
                 }
@@ -423,8 +423,8 @@ impl<'a> TryInto<LitExpr> for &Token<'a> {
                 })
             }
 
-            _ => Err(ASTError {
-                kind: super::ASTErrorKind::MisMatch {
+            _ => Err(SyntaxError {
+                kind: super::SyntaxErrorKind::MisMatch {
                     expected: "Literal Kind".to_owned(),
                     actual: format!("{:?}", self.token_type.clone()),
                 },
@@ -454,15 +454,15 @@ pub enum UnOp {
 }
 
 impl<'a> TryInto<UnOp> for &Token<'a> {
-    type Error = ASTError;
+    type Error = SyntaxError;
 
     fn try_into(self) -> Result<UnOp, Self::Error> {
         match self.token_type {
             TokenType::Star => Ok(UnOp::Deref),
             TokenType::Not => Ok(UnOp::Not),
             TokenType::Minus => Ok(UnOp::Neg),
-            _ => Err(ASTError {
-                kind: super::ASTErrorKind::MisMatch {
+            _ => Err(SyntaxError {
+                kind: super::SyntaxErrorKind::MisMatch {
                     expected: "Unary Operation".to_owned(),
                     actual: format!("{:?}", self.token_type.clone()),
                 },
@@ -680,8 +680,8 @@ impl Eatable for BlockExpr {
             if let StmtKind::Expr(e) = &stmt.kind
                 && !e.is_block()
             {
-                return Err(ASTError {
-                    kind: crate::ast::ASTErrorKind::MissingSemi,
+                return Err(SyntaxError {
+                    kind: crate::ast::SyntaxErrorKind::MissingSemi,
                     pos: e.span.end,
                 });
             }
@@ -838,8 +838,8 @@ impl Eatable for MethodCallHelper {
         let begin = iter.get_pos();
 
         let seg = PathSegment::eat(iter)?;
-        let call_helper = CallHelper::try_eat(iter)?.ok_or(ASTError {
-            kind: crate::ast::ASTErrorKind::MisMatch {
+        let call_helper = CallHelper::try_eat(iter)?.ok_or(SyntaxError {
+            kind: crate::ast::SyntaxErrorKind::MisMatch {
                 expected: "(".to_string(),
                 actual: format!("{:?}", iter.peek()?.token_type.clone()),
             },
@@ -881,8 +881,8 @@ impl Eatable for IfExpr {
             match else_expr.kind {
                 ExprKind::Block(_) | ExprKind::If(_) => Some(Box::new(else_expr)),
                 _ => {
-                    return Err(ASTError {
-                        kind: crate::ast::ASTErrorKind::MisMatch {
+                    return Err(SyntaxError {
+                        kind: crate::ast::SyntaxErrorKind::MisMatch {
                             expected: "Block or If".to_owned(),
                             actual: format!("{t:?}"),
                         },
@@ -919,8 +919,8 @@ impl Eatable for MatchExpr {
             } else if !is_block {
                 let t = iter.peek()?;
                 if t.token_type != TokenType::CloseCurly {
-                    return Err(ASTError {
-                        kind: crate::ast::ASTErrorKind::MisMatch {
+                    return Err(SyntaxError {
+                        kind: crate::ast::SyntaxErrorKind::MisMatch {
                             expected: "Comma".to_owned(),
                             actual: format!("{:?}", t.token_type.clone()),
                         },

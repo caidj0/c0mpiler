@@ -38,7 +38,7 @@ impl OptionEatable for AngleBracketedArgs {
         let mut args = Vec::new();
 
         // 与 exp1 < exp2 有二义性，以下是一个 work around
-        if (|| -> Result<(), crate::ast::ASTError> {
+        if (|| -> Result<(), crate::ast::SyntaxError> {
             loop_until!(iter, TokenType::Gt, {
                 args.push(AngleBracketedArg::eat(iter)?);
 
