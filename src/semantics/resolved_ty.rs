@@ -206,10 +206,22 @@ impl ResolvedTy {
                 ResolvedTy::Ref(resolved_ty1, mutability1),
                 ResolvedTy::Ref(resolved_ty2, mutability2),
             ) => match (mutability1, mutability2) {
+                // TODO: &&A -> &A, &mut &mut A -> &mut A
                 (Mutability::Not, Mutability::Mut) => false,
                 _ => resolved_ty1.can_trans_to_target_type(resolved_ty2),
             },
             (ResolvedTy::Array(resolved_ty1, len1), ResolvedTy::Array(resolved_ty2, len2)) => {
+                /*
+                    TODO:
+                    let d: [&mut i32; 2] = [&mut 1, &mut 2]; // Correct
+                    let e: [&i32; 2] = {
+                        let aa: [&mut i32; 2] = [&mut 1, &mut 2];
+                        aa
+                    }; // Error
+
+                    要么解析 expr 时传入 target type，要么为 trans 添加等级（后者真的完美吗？）
+                */
+
                 if len1 == len2 {
                     resolved_ty1.can_trans_to_target_type(resolved_ty2)
                 } else {

@@ -1248,7 +1248,15 @@ pub struct AddrOfExpr(pub Mutability, pub Box<Expr>);
 
 impl Eatable for AddrOfExpr {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
-        match_keyword!(iter, TokenType::And);
+        let begin = iter.get_pos();
+
+        let double_ref = if is_keyword!(iter, TokenType::AndAnd) {
+            true
+        } else {
+            match_keyword!(iter, TokenType::And);
+            false
+        };
+
         let mutability = if is_keyword!(iter, TokenType::Mut) {
             Mutability::Mut
         } else {
@@ -1256,7 +1264,23 @@ impl Eatable for AddrOfExpr {
         };
         let expr = Expr::eat(iter)?;
 
-        Ok(Self(mutability, Box::new(expr)))
+        let mut ret = Self(mutability, Box::new(expr));
+
+        if double_ref {
+            ret = Self(
+                Mutability::Not,
+                Box::new(Expr {
+                    kind: ExprKind::AddrOf(ret),
+                    span: Span {
+                        begin,
+                        end: iter.get_pos(),
+                    },
+                    id: iter.assign_id(),
+                }),
+            );
+        }
+
+        Ok(ret)
     }
 }
 

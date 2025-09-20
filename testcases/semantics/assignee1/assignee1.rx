@@ -1,0 +1,21 @@
+struct A {
+    a: i32,
+    b: i32,
+}
+
+struct B {
+    a: A,
+}
+
+fn main() {
+    () = ();
+    (_) = 1;
+    let mut b: i32 = 0;
+    A { a: _, b } = A { a: 1, b: 2 };
+    B { a: A { a: _, b } } = B {
+        a: A { a: 1, b: 2 },
+    };
+    [_, b] = [1, 2];
+
+    exit(0);
+}

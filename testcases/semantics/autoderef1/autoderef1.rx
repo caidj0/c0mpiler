@@ -1,0 +1,23 @@
+struct A {
+    a: i32,
+}
+
+impl A {
+    fn foo(&self, rhs: &A) -> bool {
+        true
+    }
+}
+
+fn main() {
+    let a: A = A { a: 123 };
+    let b: A = A { a: 456 };
+    let mut c: A = A { a: 789 };
+
+    a.foo(&b);
+    a.foo(&&b);
+    a.foo(&mut &&&b);
+    a.foo(&mut c);
+    a.foo(&mut &mut c);
+
+    exit(0);
+}

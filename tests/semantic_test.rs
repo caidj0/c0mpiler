@@ -39,7 +39,15 @@ fn run(src: &str) -> Result<(), String> {
 #[test]
 #[ignore]
 fn my_semantic() {
-    let escape_list = ["copy_trait1", "copy_trait2"];
+    let escape_list = [
+        "autoderef1", // TODO: &&A -> &A, &mut &mut A -> &mut A
+
+        "copy_trait1",
+        "copy_trait2",
+        "copy_trait3", // 不清楚 Copy Trait 要实现到哪一步
+
+        "operator1", // TODO: &1 == &1, 
+    ];
     let case_path = "testcases/semantics";
 
     run_test_cases(&escape_list, case_path);

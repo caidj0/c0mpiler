@@ -1005,7 +1005,8 @@ impl SemanticAnalyzer {
             .any(|x| matches!(x, ExprCategory::Place(Mutability::Not)));
 
         match (has_only, has_value, has_const) {
-            (true, true, _) | (true, false, true) => Err(SemanticError::ConflictAssignee),
+            (true, true, _) => Err(SemanticError::ConflictAssignee),
+            (true, false, true) => Err(SemanticError::ImmutableVar),
             (true, false, false) => Ok(ExprCategory::Only),
             (false, true, _) => Ok(ExprCategory::Not),
             (false, false, true) => Ok(ExprCategory::Place(Mutability::Not)),
