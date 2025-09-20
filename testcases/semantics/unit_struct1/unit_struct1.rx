@@ -1,0 +1,6 @@
+struct A;
+
+fn main() {
+    A = A;
+    exit(0);
+}

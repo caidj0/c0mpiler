@@ -37,7 +37,6 @@ fn run(src: &str) -> Result<(), String> {
 }
 
 #[test]
-#[ignore]
 fn my_semantic() {
     let escape_list = [
         "autoderef1", // TODO: &&A -> &A, &mut &mut A -> &mut A

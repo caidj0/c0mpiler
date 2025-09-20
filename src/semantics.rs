@@ -642,8 +642,6 @@ impl SemanticAnalyzer {
         qself: &Option<Box<QSelf>>,
         path: &Path,
     ) -> Result<(NodeId, &TypeInfo), SemanticError> {
-        // TODO: 将 resolve_ty 统一过来，实现 Self::Ty 的结构
-
         if qself.is_some() {
             return Err(make_semantic_error!(Unimplemented));
         }
@@ -669,8 +667,7 @@ impl SemanticAnalyzer {
             return Err(make_semantic_error!(Unimplemented));
         }
 
-        // 在没有 module 时，path expr 应该只可能为 value 或 ty::value 格式 (错误)
-        // TODO: ty::ty::...::ty::value
+        // 在没有 module 时，path expr 应该只可能为 value 或 ty::value 格式
         match &path.segments[..] {
             [value_seg] => self
                 .search_value(&value_seg.ident.symbol)
@@ -963,7 +960,6 @@ impl SemanticAnalyzer {
         Self::unit_expr_result_int_specified(InterruptControlFlow::Not)
     }
 
-    // TODO: 将 block expr 在某些情形下的返回值都修改为 never
     fn never_expr_result_int_specified(int_flow: InterruptControlFlow) -> ExprResult {
         ExprResult {
             type_id: Self::never_type(),
@@ -1590,7 +1586,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         ident.symbol.clone(),
                         Variable {
                             ty: self_ty_id,
-                            mutbl: Mutability::Not,
+                            mutbl: Mutability::Mut,
                             kind: VariableKind::Constant(ConstEvalValue::UnitStruct(fullname)),
                         },
                         false,
@@ -2168,7 +2164,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 no_assignee!(res1.category);
                 no_assignee!(res2.category);
 
-                // TODO: &'ast 1 + &2 之类的
+                // TODO: &1 + &2 之类的
                 let ty1 = self.get_type_by_id(res1.type_id);
                 let ty2 = self.get_type_by_id(res2.type_id);
                 let int_flow = res1.int_flow.concat(res2.int_flow);
@@ -2624,7 +2620,6 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             })
     }
 
-    // TODO: struct A; A = A;
     fn visit_assign_expr(&mut self, AssignExpr(left, right): &'ast AssignExpr) -> Self::ExprRes {
         let right_res = self.visit_expr(right)?;
         let left_res = self.visit_expr(left)?;
@@ -3237,7 +3232,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         _pat: &'ast crate::ast::pat::LitPat,
         _expected_ty: TypeId,
     ) -> Self::PatRes {
-        todo!()
+        Err(make_semantic_error!(Unimplemented))
     }
 
     fn visit_range_pat(
