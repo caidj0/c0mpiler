@@ -203,6 +203,7 @@ impl ResolvedTy {
     }
 
     // 包括相等类型 + 其他情况
+    // TODO: 加入了积极的类型后，限制这个函数的一些转换情况
     pub fn can_trans_to_target_type(&self, target: &Self) -> bool {
         if self == target {
             return true;
