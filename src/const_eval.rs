@@ -1,6 +1,6 @@
 pub mod literal_eval;
 
-use std::{collections::HashMap, iter::repeat_n};
+use std::{collections::HashMap, iter::repeat_n, rc::Rc};
 
 use enum_as_inner::EnumAsInner;
 
@@ -158,7 +158,7 @@ impl From<&ConstEvalValue> for ResolvedTy {
             ConstEvalValue::Char(_) => ResolvedTy::char(),
             ConstEvalValue::RefStr(_) => ResolvedTy::ref_str(),
             ConstEvalValue::Array(const_eval_values) => ResolvedTy::Array(
-                Box::new(
+                Rc::new(
                     const_eval_values
                         .first()
                         .map_or(ResolvedTy::Infer, |x| x.into()),

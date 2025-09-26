@@ -8,7 +8,9 @@ pub mod visitor;
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    iter, vec,
+    iter,
+    rc::Rc,
+    vec,
 };
 
 use crate::{
@@ -121,8 +123,8 @@ impl SemanticAnalyzer {
                 Symbol("print".to_string()),
                 Variable {
                     ty: type_table.intern(ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_str()],
-                        Box::new(ResolvedTy::unit()),
+                        vec![ResolvedTy::ref_str().into()],
+                        Rc::new(ResolvedTy::unit()),
                     )),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
@@ -132,8 +134,8 @@ impl SemanticAnalyzer {
                 Symbol("println".to_string()),
                 Variable {
                     ty: type_table.intern(ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_str()],
-                        Box::new(ResolvedTy::unit()),
+                        vec![ResolvedTy::ref_str().into()],
+                        Rc::new(ResolvedTy::unit()),
                     )),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
@@ -143,8 +145,8 @@ impl SemanticAnalyzer {
                 Symbol("printInt".to_string()),
                 Variable {
                     ty: type_table.intern(ResolvedTy::Fn(
-                        vec![ResolvedTy::i32()],
-                        Box::new(ResolvedTy::unit()),
+                        vec![ResolvedTy::i32().into()],
+                        Rc::new(ResolvedTy::unit()),
                     )),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
@@ -154,8 +156,8 @@ impl SemanticAnalyzer {
                 Symbol("printlnInt".to_string()),
                 Variable {
                     ty: type_table.intern(ResolvedTy::Fn(
-                        vec![ResolvedTy::i32()],
-                        Box::new(ResolvedTy::unit()),
+                        vec![ResolvedTy::i32().into()],
+                        Rc::new(ResolvedTy::unit()),
                     )),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
@@ -164,7 +166,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("getString".to_string()),
                 Variable {
-                    ty: type_table.intern(ResolvedTy::Fn(vec![], Box::new(ResolvedTy::string()))),
+                    ty: type_table.intern(ResolvedTy::Fn(vec![], Rc::new(ResolvedTy::string()))),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -172,7 +174,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("getInt".to_string()),
                 Variable {
-                    ty: type_table.intern(ResolvedTy::Fn(vec![], Box::new(ResolvedTy::i32()))),
+                    ty: type_table.intern(ResolvedTy::Fn(vec![], Rc::new(ResolvedTy::i32()))),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -181,8 +183,8 @@ impl SemanticAnalyzer {
                 Symbol("exit".to_string()),
                 Variable {
                     ty: type_table.intern(ResolvedTy::Fn(
-                        vec![ResolvedTy::i32()],
-                        Box::new(ResolvedTy::Never),
+                        vec![ResolvedTy::i32().into()],
+                        Rc::new(ResolvedTy::Never),
                     )),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
@@ -820,11 +822,11 @@ impl SemanticAnalyzer {
         expand_self: bool,
     ) -> Result<ResolvedTy, SemanticError> {
         match &ty.kind {
-            TyKind::Slice(slice_ty) => Ok(ResolvedTy::Slice(Box::new(
+            TyKind::Slice(slice_ty) => Ok(ResolvedTy::Slice(Rc::new(
                 self.resolve_ty_self_kind_specified(&slice_ty.0, expand_self)?,
             ))),
             TyKind::Array(array_ty) => Ok(ResolvedTy::Array(
-                Box::new({
+                Rc::new({
                     let inner = self.resolve_ty_self_kind_specified(&array_ty.0, expand_self)?;
                     check_sized!(self, &inner);
                     inner
@@ -834,14 +836,17 @@ impl SemanticAnalyzer {
                     .unwrap(),
             )),
             TyKind::Ref(RefTy(MutTy { ty: ty2, mutbl })) => Ok(ResolvedTy::Ref(
-                Box::new(self.resolve_ty_self_kind_specified(ty2, expand_self)?),
+                Rc::new(self.resolve_ty_self_kind_specified(ty2, expand_self)?),
                 *mutbl,
             )),
             TyKind::Tup(tup_ty) => Ok(ResolvedTy::Tup(
                 tup_ty
                     .0
                     .iter()
-                    .map(|x| self.resolve_ty_self_kind_specified(x, expand_self))
+                    .map(|x| {
+                        self.resolve_ty_self_kind_specified(x, expand_self)
+                            .map(Rc::new)
+                    })
                     .collect::<Result<Vec<_>, SemanticError>>()?,
             )),
             TyKind::Path(path_ty) => {
@@ -1122,13 +1127,16 @@ impl SemanticAnalyzer {
                         .decl
                         .inputs
                         .iter()
-                        .map(|x| self.resolve_ty_self_kind_specified(&x.ty, expand_self))
+                        .map(|x| {
+                            self.resolve_ty_self_kind_specified(&x.ty, expand_self)
+                                .map(Rc::new)
+                        })
                         .collect::<Result<Vec<_>, SemanticError>>()?;
                     let ret_ty = match &sig.decl.output {
                         FnRetTy::Default => ResolvedTy::Tup(Vec::new()),
                         FnRetTy::Ty(ty) => self.resolve_ty_self_kind_specified(ty, expand_self)?,
                     };
-                    let fn_type = ResolvedTy::Fn(param_tys, Box::new(ret_ty));
+                    let fn_type = ResolvedTy::Fn(param_tys, Rc::new(ret_ty));
                     let fn_type_id = self.intern_type(fn_type);
 
                     if methods.contains_key(&ident.symbol) || constants.contains_key(&ident.symbol)
@@ -1414,8 +1422,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     .collect::<Result<Vec<_>, SemanticError>>()?;
 
                 if is_free_scope {
-                    let ty_id =
-                        self.intern_type(ResolvedTy::Fn(param_tys, Box::new(ret_ty.clone())));
+                    let ty_id = self.intern_type(ResolvedTy::Fn(
+                        param_tys.into_iter().map(Rc::new).collect(),
+                        Rc::new(ret_ty.clone()),
+                    ));
 
                     self.add_value(
                         ident.symbol.clone(),
@@ -1972,7 +1982,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             .iter()
             .fold(InterruptControlFlow::Not, |x, y| x.concat(*y));
 
-        let ret_ty = ResolvedTy::Array(Box::new(unified_ty.clone()), expr.0.len() as u32);
+        let ret_ty = ResolvedTy::Array(Rc::new(unified_ty.clone()), expr.0.len() as u32);
 
         Ok(Some(ExprResult {
             type_id: self.intern_type(ret_ty),
@@ -2097,7 +2107,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     return Err(make_semantic_error!(MismatchArgNum));
                 }
 
-                match required_tys.first().unwrap() {
+                match required_tys.first().unwrap().as_ref() {
                     ResolvedTy::Ref(_, target_mut) => {
                         let self_mut = get_mutbl!(category).merge_with_deref_level(deref_level);
                         if !self_mut.can_trans_to(target_mut) {
@@ -2909,7 +2919,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }) => {
                 no_assignee!(category);
                 let ty = self.get_type_by_id(type_id);
-                let ret_ty = ResolvedTy::Ref(Box::new(ty.clone()), expr.0);
+                let ret_ty = ResolvedTy::Ref(Rc::new(ty.clone()), expr.0);
                 Ok(Some(ExprResult {
                     type_id: self.intern_type(ret_ty),
                     category: ExprCategory::Not,
@@ -3117,7 +3127,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 Ok(Some(ExprResult {
                     type_id: self.intern_type(ResolvedTy::Array(
-                        Box::new(self.get_type_by_id(res.type_id)),
+                        Rc::new(self.get_type_by_id(res.type_id)),
                         size.into_u_size().unwrap(),
                     )),
                     category: ExprCategory::Not,
@@ -3150,7 +3160,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         let (target_ty, mutbl) = match mode.0 {
             crate::ast::ByRef::Yes(mutability) => {
                 let t = ResolvedTy::Ref(
-                    Box::new(self.get_type_by_id(expected_ty).clone()),
+                    Rc::new(self.get_type_by_id(expected_ty).clone()),
                     mutability,
                 );
                 (self.intern_type(t), Mutability::Not)

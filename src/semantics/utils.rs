@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use enum_as_inner::EnumAsInner;
 
@@ -261,8 +264,8 @@ pub struct BuiltInImpls {
 impl BuiltInImpls {
     pub fn new(type_table: &mut TypeTable) -> Self {
         let len_method: ResolvedTy = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self()],
-            Box::new(ResolvedTy::usize()),
+            vec![ResolvedTy::ref_implicit_self().into()],
+            Rc::new(ResolvedTy::usize()),
         );
         let len_method_id = type_table.intern(len_method);
         let len = (
@@ -273,8 +276,8 @@ impl BuiltInImpls {
             },
         );
         let to_string_method = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self()],
-            Box::new(ResolvedTy::string()),
+            vec![ResolvedTy::ref_implicit_self().into()],
+            Rc::new(ResolvedTy::string()),
         );
         let to_string_method_id = type_table.intern(to_string_method);
         let to_string = (
@@ -285,8 +288,8 @@ impl BuiltInImpls {
             },
         );
         let as_str_method = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self()],
-            Box::new(ResolvedTy::ref_str()),
+            vec![ResolvedTy::ref_implicit_self().into()],
+            Rc::new(ResolvedTy::ref_str()),
         );
         let as_str_method_id = type_table.intern(as_str_method);
         let as_str = (

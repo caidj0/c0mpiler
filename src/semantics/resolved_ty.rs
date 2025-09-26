@@ -1,4 +1,4 @@
-use std::vec;
+use std::{rc::Rc, vec};
 
 use enum_as_inner::EnumAsInner;
 
@@ -11,11 +11,11 @@ use crate::{
 pub enum ResolvedTy {
     BuiltIn(Symbol, Vec<ResolvedTy>),
     Named(FullName),
-    Ref(Box<ResolvedTy>, Mutability),
-    Array(Box<ResolvedTy>, u32),
-    Slice(Box<ResolvedTy>),
-    Tup(Vec<ResolvedTy>),
-    Fn(Vec<ResolvedTy>, Box<ResolvedTy>),
+    Ref(Rc<ResolvedTy>, Mutability),
+    Array(Rc<ResolvedTy>, u32),
+    Slice(Rc<ResolvedTy>),
+    Tup(Vec<Rc<ResolvedTy>>),
+    Fn(Vec<Rc<ResolvedTy>>, Rc<ResolvedTy>),
     ImplicitSelf,
     Infer, // for underscore
     Never,
@@ -63,7 +63,7 @@ impl ResolvedTy {
     }
 
     pub fn ref_str() -> Self {
-        Self::Ref(Box::new(Self::str()), Mutability::Not)
+        Self::Ref(Rc::new(Self::str()), Mutability::Not)
     }
 
     pub fn string() -> Self {
@@ -79,16 +79,16 @@ impl ResolvedTy {
     }
 
     pub fn ref_implicit_self() -> Self {
-        Self::Ref(Box::new(Self::implicit_self()), Mutability::Not)
+        Self::Ref(Rc::new(Self::implicit_self()), Mutability::Not)
     }
 
     pub fn ref_mut_implicit_self() -> Self {
-        Self::Ref(Box::new(Self::implicit_self()), Mutability::Mut)
+        Self::Ref(Rc::new(Self::implicit_self()), Mutability::Mut)
     }
 
     pub fn try_deref(self) -> (Self, DerefLevel) {
         if let ResolvedTy::Ref(resolved, mutbl) = self {
-            (*resolved, DerefLevel::Deref(mutbl))
+            (resolved.as_ref().clone(), DerefLevel::Deref(mutbl))
         } else {
             (self, DerefLevel::Not)
         }
@@ -99,7 +99,7 @@ impl ResolvedTy {
         let mut level = DerefLevel::Not;
 
         while let ResolvedTy::Ref(resolved, mutbl) = ret_ty {
-            ret_ty = *resolved;
+            ret_ty = resolved.as_ref().clone();
             level = level.merge(DerefLevel::Deref(mutbl))
         }
 
@@ -145,17 +145,20 @@ impl ResolvedTy {
         } else {
             match self {
                 ResolvedTy::Ref(resolved_ty, mutability) => {
-                    ResolvedTy::Ref(Box::new(resolved_ty.expand_self(self_ty)), *mutability)
+                    ResolvedTy::Ref(Rc::new(resolved_ty.expand_self(self_ty)), *mutability)
                 }
                 ResolvedTy::Array(resolved_ty, len) => {
-                    ResolvedTy::Array(Box::new(resolved_ty.expand_self(self_ty)), *len)
+                    ResolvedTy::Array(Rc::new(resolved_ty.expand_self(self_ty)), *len)
                 }
                 ResolvedTy::Slice(resolved_ty) => {
-                    ResolvedTy::Slice(Box::new(resolved_ty.expand_self(self_ty)))
+                    ResolvedTy::Slice(Rc::new(resolved_ty.expand_self(self_ty)))
                 }
-                ResolvedTy::Tup(items) => {
-                    ResolvedTy::Tup(items.iter().map(|x| x.expand_self(self_ty)).collect())
-                }
+                ResolvedTy::Tup(items) => ResolvedTy::Tup(
+                    items
+                        .iter()
+                        .map(|x| Rc::new(x.expand_self(self_ty)))
+                        .collect(),
+                ),
                 ResolvedTy::Fn(items, resolved_ty) => {
                     // fn 的首个参数若为 self，则不展开首个参数
                     let mut iter = items.iter();
@@ -163,14 +166,14 @@ impl ResolvedTy {
                         if x.is_implicit_self_or_ref_implicit_self() {
                             x.clone()
                         } else {
-                            x.expand_self(self_ty)
+                            Rc::new(x.expand_self(self_ty))
                         }
                     });
                     let params = first
                         .into_iter()
-                        .chain(iter.map(|x| x.expand_self(self_ty)))
+                        .chain(iter.map(|x| Rc::new(x.expand_self(self_ty))))
                         .collect();
-                    ResolvedTy::Fn(params, Box::new(resolved_ty.expand_self(self_ty)))
+                    ResolvedTy::Fn(params, Rc::new(resolved_ty.expand_self(self_ty)))
                 }
                 ResolvedTy::ImplicitSelf => self_ty.clone(),
                 _ => self.clone(),
@@ -186,20 +189,16 @@ impl ResolvedTy {
 
         let first = tys.first_mut().unwrap();
 
-        match first {
-            ResolvedTy::Ref(resolved_ty, _) => {
+        match first.as_ref() {
+            ResolvedTy::Ref(resolved_ty, mutbl) => {
                 debug_assert!(matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf));
-                *resolved_ty = Box::new(self_ty.clone())
+                *first = Rc::new(ResolvedTy::Ref(Rc::new(self_ty.clone()), *mutbl))
             }
-            ResolvedTy::ImplicitSelf => *first = self_ty.clone(),
+            ResolvedTy::ImplicitSelf => *first = self_ty.clone().into(),
             _ => panic!("Impossible!"),
         }
 
         ret
-    }
-
-    pub fn r#ref(self) -> Self {
-        Self::Ref(Box::new(self), Mutability::Not)
     }
 
     // 包括相等类型 + 其他情况
