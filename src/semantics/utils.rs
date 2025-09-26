@@ -8,37 +8,11 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{Mutability, NodeId, Symbol},
     const_eval::ConstEvalValue,
-    semantics::resolved_ty::ResolvedTy,
+    semantics::resolved_ty::{ResolvedTy, TypePtr},
 };
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TypeId(pub usize);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FullName(pub Vec<Symbol>);
-
-#[derive(Debug, Default)]
-pub struct TypeTable {
-    entries: Vec<Rc<ResolvedTy>>,
-    map: HashMap<Rc<ResolvedTy>, TypeId>,
-}
-
-impl TypeTable {
-    pub fn intern(&mut self, ty: ResolvedTy) -> TypeId {
-        if let Some(&id) = self.map.get(&ty) {
-            return id;
-        }
-        let id = TypeId(self.entries.len());
-        let rc = Rc::new(ty);
-        self.entries.push(rc.clone());
-        self.map.insert(rc, id);
-        id
-    }
-
-    pub fn get(&self, id: TypeId) -> Rc<ResolvedTy> {
-        self.entries[id.0].clone()
-    }
-}
 
 #[derive(Debug)]
 pub struct TypeInfo {
@@ -71,15 +45,15 @@ impl ImplInfo {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct FnSig {
-    pub type_id: TypeId,
+    pub ty: TypePtr,
     pub is_placeholder: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct Constant {
-    pub ty: TypeId,
+    pub ty: TypePtr,
     pub value: ConstEvalValue,
 }
 
@@ -87,7 +61,7 @@ pub struct Constant {
 pub enum TypeKind {
     Placeholder,
     Struct {
-        fields: HashMap<Symbol, TypeId>,
+        fields: HashMap<Symbol, TypePtr>,
     },
     Enum {
         fields: HashSet<Symbol>,
@@ -115,7 +89,7 @@ impl VariableKind {
 
 #[derive(Debug)]
 pub struct Variable {
-    pub ty: TypeId,
+    pub ty: TypePtr,
     pub mutbl: Mutability,
     pub kind: VariableKind,
 }
@@ -151,14 +125,14 @@ pub enum ScopeKind {
     Lambda,
     Root,
     Crate,
-    Trait(TypeId),
-    Impl(TypeId),
+    Trait(TypePtr),
+    Impl(TypePtr),
     Fn {
-        ret_ty: TypeId,
+        ret_ty: TypePtr,
         main_fn: MainFunctionState,
     },
     Loop {
-        ret_ty: Option<TypeId>,
+        ret_ty: Option<TypePtr>,
     },
     CycleExceptLoop,
 }
@@ -219,7 +193,7 @@ impl InterruptControlFlow {
 
 #[derive(Debug)]
 pub struct ExprResult {
-    pub type_id: TypeId,
+    pub expr_tys: TypePtr,
     pub category: ExprCategory,
     pub int_flow: InterruptControlFlow,
 }
@@ -241,7 +215,7 @@ pub enum StmtResult {
 
 #[derive(Debug)]
 pub struct PatResult {
-    pub bindings: Vec<(Symbol, TypeId, Mutability)>,
+    pub bindings: Vec<(Symbol, TypePtr, Mutability)>,
 }
 
 #[derive(Debug)]
@@ -262,17 +236,22 @@ pub struct BuiltInImpls {
     pub array_and_slice: Impls,
 }
 
+impl Default for BuiltInImpls {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BuiltInImpls {
-    pub fn new(type_table: &mut TypeTable) -> Self {
-        let len_method: ResolvedTy = ResolvedTy::Fn(
+    pub fn new() -> Self {
+        let len_method = ResolvedTy::Fn(
             vec![ResolvedTy::ref_implicit_self().into()],
             Rc::new(ResolvedTy::usize()),
         );
-        let len_method_id = type_table.intern(len_method);
         let len = (
             Symbol("len".to_string()),
             FnSig {
-                type_id: len_method_id,
+                ty: len_method.into(),
                 is_placeholder: false,
             },
         );
@@ -280,11 +259,10 @@ impl BuiltInImpls {
             vec![ResolvedTy::ref_implicit_self().into()],
             Rc::new(ResolvedTy::string()),
         );
-        let to_string_method_id = type_table.intern(to_string_method);
         let to_string = (
             Symbol("to_string".to_string()),
             FnSig {
-                type_id: to_string_method_id,
+                ty: to_string_method.into(),
                 is_placeholder: false,
             },
         );
@@ -292,11 +270,10 @@ impl BuiltInImpls {
             vec![ResolvedTy::ref_implicit_self().into()],
             Rc::new(ResolvedTy::ref_str()),
         );
-        let as_str_method_id = type_table.intern(as_str_method);
         let as_str = (
             Symbol("as_str".to_string()),
             FnSig {
-                type_id: as_str_method_id,
+                ty: as_str_method.into(),
                 is_placeholder: false,
             },
         );
@@ -338,7 +315,7 @@ impl BuiltInImpls {
 pub enum ValueContainer<'a> {
     Temp(Variable),
     Variable(&'a Variable),
-    ImplInfoItem(TypeId, ImplInfoItem<'a>),
+    ImplInfoItem(TypePtr, ImplInfoItem<'a>),
 }
 
 #[derive(Debug, Clone, EnumAsInner)]

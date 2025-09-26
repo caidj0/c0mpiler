@@ -17,7 +17,7 @@ use crate::{
     semantics::{
         AnalyzerState, SemanticAnalyzer,
         error::ConstEvalError,
-        resolved_ty::ResolvedTy,
+        resolved_ty::{ResolvedTy, TypePtr},
         utils::{FullName, ImplInfoItem, TypeKind, ValueContainer, Variable, VariableKind},
         visitor::Visitor,
     },
@@ -138,6 +138,12 @@ impl ConstEvalValue {
             }
             ConstEvalValue::UnEvaled(..) => panic!("Impossible!"),
         }
+    }
+}
+
+impl From<&ConstEvalValue> for TypePtr {
+    fn from(val: &ConstEvalValue) -> Self {
+        TypePtr::from(ResolvedTy::from(val))
     }
 }
 
@@ -281,7 +287,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
             .map(|x| self.visit_expr(x))
             .collect::<Result<Vec<_>, ConstEvalError>>()?;
 
-        let tys = values.iter().map(|x| x.into()).collect::<Vec<ResolvedTy>>();
+        let tys = values.iter().map(|x| x.into()).collect::<Vec<TypePtr>>();
         let ut_ty = ResolvedTy::utilize(tys).ok_or(make_const_eval_error!(TypeMisMatch))?;
 
         let values = values
@@ -573,16 +579,16 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                         };
 
                         let ty = self.analyzer.resolve_ty(&item.ty)?;
-                        let ty_id = self.analyzer.intern_type(ty.clone());
-                        let evaled_value =
-                            self.analyzer.const_eval(ty, item.expr.as_ref().unwrap())?;
+                        let evaled_value = self
+                            .analyzer
+                            .const_eval(ty.clone(), item.expr.as_ref().unwrap())?;
 
                         let var = self.analyzer.search_value_mut(&item.ident.symbol)?;
 
                         assert!(std::ptr::eq(var_ptr, &raw const *var));
 
                         *var = Variable {
-                            ty: ty_id,
+                            ty,
                             mutbl: crate::ast::Mutability::Not,
                             kind: VariableKind::Constant(evaled_value.clone()),
                         };
@@ -661,12 +667,11 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                     }
                 }
 
-                for (field_ident, field_type_id) in fields {
+                for (field_ident, field_ty) in fields {
                     let Some((s, res)) = dic.remove_entry(field_ident) else {
                         return Err(make_semantic_error!(MissingField).into());
                     };
-                    let field_ty = self.analyzer.get_type_by_id(*field_type_id);
-                    dic.insert(s, res.cast(&field_ty, false)?);
+                    dic.insert(s, res.cast(field_ty, false)?);
                 }
 
                 Ok(ConstEvalValue::Struct(
@@ -702,7 +707,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_wild_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::WildPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -710,7 +715,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_ident_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::IdentPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -718,7 +723,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_struct_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::StructPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -726,7 +731,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_or_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::OrPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -734,7 +739,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_path_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::PathPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -742,7 +747,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_tuple_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::TuplePat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -750,7 +755,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_ref_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::RefPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -758,7 +763,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_lit_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::LitPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -766,7 +771,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_range_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::RangePat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -774,7 +779,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_slice_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::SlicePat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -782,7 +787,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_rest_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::RestPat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }
@@ -790,7 +795,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
     fn visit_pat(
         &mut self,
         _pat: &'ast crate::ast::pat::Pat,
-        _expected_ty: crate::semantics::utils::TypeId,
+        _expected_ty: TypePtr,
     ) -> Self::PatRes {
         Err(make_const_eval_error!(NotSupportedExpr))
     }

@@ -7,15 +7,17 @@ use crate::{
     semantics::utils::{DerefLevel, FullName},
 };
 
+pub type TypePtr = Rc<ResolvedTy>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum ResolvedTy {
-    BuiltIn(Symbol, Vec<ResolvedTy>),
+    BuiltIn(Symbol, Vec<TypePtr>),
     Named(FullName),
-    Ref(Rc<ResolvedTy>, Mutability),
-    Array(Rc<ResolvedTy>, u32),
-    Slice(Rc<ResolvedTy>),
-    Tup(Vec<Rc<ResolvedTy>>),
-    Fn(Vec<Rc<ResolvedTy>>, Rc<ResolvedTy>),
+    Ref(TypePtr, Mutability),
+    Array(TypePtr, u32),
+    Slice(TypePtr),
+    Tup(Vec<TypePtr>),
+    Fn(Vec<TypePtr>, TypePtr),
     ImplicitSelf,
     Infer, // for underscore
     Never,
@@ -138,26 +140,27 @@ impl ResolvedTy {
         }
     }
 
-    pub fn expand_self(&self, self_ty: &Self) -> Self {
-        if *self == Self::big_self() {
-            self_ty.clone()
+    pub fn expand_self(self: &Rc<Self>, self_ty: Rc<Self>) -> Rc<Self> {
+        if *self.as_ref() == Self::big_self() {
+            self_ty
         } else {
-            match self {
-                ResolvedTy::Ref(resolved_ty, mutability) => {
-                    ResolvedTy::Ref(Rc::new(resolved_ty.expand_self(self_ty)), *mutability)
-                }
+            match self.as_ref() {
+                ResolvedTy::Ref(resolved_ty, mutability) => Rc::new(ResolvedTy::Ref(
+                    resolved_ty.expand_self(self_ty),
+                    *mutability,
+                )),
                 ResolvedTy::Array(resolved_ty, len) => {
-                    ResolvedTy::Array(Rc::new(resolved_ty.expand_self(self_ty)), *len)
+                    Rc::new(ResolvedTy::Array(resolved_ty.expand_self(self_ty), *len))
                 }
                 ResolvedTy::Slice(resolved_ty) => {
-                    ResolvedTy::Slice(Rc::new(resolved_ty.expand_self(self_ty)))
+                    Rc::new(ResolvedTy::Slice(resolved_ty.expand_self(self_ty)))
                 }
-                ResolvedTy::Tup(items) => ResolvedTy::Tup(
+                ResolvedTy::Tup(items) => Rc::new(ResolvedTy::Tup(
                     items
                         .iter()
-                        .map(|x| Rc::new(x.expand_self(self_ty)))
+                        .map(|x| x.expand_self(self_ty.clone()))
                         .collect(),
-                ),
+                )),
                 ResolvedTy::Fn(items, resolved_ty) => {
                     // fn 的首个参数若为 self，则不展开首个参数
                     let mut iter = items.iter();
@@ -165,14 +168,14 @@ impl ResolvedTy {
                         if x.is_implicit_self_or_ref_implicit_self() {
                             x.clone()
                         } else {
-                            Rc::new(x.expand_self(self_ty))
+                            x.expand_self(self_ty.clone())
                         }
                     });
                     let params = first
                         .into_iter()
-                        .chain(iter.map(|x| Rc::new(x.expand_self(self_ty))))
+                        .chain(iter.map(|x| x.expand_self(self_ty.clone())))
                         .collect();
-                    ResolvedTy::Fn(params, Rc::new(resolved_ty.expand_self(self_ty)))
+                    Rc::new(ResolvedTy::Fn(params, resolved_ty.expand_self(self_ty)))
                 }
                 ResolvedTy::ImplicitSelf => self_ty.clone(),
                 _ => self.clone(),
@@ -180,7 +183,7 @@ impl ResolvedTy {
         }
     }
 
-    pub fn method_to_func(&self, self_ty: &Self) -> Self {
+    pub fn method_to_func(&self, self_ty: &Rc<Self>) -> Self {
         let mut ret = self.clone();
         let ResolvedTy::Fn(tys, _) = &mut ret else {
             panic!("Impossible!");
@@ -191,9 +194,9 @@ impl ResolvedTy {
         match first.as_ref() {
             ResolvedTy::Ref(resolved_ty, mutbl) => {
                 debug_assert!(matches!(resolved_ty.as_ref(), ResolvedTy::ImplicitSelf));
-                *first = Rc::new(ResolvedTy::Ref(Rc::new(self_ty.clone()), *mutbl))
+                *first = Rc::new(ResolvedTy::Ref(self_ty.clone(), *mutbl))
             }
-            ResolvedTy::ImplicitSelf => *first = self_ty.clone().into(),
+            ResolvedTy::ImplicitSelf => *first = self_ty.clone(),
             _ => panic!("Impossible!"),
         }
 
@@ -265,9 +268,9 @@ impl ResolvedTy {
         }
     }
 
-    pub fn utilize(types: Vec<ResolvedTy>) -> Option<ResolvedTy> {
+    pub fn utilize(types: Vec<TypePtr>) -> Option<TypePtr> {
         if types.is_empty() {
-            return Some(ResolvedTy::Infer);
+            return Some(Rc::new(ResolvedTy::Infer));
         }
 
         let mut iter = types.into_iter();

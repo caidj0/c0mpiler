@@ -17,7 +17,7 @@ use crate::{
         },
         stmt::{LocalStmt, Stmt},
     },
-    semantics::TypeId,
+    semantics::TypePtr,
 };
 
 pub trait Visitor<'ast> {
@@ -72,7 +72,7 @@ pub trait Visitor<'ast> {
     fn visit_struct_expr(&mut self, expr: &'ast StructExpr) -> Self::ExprRes;
     fn visit_repeat_expr(&mut self, expr: &'ast RepeatExpr) -> Self::ExprRes;
 
-    fn visit_pat(&mut self, pat: &'ast Pat, expected_ty: TypeId) -> Self::PatRes {
+    fn visit_pat(&mut self, pat: &'ast Pat, expected_ty: TypePtr) -> Self::PatRes {
         match &pat.kind {
             PatKind::Wild(wild_pat) => self.visit_wild_pat(wild_pat, expected_ty),
             PatKind::Ident(ident_pat) => self.visit_ident_pat(ident_pat, expected_ty),
@@ -87,15 +87,15 @@ pub trait Visitor<'ast> {
             PatKind::Rest(rest_pat) => self.visit_rest_pat(rest_pat, expected_ty),
         }
     }
-    fn visit_wild_pat(&mut self, pat: &'ast WildPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_ident_pat(&mut self, pat: &'ast IdentPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_struct_pat(&mut self, pat: &'ast StructPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_or_pat(&mut self, pat: &'ast OrPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_path_pat(&mut self, pat: &'ast PathPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_tuple_pat(&mut self, pat: &'ast TuplePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_ref_pat(&mut self, pat: &'ast RefPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_lit_pat(&mut self, pat: &'ast LitPat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_range_pat(&mut self, pat: &'ast RangePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_slice_pat(&mut self, pat: &'ast SlicePat, expected_ty: TypeId) -> Self::PatRes;
-    fn visit_rest_pat(&mut self, pat: &'ast RestPat, expected_ty: TypeId) -> Self::PatRes;
+    fn visit_wild_pat(&mut self, pat: &'ast WildPat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_ident_pat(&mut self, pat: &'ast IdentPat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_struct_pat(&mut self, pat: &'ast StructPat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_or_pat(&mut self, pat: &'ast OrPat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_path_pat(&mut self, pat: &'ast PathPat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_tuple_pat(&mut self, pat: &'ast TuplePat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_ref_pat(&mut self, pat: &'ast RefPat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_lit_pat(&mut self, pat: &'ast LitPat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_range_pat(&mut self, pat: &'ast RangePat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_slice_pat(&mut self, pat: &'ast SlicePat, expected_ty: TypePtr) -> Self::PatRes;
+    fn visit_rest_pat(&mut self, pat: &'ast RestPat, expected_ty: TypePtr) -> Self::PatRes;
 }

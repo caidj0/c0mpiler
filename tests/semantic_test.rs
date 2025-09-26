@@ -52,10 +52,7 @@ fn my_semantic() {
 
 #[test]
 fn semantics_1() {
-    let escape_list = [
-        // "misc15", // 仅从控制流上分析不能确保 loop 能退出
-        "misc28", // TODO: Copy Trait
-    ];
+    let escape_list = [];
     let case_path = "RCompiler-Testcases/semantic-1";
 
     run_test_cases(&escape_list, case_path);
