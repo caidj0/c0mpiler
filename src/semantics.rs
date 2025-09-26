@@ -62,6 +62,24 @@ macro_rules! get_mutbl {
     };
 }
 
+macro_rules! out_rc {
+    ($e:expr) => {
+        *($e.as_ref())
+    };
+}
+
+macro_rules! general_bin_op {
+                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
+                        matches!($op_exp, $op) && ($((out_rc!($ty1) == $ty && $ty2.can_trans_to_target_type(&$ty1)))||*)
+                    };
+                }
+
+macro_rules! shift_bin_op {
+                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
+                        matches!($op_exp, $op) && $ty2.is_number_type() && ($(out_rc!($ty1) == $ty)||*)
+                    };
+                }
+
 #[derive(Debug, Clone, Copy)]
 pub struct AnalyzerState {
     pub current_ast_id: NodeId,
@@ -504,7 +522,7 @@ impl SemanticAnalyzer {
     ) -> Result<(Variable, DerefLevel), SemanticError> {
         let ty = self.get_type_by_id(id);
 
-        match &ty {
+        match &ty.as_ref() {
             ResolvedTy::Named(symbols) => {
                 let info = self.get_type_info(symbols);
                 match &info.kind {
@@ -622,10 +640,10 @@ impl SemanticAnalyzer {
                 return Ok((ret.0, deref_level));
             }
             let ty = self.get_type_by_id(id).clone();
-            match ty {
+            match ty.as_ref() {
                 ResolvedTy::Ref(resolved_ty, mutability) => {
                     id = self.intern_type(resolved_ty.as_ref().clone());
-                    deref_level = deref_level.merge(DerefLevel::Deref(mutability))
+                    deref_level = deref_level.merge(DerefLevel::Deref(*mutability))
                 }
                 _ => return Err(make_semantic_error!(NonMethodCall)),
             }
@@ -867,7 +885,7 @@ impl SemanticAnalyzer {
                             return Err(make_semantic_error!(InvalidPath));
                         }
                         return Ok(if expand_self {
-                            self.get_type_by_id(self.get_self_type()?).clone()
+                            self.get_type_by_id(self.get_self_type()?).as_ref().clone()
                         } else {
                             ResolvedTy::big_self()
                         });
@@ -937,7 +955,7 @@ impl SemanticAnalyzer {
         self.type_table.borrow_mut().intern(ty)
     }
 
-    pub(crate) fn get_type_by_id(&self, id: TypeId) -> ResolvedTy {
+    pub(crate) fn get_type_by_id(&self, id: TypeId) -> Rc<ResolvedTy> {
         self.type_table.borrow().get(id).clone()
     }
 
@@ -990,7 +1008,7 @@ impl SemanticAnalyzer {
         let types: Vec<ResolvedTy> = types
             .into_iter()
             .filter(|x| *x != Self::infer_type())
-            .map(|x| self.get_type_by_id(x))
+            .map(|x| self.get_type_by_id(x).as_ref().clone())
             .collect();
 
         Ok(self.intern_type(ResolvedTy::utilize(types).ok_or(make_semantic_error!(TypeMismatch))?))
@@ -1167,14 +1185,18 @@ impl SemanticAnalyzer {
             Some(i)
         } else {
             let ty = self.get_type_by_id(*id);
+            let ref_ty = ty.as_ref();
 
-            if ty == ResolvedTy::u32() || ty == ResolvedTy::i32() || ty == ResolvedTy::integer() {
+            if *ref_ty == ResolvedTy::u32()
+                || *ref_ty == ResolvedTy::i32()
+                || *ref_ty == ResolvedTy::integer()
+            {
                 Some(&self.builtin_impls.u32_and_usize_and_integer)
-            } else if ty == ResolvedTy::string() {
+            } else if *ref_ty == ResolvedTy::string() {
                 Some(&self.builtin_impls.string)
-            } else if ty == ResolvedTy::str() {
+            } else if *ref_ty == ResolvedTy::str() {
                 Some(&self.builtin_impls.str)
-            } else if ty.is_array() || ty.is_slice() {
+            } else if ref_ty.is_array() || ref_ty.is_slice() {
                 Some(&self.builtin_impls.array_and_slice)
             } else {
                 None
@@ -1982,7 +2004,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             .iter()
             .fold(InterruptControlFlow::Not, |x, y| x.concat(*y));
 
-        let ret_ty = ResolvedTy::Array(Rc::new(unified_ty.clone()), expr.0.len() as u32);
+        let ret_ty = ResolvedTy::Array(unified_ty.clone(), expr.0.len() as u32);
 
         Ok(Some(ExprResult {
             type_id: self.intern_type(ret_ty),
@@ -2014,7 +2036,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 }
 
                 let ty = self.get_type_by_id(res.type_id);
-                if let ResolvedTy::Fn(required, ret_ty) = ty {
+                if let ResolvedTy::Fn(required, ret_ty) = ty.as_ref() {
                     if required.len() != params_res.len() {
                         return Err(make_semantic_error!(MismatchArgNum));
                     }
@@ -2101,7 +2123,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 )?;
 
                 let fn_ty = self.get_type_by_id(fn_id);
-                let (required_tys, ret_ty) = fn_ty.into_fn().unwrap();
+                let (required_tys, ret_ty) = fn_ty.as_fn().unwrap();
 
                 if required_tys.len() != params_res.len() + 1 {
                     return Err(make_semantic_error!(MismatchArgNum));
@@ -2179,20 +2201,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let ty2 = self.get_type_by_id(res2.type_id);
                 let int_flow = res1.int_flow.concat(res2.int_flow);
 
-                macro_rules! general_bin_op {
-                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
-                        matches!($op_exp, $op) && ($(($ty1 == $ty && $ty2.can_trans_to_target_type(&$ty1)))||*)
-                    };
-                }
-
-                macro_rules! shift_bin_op {
-                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
-                        matches!($op_exp, $op) && $ty2.is_number_type() && ($($ty1 == $ty)||*)
-                    };
-                }
-
                 if ty1 == ty2
-                    && let ResolvedTy::Named(fullname) = &ty1
+                    && let ResolvedTy::Named(fullname) = ty1.as_ref()
                     && self.get_type_info(fullname).kind.is_enum()
                 {
                     Ok(Some(ExprResult {
@@ -2201,8 +2211,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow,
                     }))
                 } else if (matches!(bin_op, BinOp::Add))
-                    && ty1 == ResolvedTy::string()
-                    && ty2 == ResolvedTy::ref_str()
+                    && out_rc!(ty1) == ResolvedTy::string()
+                    && out_rc!(ty2) == ResolvedTy::ref_str()
                 {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ResolvedTy::string()),
@@ -2210,8 +2220,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow,
                     }))
                 } else if (matches!(bin_op, BinOp::Eq | BinOp::Ne)
-                    && ((ty1 == ResolvedTy::string() || ty1 == ResolvedTy::ref_str())
-                        && (ty2 == ResolvedTy::ref_str() || ty2 == ResolvedTy::string())))
+                    && ((out_rc!(ty1) == ResolvedTy::string()
+                        || out_rc!(ty1) == ResolvedTy::ref_str())
+                        && (out_rc!(ty2) == ResolvedTy::ref_str()
+                            || out_rc!(ty2) == ResolvedTy::string())))
                     || general_bin_op!(
                         bin_op,
                         ty1,
@@ -2282,7 +2294,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     )
                 ) {
                     Ok(Some(ExprResult {
-                        type_id: self.intern_type(ty1.clone()),
+                        type_id: self.intern_type(ty1.as_ref().clone()),
                         category: ExprCategory::Not,
                         int_flow,
                     }))
@@ -2334,16 +2346,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     )
                 ) {
                     Ok(Some(ExprResult {
-                        type_id: self.intern_type(ty2.clone()),
+                        type_id: self.intern_type(ty2.as_ref().clone()),
                         category: ExprCategory::Not,
                         int_flow,
                     }))
                 } else {
-                    Err(make_semantic_error!(NoBinaryOperation(
-                        *bin_op,
-                        Box::new(ty1),
-                        Box::new(ty2)
-                    )))
+                    Err(make_semantic_error!(NoBinaryOperation(*bin_op, ty1, ty2)))
                 }
             }
             (None, Some(_)) | (Some(_), None) => panic!("Impossible!"),
@@ -2367,9 +2375,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         // TODO: 检测是否实现 Copy Trait
 
                         // 在 rust 中，貌似任意 value expr 都可以取其 ref，并且再解引用后可以得到 place value
-                        if let ResolvedTy::Ref(t, mutbl) = ty {
+                        if let ResolvedTy::Ref(t, mutbl) = ty.as_ref() {
                             Ok(Some(ExprResult {
-                                category: ExprCategory::Place(mutbl),
+                                category: ExprCategory::Place(*mutbl),
                                 type_id: self.intern_type(t.as_ref().clone()),
                                 int_flow,
                             }))
@@ -2378,10 +2386,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         }
                     }
                     UnOp::Not => {
-                        let ty = ty.try_deref().0;
-                        if ty == ResolvedTy::bool() || ty.is_number_type() {
+                        let ty = ty.deref_once().map_or(ty, |x| x.0);
+                        if *ty.as_ref() == ResolvedTy::bool() || ty.is_number_type() {
                             Ok(Some(ExprResult {
-                                type_id: self.intern_type(ty.clone()),
+                                type_id: self.intern_type(ty.as_ref().clone()),
                                 category: ExprCategory::Not,
                                 int_flow,
                             }))
@@ -2390,14 +2398,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         }
                     }
                     UnOp::Neg => {
-                        let ty = ty.try_deref().0;
+                        let ty = ty.deref_once().map_or(ty, |x| x.0);
                         if ty.is_signed_number_type() {
                             Ok(Some(ExprResult {
-                                type_id: self.intern_type(ty),
+                                type_id: self.intern_type(ty.as_ref().clone()),
                                 category: ExprCategory::Not,
                                 int_flow,
                             }))
-                        } else if ty == ResolvedTy::integer() {
+                        } else if *ty.as_ref() == ResolvedTy::integer() {
                             Ok(Some(ExprResult {
                                 type_id: self.intern_type(ResolvedTy::signed_integer()),
                                 category: ExprCategory::Not,
@@ -2466,8 +2474,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let target_ty = self.resolve_ty(&expr.1)?;
 
                 if (expr_ty.is_number_type()
-                    || expr_ty == ResolvedTy::char()
-                    || expr_ty == ResolvedTy::bool())
+                    || *expr_ty.as_ref() == ResolvedTy::char()
+                    || *expr_ty.as_ref() == ResolvedTy::bool())
                     && (target_ty == ResolvedTy::i32()
                         || target_ty == ResolvedTy::u32()
                         || target_ty == ResolvedTy::isize()
@@ -2504,7 +2512,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 no_assignee!(take_res.category);
 
                 let con_ty = self.get_type_by_id(con_res.type_id);
-                if con_ty != ResolvedTy::bool() {
+                if *con_ty.as_ref() != ResolvedTy::bool() {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
@@ -2539,7 +2547,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 no_assignee!(con_res.category);
 
                 let con_ty = self.get_type_by_id(con_res.type_id);
-                if con_ty != ResolvedTy::bool() {
+                if *con_ty.as_ref() != ResolvedTy::bool() {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
@@ -2685,22 +2693,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let left_ty = self.get_type_by_id(left_res.type_id);
                 let right_ty = self.get_type_by_id(right_res.type_id);
 
-                // 从 visit_binary_expr 复制
-                macro_rules! general_bin_op {
-                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
-                        matches!($op_exp, $op) && ($(($ty1 == $ty && $ty2.can_trans_to_target_type(&$ty1)))||*)
-                    };
-                }
-
-                macro_rules! shift_bin_op {
-                    ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
-                        matches!($op_exp, $op) && $ty2.is_number_type() && ($($ty1 == $ty)||*)
-                    };
-                }
-
                 if ((matches!(op, AssignOp::AddAssign))
-                    && left_ty == ResolvedTy::string()
-                    && right_ty == ResolvedTy::ref_str())
+                    && out_rc!(left_ty) == ResolvedTy::string()
+                    && out_rc!(right_ty) == ResolvedTy::ref_str())
                     || general_bin_op!(
                         op,
                         left_ty,
@@ -2792,14 +2787,17 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ExprCategory::Only => return Err(make_semantic_error!(AssigneeOnlyExpr)),
                 };
                 no_assignee!(res2.category);
-                let (ty1, level) = self.get_type_by_id(res1.type_id).deref_all();
+                let (ty1, level) = {
+                    let tmp = self.get_type_by_id(res1.type_id);
+                    tmp.deref_all().unwrap_or((tmp, DerefLevel::Not))
+                };
                 let ty2 = self.get_type_by_id(res2.type_id);
 
                 if !ty2.can_trans_to_target_type(&ResolvedTy::usize()) {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
-                if let ResolvedTy::Array(ele_ty, _) | ResolvedTy::Slice(ele_ty) = ty1 {
+                if let ResolvedTy::Array(ele_ty, _) | ResolvedTy::Slice(ele_ty) = ty1.as_ref() {
                     Ok(Some(ExprResult {
                         type_id: self.intern_type(ele_ty.as_ref().clone()),
                         category: ExprCategory::Place(match level {
@@ -2919,7 +2917,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }) => {
                 no_assignee!(category);
                 let ty = self.get_type_by_id(type_id);
-                let ret_ty = ResolvedTy::Ref(Rc::new(ty.clone()), expr.0);
+                let ret_ty = ResolvedTy::Ref(ty.clone(), expr.0);
                 Ok(Some(ExprResult {
                     type_id: self.intern_type(ret_ty),
                     category: ExprCategory::Not,
@@ -3127,7 +3125,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 Ok(Some(ExprResult {
                     type_id: self.intern_type(ResolvedTy::Array(
-                        Rc::new(self.get_type_by_id(res.type_id)),
+                        self.get_type_by_id(res.type_id),
                         size.into_u_size().unwrap(),
                     )),
                     category: ExprCategory::Not,
@@ -3159,10 +3157,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
         let (target_ty, mutbl) = match mode.0 {
             crate::ast::ByRef::Yes(mutability) => {
-                let t = ResolvedTy::Ref(
-                    Rc::new(self.get_type_by_id(expected_ty).clone()),
-                    mutability,
-                );
+                let t = ResolvedTy::Ref(self.get_type_by_id(expected_ty).clone(), mutability);
                 (self.intern_type(t), Mutability::Not)
             }
             crate::ast::ByRef::No => (expected_ty, mode.1),
@@ -3225,7 +3220,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::PatRes {
         let expected_ty = self.get_type_by_id(expected_ty);
 
-        match &expected_ty {
+        match expected_ty.as_ref() {
             ResolvedTy::Ref(resolved_ty, mutability) => {
                 if mutbl == mutability {
                     self.visit_pat(pat, self.intern_type(resolved_ty.as_ref().clone()))

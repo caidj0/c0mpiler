@@ -86,24 +86,23 @@ impl ResolvedTy {
         Self::Ref(Rc::new(Self::implicit_self()), Mutability::Mut)
     }
 
-    pub fn try_deref(self) -> (Self, DerefLevel) {
+    pub fn deref_once(&self) -> Option<(Rc<Self>, DerefLevel)> {
         if let ResolvedTy::Ref(resolved, mutbl) = self {
-            (resolved.as_ref().clone(), DerefLevel::Deref(mutbl))
+            Some((resolved.clone(), DerefLevel::Deref(*mutbl)))
         } else {
-            (self, DerefLevel::Not)
+            None
         }
     }
 
-    pub fn deref_all(self) -> (Self, DerefLevel) {
-        let mut ret_ty = self;
-        let mut level = DerefLevel::Not;
+    pub fn deref_all(&self) -> Option<(Rc<Self>, DerefLevel)> {
+        let (mut ret_ty, mut level) = self.deref_once()?;
 
-        while let ResolvedTy::Ref(resolved, mutbl) = ret_ty {
-            ret_ty = resolved.as_ref().clone();
-            level = level.merge(DerefLevel::Deref(mutbl))
+        while let ResolvedTy::Ref(resolved, mutbl) = ret_ty.as_ref() {
+            level = level.merge(DerefLevel::Deref(*mutbl));
+            ret_ty = resolved.clone();
         }
 
-        (ret_ty, level)
+        Some((ret_ty, level))
     }
 
     pub fn is_number_type(&self) -> bool {

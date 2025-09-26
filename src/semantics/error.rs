@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{fmt::Display, rc::Rc};
 
 use crate::{ast::expr::BinOp, semantics::resolved_ty::ResolvedTy};
 
@@ -55,7 +55,7 @@ pub enum SemanticErrorKind {
     ShadowedConstantByBinding,
     NoReturnFunction,
     MissingField,
-    NoBinaryOperation(BinOp, Box<ResolvedTy>, Box<ResolvedTy>),
+    NoBinaryOperation(BinOp, Rc<ResolvedTy>, Rc<ResolvedTy>),
     SelfInNoAssocFn,
     NotMainFunction,
     ExprAfterExit,

@@ -19,8 +19,8 @@ pub struct FullName(pub Vec<Symbol>);
 
 #[derive(Debug, Default)]
 pub struct TypeTable {
-    entries: Vec<ResolvedTy>,
-    map: HashMap<ResolvedTy, TypeId>,
+    entries: Vec<Rc<ResolvedTy>>,
+    map: HashMap<Rc<ResolvedTy>, TypeId>,
 }
 
 impl TypeTable {
@@ -29,13 +29,14 @@ impl TypeTable {
             return id;
         }
         let id = TypeId(self.entries.len());
-        self.entries.push(ty.clone());
-        self.map.insert(ty, id);
+        let rc = Rc::new(ty);
+        self.entries.push(rc.clone());
+        self.map.insert(rc, id);
         id
     }
 
-    pub fn get(&self, id: TypeId) -> &ResolvedTy {
-        &self.entries[id.0]
+    pub fn get(&self, id: TypeId) -> Rc<ResolvedTy> {
+        self.entries[id.0].clone()
     }
 }
 
