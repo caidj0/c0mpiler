@@ -1,14 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-};
+use std::collections::{HashMap, HashSet};
 
 use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{Mutability, NodeId, Symbol},
     const_eval::ConstEvalValue,
-    semantics::resolved_ty::{ResolvedTy, TypePtr},
+    semantics::resolved_ty::{PreludePool, ResolvedTy, TypePtr},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -236,18 +233,9 @@ pub struct BuiltInImpls {
     pub array_and_slice: Impls,
 }
 
-impl Default for BuiltInImpls {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl BuiltInImpls {
-    pub fn new() -> Self {
-        let len_method = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self().into()],
-            Rc::new(ResolvedTy::usize()),
-        );
+    pub fn new(pool: &PreludePool) -> Self {
+        let len_method = ResolvedTy::Fn(vec![pool.ref_implicit_self.clone()], pool.usize.clone());
         let len = (
             Symbol("len".to_string()),
             FnSig {
@@ -255,10 +243,8 @@ impl BuiltInImpls {
                 is_placeholder: false,
             },
         );
-        let to_string_method = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self().into()],
-            Rc::new(ResolvedTy::string()),
-        );
+        let to_string_method =
+            ResolvedTy::Fn(vec![pool.ref_implicit_self.clone()], pool.string.clone());
         let to_string = (
             Symbol("to_string".to_string()),
             FnSig {
@@ -266,10 +252,8 @@ impl BuiltInImpls {
                 is_placeholder: false,
             },
         );
-        let as_str_method = ResolvedTy::Fn(
-            vec![ResolvedTy::ref_implicit_self().into()],
-            Rc::new(ResolvedTy::ref_str()),
-        );
+        let as_str_method =
+            ResolvedTy::Fn(vec![pool.ref_implicit_self.clone()], pool.ref_str.clone());
         let as_str = (
             Symbol("as_str".to_string()),
             FnSig {

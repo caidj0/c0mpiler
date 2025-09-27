@@ -17,7 +17,7 @@ use crate::{
     semantics::{
         AnalyzerState, SemanticAnalyzer,
         error::ConstEvalError,
-        resolved_ty::{ResolvedTy, TypePtr},
+        resolved_ty::{PreludePool, ResolvedTy, TypePtr},
         utils::{FullName, ImplInfoItem, TypeKind, ValueContainer, Variable, VariableKind},
         visitor::Visitor,
     },
@@ -59,8 +59,45 @@ impl ConstEvalValue {
         matches!(self, Self::I32(_) | Self::ISize(_) | Self::SignedInteger(_))
     }
 
-    pub fn cast(self, ty: &ResolvedTy, explicit: bool) -> Result<Self, ConstEvalError> {
-        fn cast_to_integer<T>(num: T, ty: &ResolvedTy) -> Result<ConstEvalValue, ConstEvalError>
+    fn to_resolved_ty(&self, prelude_pool: &PreludePool) -> TypePtr {
+        match self {
+            ConstEvalValue::Placeholder => prelude_pool.infer.clone(),
+            ConstEvalValue::U32(_) => prelude_pool.u32.clone(),
+            ConstEvalValue::I32(_) => prelude_pool.i32.clone(),
+            ConstEvalValue::USize(_) => prelude_pool.usize.clone(),
+            ConstEvalValue::ISize(_) => prelude_pool.isize.clone(),
+            ConstEvalValue::Integer(_) => prelude_pool.integer.clone(),
+            ConstEvalValue::SignedInteger(_) => prelude_pool.signed_integer.clone(),
+            ConstEvalValue::UnitStruct(full_name)
+            | ConstEvalValue::Struct(full_name, _)
+            | ConstEvalValue::Enum(full_name, _) => ResolvedTy::Named(full_name.clone()).into(),
+            ConstEvalValue::Bool(_) => prelude_pool.bool.clone(),
+            ConstEvalValue::Char(_) => prelude_pool.char.clone(),
+            ConstEvalValue::RefStr(_) => prelude_pool.ref_str.clone(),
+            ConstEvalValue::Array(const_eval_values) => ResolvedTy::Array(
+                const_eval_values
+                    .first()
+                    .map_or(prelude_pool.infer.clone(), |x| {
+                        x.to_resolved_ty(prelude_pool)
+                    }),
+                const_eval_values.len().try_into().unwrap(),
+            )
+            .into(),
+            ConstEvalValue::UnEvaled(..) => panic!("Impossible!"),
+        }
+    }
+
+    pub fn cast(
+        self,
+        prelude_pool: &PreludePool,
+        ty: &Rc<ResolvedTy>,
+        explicit: bool,
+    ) -> Result<Self, ConstEvalError> {
+        fn cast_to_integer<T>(
+            prelude_pool: &PreludePool,
+            num: T,
+            ty: &Rc<ResolvedTy>,
+        ) -> Result<ConstEvalValue, ConstEvalError>
         where
             T: TryInto<u32> + TryInto<i32>,
         {
@@ -71,24 +108,24 @@ impl ConstEvalValue {
                 num.try_into().map_err(|_| make_const_eval_error!(Overflow))
             }
 
-            Ok(if *ty == ResolvedTy::u32() {
+            Ok(if *ty == prelude_pool.u32 {
                 ConstEvalValue::U32(try_into(num)?)
-            } else if *ty == ResolvedTy::usize() {
+            } else if *ty == prelude_pool.usize {
                 ConstEvalValue::USize(try_into(num)?)
-            } else if *ty == ResolvedTy::i32() {
+            } else if *ty == prelude_pool.i32 {
                 ConstEvalValue::I32(try_into(num)?)
-            } else if *ty == ResolvedTy::isize() {
+            } else if *ty == prelude_pool.isize {
                 ConstEvalValue::ISize(try_into(num)?)
-            } else if *ty == ResolvedTy::signed_integer() {
+            } else if *ty == prelude_pool.signed_integer {
                 ConstEvalValue::SignedInteger(try_into(num)?)
-            } else if *ty == ResolvedTy::integer() {
+            } else if *ty == prelude_pool.integer {
                 ConstEvalValue::Integer(try_into(num)?)
             } else {
                 return Err(make_const_eval_error!(NotSupportedCast));
             })
         }
 
-        if Into::<ResolvedTy>::into(&self) == *ty {
+        if self.to_resolved_ty(prelude_pool) == *ty {
             return Ok(self);
         }
 
@@ -103,14 +140,14 @@ impl ConstEvalValue {
         match self {
             ConstEvalValue::U32(u32)
             | ConstEvalValue::USize(u32)
-            | ConstEvalValue::Integer(u32) => cast_to_integer(u32, ty),
+            | ConstEvalValue::Integer(u32) => cast_to_integer(prelude_pool, u32, ty),
             ConstEvalValue::I32(i32)
             | ConstEvalValue::ISize(i32)
-            | ConstEvalValue::SignedInteger(i32) => cast_to_integer(i32, ty),
-            ConstEvalValue::Bool(b) => cast_to_integer(b, ty),
-            ConstEvalValue::Char(c) => cast_to_integer(c as u32, ty),
+            | ConstEvalValue::SignedInteger(i32) => cast_to_integer(prelude_pool, i32, ty),
+            ConstEvalValue::Bool(b) => cast_to_integer(prelude_pool, b, ty),
+            ConstEvalValue::Char(c) => cast_to_integer(prelude_pool, c as u32, ty),
             ConstEvalValue::Array(values) => {
-                let ResolvedTy::Array(elm_ty, size) = ty else {
+                let ResolvedTy::Array(elm_ty, size) = ty.as_ref() else {
                     return Err(make_const_eval_error!(TypeMisMatch));
                 };
 
@@ -120,7 +157,7 @@ impl ConstEvalValue {
 
                 let elms = values
                     .into_iter()
-                    .map(|x| x.cast(elm_ty, explicit))
+                    .map(|x| x.cast(prelude_pool, elm_ty, explicit))
                     .collect::<Result<Vec<ConstEvalValue>, ConstEvalError>>()?;
 
                 Ok(ConstEvalValue::Array(elms))
@@ -130,47 +167,12 @@ impl ConstEvalValue {
             | ConstEvalValue::RefStr(_)
             | ConstEvalValue::Struct(_, _)
             | ConstEvalValue::Enum(..) => {
-                if Into::<ResolvedTy>::into(&self) == *ty {
+                if self.to_resolved_ty(prelude_pool) == *ty {
                     Ok(self)
                 } else {
                     Err(make_const_eval_error!(NotSupportedCast))
                 }
             }
-            ConstEvalValue::UnEvaled(..) => panic!("Impossible!"),
-        }
-    }
-}
-
-impl From<&ConstEvalValue> for TypePtr {
-    fn from(val: &ConstEvalValue) -> Self {
-        TypePtr::from(ResolvedTy::from(val))
-    }
-}
-
-impl From<&ConstEvalValue> for ResolvedTy {
-    fn from(val: &ConstEvalValue) -> Self {
-        match val {
-            ConstEvalValue::Placeholder => ResolvedTy::Infer,
-            ConstEvalValue::U32(_) => ResolvedTy::u32(),
-            ConstEvalValue::I32(_) => ResolvedTy::i32(),
-            ConstEvalValue::USize(_) => ResolvedTy::usize(),
-            ConstEvalValue::ISize(_) => ResolvedTy::isize(),
-            ConstEvalValue::Integer(_) => ResolvedTy::integer(),
-            ConstEvalValue::SignedInteger(_) => ResolvedTy::signed_integer(),
-            ConstEvalValue::UnitStruct(full_name)
-            | ConstEvalValue::Struct(full_name, _)
-            | ConstEvalValue::Enum(full_name, _) => ResolvedTy::Named(full_name.clone()),
-            ConstEvalValue::Bool(_) => ResolvedTy::bool(),
-            ConstEvalValue::Char(_) => ResolvedTy::char(),
-            ConstEvalValue::RefStr(_) => ResolvedTy::ref_str(),
-            ConstEvalValue::Array(const_eval_values) => ResolvedTy::Array(
-                Rc::new(
-                    const_eval_values
-                        .first()
-                        .map_or(ResolvedTy::Infer, |x| x.into()),
-                ),
-                const_eval_values.len().try_into().unwrap(),
-            ),
             ConstEvalValue::UnEvaled(..) => panic!("Impossible!"),
         }
     }
@@ -187,6 +189,10 @@ impl<'a> ConstEvaler<'a> {
     ) -> Result<ConstEvalValue, ConstEvalError> {
         let mut evaler = Self { analyzer };
         evaler.visit_expr(expr)
+    }
+
+    fn to_resolved_ty(&self, value: &ConstEvalValue) -> TypePtr {
+        value.to_resolved_ty(&self.analyzer.prelude_pool)
     }
 }
 
@@ -287,12 +293,15 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
             .map(|x| self.visit_expr(x))
             .collect::<Result<Vec<_>, ConstEvalError>>()?;
 
-        let tys = values.iter().map(|x| x.into()).collect::<Vec<TypePtr>>();
+        let tys = values
+            .iter()
+            .map(|x| self.to_resolved_ty(x))
+            .collect::<Vec<TypePtr>>();
         let ut_ty = ResolvedTy::utilize(tys).ok_or(make_const_eval_error!(TypeMisMatch))?;
 
         let values = values
             .into_iter()
-            .map(|x| x.cast(&ut_ty, false))
+            .map(|x| x.cast(&self.analyzer.prelude_pool, &ut_ty, false))
             .collect::<Result<Vec<_>, ConstEvalError>>()?;
 
         Ok(ConstEvalValue::Array(values))
@@ -348,7 +357,14 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         } else if value1.is_number() && value2.is_number() {
             match binop {
                 BinOp::Shl | BinOp::Shr => {
-                    let value2 = value2.cast(&ResolvedTy::u32(), true)?.into_u32().unwrap();
+                    let value2 = value2
+                        .cast(
+                            &self.analyzer.prelude_pool,
+                            &self.analyzer.prelude_pool.u32,
+                            true,
+                        )?
+                        .into_u32()
+                        .unwrap();
 
                     macro_rules! number_operation {
                         ($value1:expr, $value2:expr, [$($num_ty:ident),*]) => {
@@ -376,11 +392,18 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                     )
                 }
                 _ => {
-                    let ty = ResolvedTy::utilize(vec![(&value1).into(), (&value2).into()])
-                        .ok_or(make_const_eval_error!(NotSupportedBinary))?;
+                    let ty = ResolvedTy::utilize(vec![
+                        value1.to_resolved_ty(&self.analyzer.prelude_pool),
+                        value2.to_resolved_ty(&self.analyzer.prelude_pool),
+                    ])
+                    .ok_or(make_const_eval_error!(NotSupportedBinary))?;
 
-                    let value1 = value1.cast(&ty, false).unwrap();
-                    let value2 = value2.cast(&ty, false).unwrap();
+                    let value1 = value1
+                        .cast(&self.analyzer.prelude_pool, &ty, false)
+                        .unwrap();
+                    let value2 = value2
+                        .cast(&self.analyzer.prelude_pool, &ty, false)
+                        .unwrap();
 
                     macro_rules! number_operation {
                         ($value1:expr, $value2: expr, [$($num_ty:ident),*]) => {
@@ -475,7 +498,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         let cast_ty = self.analyzer.resolve_ty(cast_ty)?;
 
         let expr_res = self.visit_expr(expr)?;
-        expr_res.cast(&cast_ty, true)
+        expr_res.cast(&self.analyzer.prelude_pool, &cast_ty, true)
     }
 
     fn visit_let_expr(&mut self, _expr: &'ast crate::ast::expr::LetExpr) -> Self::ExprRes {
@@ -671,7 +694,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                     let Some((s, res)) = dic.remove_entry(field_ident) else {
                         return Err(make_semantic_error!(MissingField).into());
                     };
-                    dic.insert(s, res.cast(field_ty, false)?);
+                    dic.insert(s, res.cast(&self.analyzer.prelude_pool, field_ty, false)?);
                 }
 
                 Ok(ConstEvalValue::Struct(

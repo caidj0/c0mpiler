@@ -2,7 +2,7 @@ use crate::semantics::{SemanticAnalyzer, resolved_ty::ResolvedTy, utils::TypeKin
 
 impl SemanticAnalyzer {
     pub(crate) fn has_sized_trait(&self, ty: &ResolvedTy) -> bool {
-        if *ty == ResolvedTy::str() {
+        if ty == self.prelude_pool.str.as_ref() {
             return false;
         }
         match ty {
@@ -14,7 +14,10 @@ impl SemanticAnalyzer {
 
     #[allow(dead_code)]
     pub(crate) fn has_copy_trait(&self, ty: &ResolvedTy) -> bool {
-        if ty.is_number_type() || *ty == ResolvedTy::char() || *ty == ResolvedTy::bool() {
+        if ty.is_number_type()
+            || ty == self.prelude_pool.char.as_ref()
+            || ty == self.prelude_pool.bool.as_ref()
+        {
             return true;
         }
 

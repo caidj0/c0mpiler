@@ -34,7 +34,7 @@ use crate::{
     make_semantic_error,
     semantics::{
         error::SemanticError,
-        resolved_ty::{ResolvedTy, TypePtr},
+        resolved_ty::{PreludePool, ResolvedTy, TypePtr},
         utils::*,
         visitor::Visitor,
     },
@@ -66,23 +66,23 @@ macro_rules! get_mutbl {
     };
 }
 
-macro_rules! out_rc {
-    ($e:expr) => {
-        *($e.as_ref())
-    };
-}
-
 macro_rules! general_bin_op {
                     ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
-                        matches!($op_exp, $op) && ($((out_rc!($ty1) == $ty && $ty2.can_trans_to_target_type(&$ty1)))||*)
+                        matches!($op_exp, $op) && ($(($ty1 == $ty && $ty2.can_trans_to_target_type(&$ty1)))||*)
                     };
                 }
 
 macro_rules! shift_bin_op {
                     ($op_exp:expr, $ty1:expr, $ty2:expr, $op:pat, ($($ty:expr), *)) => {
-                        matches!($op_exp, $op) && $ty2.is_number_type() && ($(out_rc!($ty1) == $ty)||*)
+                        matches!($op_exp, $op) && $ty2.is_number_type() && ($($ty1 == $ty)||*)
                     };
                 }
+
+macro_rules! pool {
+    ($analyzer:expr, $name:ident) => {
+        $analyzer.prelude_pool.$name.clone()
+    };
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct AnalyzerState {
@@ -111,6 +111,7 @@ pub struct SemanticAnalyzer {
     pub(crate) state: AnalyzerState,
 
     builtin_impls: BuiltInImpls,
+    pub(crate) prelude_pool: PreludePool,
 }
 
 type AssocItemRes = Result<(HashMap<Symbol, FnSig>, HashMap<Symbol, Constant>), SemanticError>;
@@ -134,15 +135,13 @@ impl SemanticAnalyzer {
     }
 
     fn new() -> Self {
+        let pool = PreludePool::default();
+
         let preludes = [
             (
                 Symbol("print".to_string()),
                 Variable {
-                    ty: ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_str().into()],
-                        Rc::new(ResolvedTy::unit()),
-                    )
-                    .into(),
+                    ty: ResolvedTy::Fn(vec![pool.ref_str.clone()], pool.unit.clone()).into(),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -150,11 +149,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("println".to_string()),
                 Variable {
-                    ty: ResolvedTy::Fn(
-                        vec![ResolvedTy::ref_str().into()],
-                        Rc::new(ResolvedTy::unit()),
-                    )
-                    .into(),
+                    ty: ResolvedTy::Fn(vec![pool.ref_str.clone()], pool.unit.clone()).into(),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -162,8 +157,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("printInt".to_string()),
                 Variable {
-                    ty: ResolvedTy::Fn(vec![ResolvedTy::i32().into()], Rc::new(ResolvedTy::unit()))
-                        .into(),
+                    ty: ResolvedTy::Fn(vec![pool.i32.clone()], pool.unit.clone()).into(),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -171,8 +165,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("printlnInt".to_string()),
                 Variable {
-                    ty: ResolvedTy::Fn(vec![ResolvedTy::i32().into()], Rc::new(ResolvedTy::unit()))
-                        .into(),
+                    ty: ResolvedTy::Fn(vec![pool.i32.clone()], pool.unit.clone()).into(),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -180,7 +173,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("getString".to_string()),
                 Variable {
-                    ty: ResolvedTy::Fn(vec![], Rc::new(ResolvedTy::string())).into(),
+                    ty: ResolvedTy::Fn(vec![], pool.string.clone()).into(),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -188,7 +181,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("getInt".to_string()),
                 Variable {
-                    ty: ResolvedTy::Fn(vec![], Rc::new(ResolvedTy::i32())).into(),
+                    ty: ResolvedTy::Fn(vec![], pool.i32.clone()).into(),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -196,8 +189,7 @@ impl SemanticAnalyzer {
             (
                 Symbol("exit".to_string()),
                 Variable {
-                    ty: ResolvedTy::Fn(vec![ResolvedTy::i32().into()], Rc::new(ResolvedTy::Never))
-                        .into(),
+                    ty: ResolvedTy::Fn(vec![pool.i32.clone()], pool.never.clone()).into(),
                     mutbl: Mutability::Not,
                     kind: VariableKind::Fn,
                 },
@@ -213,15 +205,14 @@ impl SemanticAnalyzer {
             father: 0,
         };
 
-        let builtin_impls = BuiltInImpls::new();
-
         Self {
             impls: HashMap::default(),
             scopes: HashMap::from([(0, root_scope)]),
             current_scope: 0,
             stage: AnalyzeStage::SymbolCollect,
             state: AnalyzerState::default(),
-            builtin_impls,
+            builtin_impls: BuiltInImpls::new(&pool),
+            prelude_pool: pool,
         }
     }
 
@@ -832,7 +823,7 @@ impl SemanticAnalyzer {
                     check_sized!(self, &inner);
                     inner
                 },
-                self.const_eval(Rc::new(ResolvedTy::usize()), &array_ty.1.value)?
+                self.const_eval(pool!(self, usize), &array_ty.1.value)?
                     .into_u_size()
                     .unwrap(),
             ),
@@ -867,7 +858,7 @@ impl SemanticAnalyzer {
                         return Ok(if expand_self {
                             self.get_self_type()?
                         } else {
-                            Rc::new(ResolvedTy::big_self())
+                            pool!(self, big_self)
                         });
                     }
                     return Err(make_semantic_error!(InvalidPath));
@@ -917,8 +908,8 @@ impl SemanticAnalyzer {
             }
             TyKind::TraitObject(_) => return Err(make_semantic_error!(Unimplemented)),
             TyKind::ImplTrait(_) => return Err(make_semantic_error!(Unimplemented)),
-            TyKind::Infer(_) => ResolvedTy::Infer,
-            TyKind::ImplicitSelf => ResolvedTy::implicit_self(),
+            TyKind::Infer(_) => return Ok(pool!(self, infer)),
+            TyKind::ImplicitSelf => return Ok(pool!(self, implicit_self)),
         }))
     }
 
@@ -931,21 +922,21 @@ impl SemanticAnalyzer {
         ResolvedTy::Named(self.get_full_name_from(id, s.clone()))
     }
 
-    fn unit_expr_result_int_specified(int_flow: InterruptControlFlow) -> ExprResult {
+    fn unit_expr_result_int_specified(&self, int_flow: InterruptControlFlow) -> ExprResult {
         ExprResult {
-            expr_tys: ResolvedTy::unit().into(),
+            expr_tys: pool!(self, unit),
             category: ExprCategory::Not,
             int_flow,
         }
     }
 
-    fn unit_expr_result() -> ExprResult {
-        Self::unit_expr_result_int_specified(InterruptControlFlow::Not)
+    fn unit_expr_result(&self) -> ExprResult {
+        self.unit_expr_result_int_specified(InterruptControlFlow::Not)
     }
 
-    fn never_expr_result_int_specified(int_flow: InterruptControlFlow) -> ExprResult {
+    fn never_expr_result_int_specified(&self, int_flow: InterruptControlFlow) -> ExprResult {
         ExprResult {
-            expr_tys: ResolvedTy::Never.into(),
+            expr_tys: pool!(self, never),
             category: ExprCategory::Not,
             int_flow,
         }
@@ -957,7 +948,7 @@ impl SemanticAnalyzer {
         expr: &Expr,
     ) -> Result<ConstEvalValue, SemanticError> {
         match ConstEvaler::eval(self, expr) {
-            Ok(x) => x.cast(&ty, false),
+            Ok(x) => x.cast(&self.prelude_pool, &ty, false),
             Err(err) => Err(err),
         }
         .map_err(|x| x.into())
@@ -967,7 +958,7 @@ impl SemanticAnalyzer {
     fn utilize_ty(&self, types: Vec<TypePtr>) -> Result<TypePtr, SemanticError> {
         let types: Vec<TypePtr> = types
             .into_iter()
-            .filter(|x| *x.as_ref() != ResolvedTy::Infer)
+            .filter(|x| *x != pool!(self, infer))
             .collect();
 
         ResolvedTy::utilize(types).ok_or(make_semantic_error!(TypeMismatch))
@@ -1112,7 +1103,7 @@ impl SemanticAnalyzer {
                         .map(|x| self.resolve_ty_self_kind_specified(&x.ty, expand_self))
                         .collect::<Result<Vec<_>, SemanticError>>()?;
                     let ret_ty = match &sig.decl.output {
-                        FnRetTy::Default => Rc::new(ResolvedTy::unit()),
+                        FnRetTy::Default => pool!(self, unit),
                         FnRetTy::Ty(ty) => self.resolve_ty_self_kind_specified(ty, expand_self)?,
                     };
                     let fn_type = ResolvedTy::Fn(param_tys, ret_ty);
@@ -1143,23 +1134,17 @@ impl SemanticAnalyzer {
     fn get_impl(&self, ty: &TypePtr) -> Option<&Impls> {
         if let Some(i) = self.impls.get(ty) {
             Some(i)
+        } else if *ty == pool!(self, u32) || *ty == pool!(self, i32) || *ty == pool!(self, integer)
+        {
+            Some(&self.builtin_impls.u32_and_usize_and_integer)
+        } else if *ty == pool!(self, string) {
+            Some(&self.builtin_impls.string)
+        } else if *ty == pool!(self, str) {
+            Some(&self.builtin_impls.str)
+        } else if ty.is_array() || ty.is_slice() {
+            Some(&self.builtin_impls.array_and_slice)
         } else {
-            let ref_ty = ty.as_ref();
-
-            if *ref_ty == ResolvedTy::u32()
-                || *ref_ty == ResolvedTy::i32()
-                || *ref_ty == ResolvedTy::integer()
-            {
-                Some(&self.builtin_impls.u32_and_usize_and_integer)
-            } else if *ref_ty == ResolvedTy::string() {
-                Some(&self.builtin_impls.string)
-            } else if *ref_ty == ResolvedTy::str() {
-                Some(&self.builtin_impls.str)
-            } else if ref_ty.is_array() || ref_ty.is_slice() {
-                Some(&self.builtin_impls.array_and_slice)
-            } else {
-                None
-            }
+            None
         }
     }
 
@@ -1291,7 +1276,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     self.add_value(
                         item.ident.symbol.clone(),
                         Variable {
-                            ty: Rc::new(ResolvedTy::unit()),
+                            ty: pool!(self, unit),
                             mutbl: Mutability::Not,
                             kind: VariableKind::Constant(ConstEvalValue::UnEvaled(
                                 self.state.current_ast_id,
@@ -1342,7 +1327,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let is_main_fn =
                     ident.symbol.0.as_str() == "main" && self.get_scope().kind.is_crate(); // 现在只允许存在一个 Crate，因此满足这个条件的就是 main fn
                 self.add_scope(ScopeKind::Fn {
-                    ret_ty: ResolvedTy::unit().into(),
+                    ret_ty: pool!(self, unit),
                     main_fn: if is_main_fn {
                         MainFunctionState::UnExited
                     } else {
@@ -1352,7 +1337,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }
             AnalyzeStage::Definition => {
                 let mut ret_ty = match &sig.decl.output {
-                    FnRetTy::Default => Rc::new(ResolvedTy::unit()),
+                    FnRetTy::Default => pool!(self, unit),
                     FnRetTy::Ty(ty) => self.resolve_ty(ty)?,
                 };
 
@@ -1440,7 +1425,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     }
                     StmtResult::Else { int_flow } => match int_flow {
                         InterruptControlFlow::Not => {
-                            if *target_ty.as_ref() != ResolvedTy::unit() {
+                            if *target_ty != pool!(self, unit) {
                                 return Err(make_semantic_error!(NoReturnFunction));
                             }
                         }
@@ -1629,7 +1614,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
                 // 0 type 作为 self ty 的占位符
-                self.add_scope(ScopeKind::Impl(ResolvedTy::unit().into()))?;
+                self.add_scope(ScopeKind::Impl(pool!(self, unit)))?;
             }
             AnalyzeStage::Definition => {
                 let self_ty = self.resolve_ty(self_ty)?;
@@ -1794,8 +1779,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     no_assignee!(res.category);
                     Some(
                         if expr.is_block()
-                            && (*res.expr_tys.as_ref() == ResolvedTy::unit()
-                                || *res.expr_tys.as_ref() == ResolvedTy::Never)
+                            && (res.expr_tys == pool!(self, unit)
+                                || res.expr_tys == pool!(self, never))
                         {
                             StmtResult::Else {
                                 int_flow: res.int_flow,
@@ -2106,7 +2091,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         match &expr.0[..] {
             [] => Ok(if matches!(self.stage, AnalyzeStage::Body) {
                 Some(ExprResult {
-                    expr_tys: ResolvedTy::unit().into(),
+                    expr_tys: pool!(self, unit),
                     category: ExprCategory::Place(Mutability::Mut),
                     int_flow: InterruptControlFlow::Not,
                 })
@@ -2141,43 +2126,41 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     && self.get_type_info(fullname).kind.is_enum()
                 {
                     Ok(Some(ExprResult {
-                        expr_tys: ResolvedTy::bool().into(),
+                        expr_tys: pool!(self, bool),
                         category: ExprCategory::Not,
                         int_flow,
                     }))
                 } else if (matches!(bin_op, BinOp::Add))
-                    && out_rc!(ty1) == ResolvedTy::string()
-                    && out_rc!(ty2) == ResolvedTy::ref_str()
+                    && ty1 == pool!(self, string)
+                    && ty2 == pool!(self, ref_str)
                 {
                     Ok(Some(ExprResult {
-                        expr_tys: ResolvedTy::string().into(),
+                        expr_tys: pool!(self, string),
                         category: ExprCategory::Not,
                         int_flow,
                     }))
                 } else if (matches!(bin_op, BinOp::Eq | BinOp::Ne)
-                    && ((out_rc!(ty1) == ResolvedTy::string()
-                        || out_rc!(ty1) == ResolvedTy::ref_str())
-                        && (out_rc!(ty2) == ResolvedTy::ref_str()
-                            || out_rc!(ty2) == ResolvedTy::string())))
+                    && ((ty1 == pool!(self, string) || ty1 == pool!(self, ref_str))
+                        && (ty2 == pool!(self, ref_str) || ty2 == pool!(self, string))))
                     || general_bin_op!(
                         bin_op,
                         ty1,
                         ty2,
                         BinOp::Eq | BinOp::Ne | BinOp::Lt | BinOp::Le | BinOp::Ge | BinOp::Gt,
                         (
-                            ResolvedTy::integer(),
-                            ResolvedTy::signed_integer(),
-                            ResolvedTy::i32(),
-                            ResolvedTy::u32(),
-                            ResolvedTy::isize(),
-                            ResolvedTy::usize(),
-                            ResolvedTy::bool(),
-                            ResolvedTy::char()
+                            pool!(self, integer),
+                            pool!(self, signed_integer),
+                            pool!(self, i32),
+                            pool!(self, u32),
+                            pool!(self, isize),
+                            pool!(self, usize),
+                            pool!(self, bool),
+                            pool!(self, char)
                         )
                     )
                 {
                     Ok(Some(ExprResult {
-                        expr_tys: ResolvedTy::bool().into(),
+                        expr_tys: pool!(self, bool),
                         category: ExprCategory::Not,
                         int_flow,
                     }))
@@ -2187,32 +2170,32 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ty2,
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem,
                     (
-                        ResolvedTy::integer(),
-                        ResolvedTy::signed_integer(),
-                        ResolvedTy::i32(),
-                        ResolvedTy::u32(),
-                        ResolvedTy::isize(),
-                        ResolvedTy::usize()
+                        pool!(self, integer),
+                        pool!(self, signed_integer),
+                        pool!(self, i32),
+                        pool!(self, u32),
+                        pool!(self, isize),
+                        pool!(self, usize)
                     )
                 ) || general_bin_op!(
                     bin_op,
                     ty1,
                     ty2,
                     BinOp::And | BinOp::Or,
-                    (ResolvedTy::bool())
+                    (pool!(self, bool))
                 ) || general_bin_op!(
                     bin_op,
                     ty1,
                     ty2,
                     BinOp::BitXor | BinOp::BitAnd | BinOp::BitOr,
                     (
-                        ResolvedTy::integer(),
-                        ResolvedTy::signed_integer(),
-                        ResolvedTy::i32(),
-                        ResolvedTy::u32(),
-                        ResolvedTy::isize(),
-                        ResolvedTy::usize(),
-                        ResolvedTy::bool()
+                        pool!(self, integer),
+                        pool!(self, signed_integer),
+                        pool!(self, i32),
+                        pool!(self, u32),
+                        pool!(self, isize),
+                        pool!(self, usize),
+                        pool!(self, bool)
                     )
                 ) || shift_bin_op!(
                     bin_op,
@@ -2220,16 +2203,16 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ty2,
                     BinOp::Shl | BinOp::Shr,
                     (
-                        ResolvedTy::integer(),
-                        ResolvedTy::signed_integer(),
-                        ResolvedTy::i32(),
-                        ResolvedTy::u32(),
-                        ResolvedTy::isize(),
-                        ResolvedTy::usize()
+                        pool!(self, integer),
+                        pool!(self, signed_integer),
+                        pool!(self, i32),
+                        pool!(self, u32),
+                        pool!(self, isize),
+                        pool!(self, usize)
                     )
                 ) {
                     Ok(Some(ExprResult {
-                        expr_tys: ty1.as_ref().clone().into(),
+                        expr_tys: ty1.clone(),
                         category: ExprCategory::Not,
                         int_flow,
                     }))
@@ -2239,32 +2222,32 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ty1,
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem,
                     (
-                        ResolvedTy::integer(),
-                        ResolvedTy::signed_integer(),
-                        ResolvedTy::i32(),
-                        ResolvedTy::u32(),
-                        ResolvedTy::isize(),
-                        ResolvedTy::usize()
+                        pool!(self, integer),
+                        pool!(self, signed_integer),
+                        pool!(self, i32),
+                        pool!(self, u32),
+                        pool!(self, isize),
+                        pool!(self, usize)
                     )
                 ) || general_bin_op!(
                     bin_op,
                     ty2,
                     ty1,
                     BinOp::And | BinOp::Or,
-                    (ResolvedTy::bool())
+                    (pool!(self, bool))
                 ) || general_bin_op!(
                     bin_op,
                     ty2,
                     ty1,
                     BinOp::BitXor | BinOp::BitAnd | BinOp::BitOr,
                     (
-                        ResolvedTy::integer(),
-                        ResolvedTy::signed_integer(),
-                        ResolvedTy::i32(),
-                        ResolvedTy::u32(),
-                        ResolvedTy::isize(),
-                        ResolvedTy::usize(),
-                        ResolvedTy::bool()
+                        pool!(self, integer),
+                        pool!(self, signed_integer),
+                        pool!(self, i32),
+                        pool!(self, u32),
+                        pool!(self, isize),
+                        pool!(self, usize),
+                        pool!(self, bool)
                     )
                 ) || shift_bin_op!(
                     bin_op,
@@ -2272,16 +2255,16 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ty1,
                     BinOp::Shl | BinOp::Shr,
                     (
-                        ResolvedTy::integer(),
-                        ResolvedTy::signed_integer(),
-                        ResolvedTy::i32(),
-                        ResolvedTy::u32(),
-                        ResolvedTy::isize(),
-                        ResolvedTy::usize()
+                        pool!(self, integer),
+                        pool!(self, signed_integer),
+                        pool!(self, i32),
+                        pool!(self, u32),
+                        pool!(self, isize),
+                        pool!(self, usize)
                     )
                 ) {
                     Ok(Some(ExprResult {
-                        expr_tys: ty2.as_ref().clone().into(),
+                        expr_tys: ty2,
                         category: ExprCategory::Not,
                         int_flow,
                     }))
@@ -2321,7 +2304,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     }
                     UnOp::Not => {
                         let ty = ty.deref_once().map_or(ty, |x| x.0);
-                        if *ty.as_ref() == ResolvedTy::bool() || ty.is_number_type() {
+                        if ty == pool!(self, bool) || ty.is_number_type() {
                             Ok(Some(ExprResult {
                                 expr_tys: ty.clone(),
                                 category: ExprCategory::Not,
@@ -2339,9 +2322,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                 category: ExprCategory::Not,
                                 int_flow,
                             }))
-                        } else if *ty.as_ref() == ResolvedTy::integer() {
+                        } else if ty == pool!(self, integer) {
                             Ok(Some(ExprResult {
-                                expr_tys: ResolvedTy::signed_integer().into(),
+                                expr_tys: pool!(self, signed_integer),
                                 category: ExprCategory::Not,
                                 int_flow,
                             }))
@@ -2360,27 +2343,27 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
             AnalyzeStage::Body => Ok(Some(ExprResult {
                 expr_tys: match expr.kind {
-                    LitKind::Bool => ResolvedTy::bool().into(),
-                    LitKind::Char => ResolvedTy::char().into(),
+                    LitKind::Bool => pool!(self, bool),
+                    LitKind::Char => pool!(self, char),
                     LitKind::Integer => match &expr.suffix {
                         Some(s) => {
                             if s == "u32" {
-                                ResolvedTy::u32().into()
+                                pool!(self, u32)
                             } else if s == "i32" {
-                                ResolvedTy::i32().into()
+                                pool!(self, i32)
                             } else if s == "isize" {
-                                ResolvedTy::isize().into()
+                                pool!(self, isize)
                             } else if s == "usize" {
-                                ResolvedTy::usize().into()
+                                pool!(self, usize)
                             } else {
                                 return Err(make_semantic_error!(UnknownSuffix));
                             }
                         }
-                        None => ResolvedTy::integer().into(),
+                        None => pool!(self, integer),
                     },
                     LitKind::Str | LitKind::StrRaw(_) => {
                         if expr.suffix.is_none() {
-                            ResolvedTy::ref_str().into()
+                            pool!(self, ref_str)
                         } else {
                             return Err(make_semantic_error!(UnknownSuffix));
                         }
@@ -2407,12 +2390,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let target_ty = self.resolve_ty(&expr.1)?;
 
                 if (expr_ty.is_number_type()
-                    || *expr_ty.as_ref() == ResolvedTy::char()
-                    || *expr_ty.as_ref() == ResolvedTy::bool())
-                    && (*target_ty.as_ref() == ResolvedTy::i32()
-                        || *target_ty.as_ref() == ResolvedTy::u32()
-                        || *target_ty.as_ref() == ResolvedTy::isize()
-                        || *target_ty.as_ref() == ResolvedTy::usize())
+                    || expr_ty == pool!(self, char)
+                    || expr_ty == pool!(self, bool))
+                    && (target_ty == pool!(self, i32)
+                        || target_ty == pool!(self, u32)
+                        || target_ty == pool!(self, isize)
+                        || target_ty == pool!(self, usize))
                 {
                     Ok(Some(ExprResult {
                         expr_tys: target_ty,
@@ -2445,7 +2428,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 no_assignee!(take_res.category);
 
                 let con_ty = con_res.expr_tys;
-                if *con_ty.as_ref() != ResolvedTy::bool() {
+                if con_ty != pool!(self, bool) {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
@@ -2458,10 +2441,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             .int_flow
                             .concat(take_res.int_flow.shunt(els_res.int_flow)),
                     }))
-                } else if *take_res.expr_tys.as_ref() == ResolvedTy::unit()
-                    || *take_res.expr_tys.as_ref() == ResolvedTy::Never
+                } else if take_res.expr_tys == pool!(self, unit)
+                    || take_res.expr_tys == pool!(self, never)
                 {
-                    Ok(Some(Self::unit_expr_result_int_specified(con_res.int_flow)))
+                    Ok(Some(self.unit_expr_result_int_specified(con_res.int_flow)))
                 } else {
                     Err(make_semantic_error!(TypeMismatch))
                 }
@@ -2480,13 +2463,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 no_assignee!(con_res.category);
 
                 let con_ty = con_res.expr_tys;
-                if *con_ty.as_ref() != ResolvedTy::bool() {
+                if con_ty != pool!(self, bool) {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
                 let body_int_flow = match body_res {
                     StmtResult::Expr(expr_result) => {
-                        if *expr_result.expr_tys.as_ref() != ResolvedTy::unit() {
+                        if expr_result.expr_tys != pool!(self, unit) {
                             return Err(make_semantic_error!(TypeMismatch));
                         }
                         expr_result.int_flow
@@ -2496,7 +2479,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 let out_of_cycle_int_flow = body_int_flow.out_of_cycle();
 
-                Ok(Some(Self::unit_expr_result_int_specified(
+                Ok(Some(self.unit_expr_result_int_specified(
                     con_res.int_flow.concat(out_of_cycle_int_flow),
                 )))
             }
@@ -2516,14 +2499,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             Some(res) => {
                 if res
                     .as_expr()
-                    .is_some_and(|x| *x.expr_tys.as_ref() != ResolvedTy::unit())
+                    .is_some_and(|x| x.expr_tys != pool!(self, unit))
                 {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
                 let int_flow = match res {
                     StmtResult::Expr(expr_result) => {
-                        if *expr_result.expr_tys.as_ref() != ResolvedTy::unit() {
+                        if expr_result.expr_tys != pool!(self, unit) {
                             return Err(make_semantic_error!(TypeMismatch));
                         }
                         expr_result.int_flow
@@ -2532,7 +2515,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 };
 
                 if int_flow.is_not() {
-                    Ok(Some(Self::never_expr_result_int_specified(
+                    Ok(Some(self.never_expr_result_int_specified(
                         InterruptControlFlow::Return,
                     )))
                 } else {
@@ -2564,9 +2547,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             .map(|x| match x {
                 Some(StmtResult::Expr(expr_result)) => Some(expr_result),
                 Some(StmtResult::Else { int_flow }) => Some(if int_flow.is_not() {
-                    Self::unit_expr_result_int_specified(InterruptControlFlow::Not)
+                    self.unit_expr_result_int_specified(InterruptControlFlow::Not)
                 } else {
-                    Self::never_expr_result_int_specified(int_flow)
+                    self.never_expr_result_int_specified(int_flow)
                 }),
                 None => None,
             })
@@ -2595,7 +2578,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
-                Ok(Some(Self::unit_expr_result_int_specified(
+                Ok(Some(self.unit_expr_result_int_specified(
                     right_res.int_flow.concat(left_res.int_flow),
                 )))
             }
@@ -2628,8 +2611,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let right_ty = right_res.expr_tys;
 
                 if ((matches!(op, AssignOp::AddAssign))
-                    && out_rc!(left_ty) == ResolvedTy::string()
-                    && out_rc!(right_ty) == ResolvedTy::ref_str())
+                    && left_ty == pool!(self, string)
+                    && right_ty == pool!(self, ref_str))
                     || general_bin_op!(
                         op,
                         left_ty,
@@ -2640,12 +2623,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             | AssignOp::DivAssign
                             | AssignOp::RemAssign,
                         (
-                            ResolvedTy::integer(),
-                            ResolvedTy::signed_integer(),
-                            ResolvedTy::i32(),
-                            ResolvedTy::u32(),
-                            ResolvedTy::isize(),
-                            ResolvedTy::usize()
+                            pool!(self, integer),
+                            pool!(self, signed_integer),
+                            pool!(self, i32),
+                            pool!(self, u32),
+                            pool!(self, isize),
+                            pool!(self, usize)
                         )
                     )
                     || general_bin_op!(
@@ -2654,13 +2637,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         right_ty,
                         AssignOp::BitXorAssign | AssignOp::BitAndAssign | AssignOp::BitOrAssign,
                         (
-                            ResolvedTy::integer(),
-                            ResolvedTy::signed_integer(),
-                            ResolvedTy::i32(),
-                            ResolvedTy::u32(),
-                            ResolvedTy::isize(),
-                            ResolvedTy::usize(),
-                            ResolvedTy::bool()
+                            pool!(self, integer),
+                            pool!(self, signed_integer),
+                            pool!(self, i32),
+                            pool!(self, u32),
+                            pool!(self, isize),
+                            pool!(self, usize),
+                            pool!(self, bool)
                         )
                     )
                     || shift_bin_op!(
@@ -2669,16 +2652,16 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         right_ty,
                         AssignOp::ShlAssign | AssignOp::ShrAssign,
                         (
-                            ResolvedTy::integer(),
-                            ResolvedTy::signed_integer(),
-                            ResolvedTy::i32(),
-                            ResolvedTy::u32(),
-                            ResolvedTy::isize(),
-                            ResolvedTy::usize()
+                            pool!(self, integer),
+                            pool!(self, signed_integer),
+                            pool!(self, i32),
+                            pool!(self, u32),
+                            pool!(self, isize),
+                            pool!(self, usize)
                         )
                     )
                 {
-                    Ok(Some(Self::unit_expr_result_int_specified(
+                    Ok(Some(self.unit_expr_result_int_specified(
                         right_res.int_flow.concat(left_res.int_flow),
                     )))
                 } else {
@@ -2727,13 +2710,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 };
                 let ty2 = res2.expr_tys;
 
-                if !ty2.can_trans_to_target_type(&ResolvedTy::usize()) {
+                if !ty2.can_trans_to_target_type(&pool!(self, usize)) {
                     return Err(make_semantic_error!(TypeMismatch));
                 }
 
                 if let ResolvedTy::Array(ele_ty, _) | ResolvedTy::Slice(ele_ty) = ty1.as_ref() {
                     Ok(Some(ExprResult {
-                        expr_tys: ele_ty.as_ref().clone().into(),
+                        expr_tys: ele_ty.clone(),
                         category: ExprCategory::Place(match level {
                             DerefLevel::Not => res1_mut,
                             DerefLevel::Deref(mutability) => mutability,
@@ -2882,7 +2865,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ScopeKind::Loop { ret_ty } => match (res, &ret_ty) {
                         (None, None) => {}
                         (None, Some(exist)) => {
-                            if *exist.as_ref() != ResolvedTy::unit() {
+                            if exist.clone() != pool!(self, unit) {
                                 return Err(make_semantic_error!(TypeMismatch));
                             }
                         }
@@ -2907,7 +2890,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     _ => panic!("Impossible"),
                 }
 
-                Ok(Some(Self::never_expr_result_int_specified(
+                Ok(Some(self.never_expr_result_int_specified(
                     int_flow.concat(InterruptControlFlow::Loop),
                 ))) // 没有 Never Type，使用 Unit Type 代替
             }
@@ -2919,7 +2902,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
             AnalyzeStage::Body => {
                 self.get_cycle_scope_mut()?;
-                Ok(Some(Self::never_expr_result_int_specified(
+                Ok(Some(self.never_expr_result_int_specified(
                     InterruptControlFlow::Loop,
                 )))
             }
@@ -2931,7 +2914,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.visit_expr(expr)?
         } else {
             match self.stage {
-                AnalyzeStage::Body => Some(Self::unit_expr_result()),
+                AnalyzeStage::Body => Some(self.unit_expr_result()),
                 _ => None,
             }
         };
@@ -2947,7 +2930,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 if !ret_ty.can_trans_to_target_type(target_ty) {
                     Err(make_semantic_error!(TypeMismatch))
                 } else {
-                    Ok(Some(Self::never_expr_result_int_specified(
+                    Ok(Some(self.never_expr_result_int_specified(
                         res.int_flow.concat(InterruptControlFlow::Return),
                     )))
                 }
@@ -3053,7 +3036,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
         match res {
             Some(res) => {
-                let size = self.const_eval(ResolvedTy::usize().into(), &const_expr.value)?;
+                let size = self.const_eval(pool!(self, usize), &const_expr.value)?;
                 no_assignee!(res.category);
 
                 Ok(Some(ExprResult {

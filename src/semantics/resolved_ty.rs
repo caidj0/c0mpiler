@@ -1,4 +1,4 @@
-use std::{rc::Rc, vec};
+use std::{collections::HashSet, rc::Rc, vec};
 
 use enum_as_inner::EnumAsInner;
 
@@ -23,68 +23,69 @@ pub enum ResolvedTy {
     Never,
 }
 
+#[allow(dead_code)]
 impl ResolvedTy {
-    pub fn unit() -> Self {
+    fn unit() -> Self {
         Self::Tup(Vec::new())
     }
 
-    pub fn bool() -> Self {
+    fn bool() -> Self {
         Self::BuiltIn(Symbol("bool".to_string()), Vec::new())
     }
 
-    pub fn char() -> Self {
+    fn char() -> Self {
         Self::BuiltIn(Symbol("char".to_string()), Vec::new())
     }
 
-    pub fn integer() -> Self {
+    fn integer() -> Self {
         Self::BuiltIn(Symbol("integer".to_string()), Vec::new())
     }
 
-    pub fn signed_integer() -> Self {
+    fn signed_integer() -> Self {
         Self::BuiltIn(Symbol("signed_integer".to_string()), Vec::new())
     }
 
-    pub fn i32() -> Self {
+    fn i32() -> Self {
         Self::BuiltIn(Symbol("i32".to_string()), Vec::new())
     }
 
-    pub fn u32() -> Self {
+    fn u32() -> Self {
         Self::BuiltIn(Symbol("u32".to_string()), Vec::new())
     }
 
-    pub fn isize() -> Self {
+    fn isize() -> Self {
         Self::BuiltIn(Symbol("isize".to_string()), Vec::new())
     }
 
-    pub fn usize() -> Self {
+    fn usize() -> Self {
         Self::BuiltIn(Symbol("usize".to_string()), Vec::new())
     }
 
-    pub fn str() -> Self {
+    fn str() -> Self {
         Self::BuiltIn(Symbol("str".to_string()), Vec::new())
     }
 
-    pub fn ref_str() -> Self {
+    fn ref_str() -> Self {
         Self::Ref(Rc::new(Self::str()), Mutability::Not)
     }
 
-    pub fn string() -> Self {
+    fn string() -> Self {
         Self::BuiltIn(Symbol("String".to_string()), Vec::new())
     }
 
-    pub fn big_self() -> Self {
+    fn big_self() -> Self {
         Self::Named(FullName(vec![Symbol("Self".to_string())]))
     }
 
-    pub fn implicit_self() -> Self {
+    fn implicit_self() -> Self {
         Self::ImplicitSelf
     }
 
-    pub fn ref_implicit_self() -> Self {
+    fn ref_implicit_self() -> Self {
         Self::Ref(Rc::new(Self::implicit_self()), Mutability::Not)
     }
 
-    pub fn ref_mut_implicit_self() -> Self {
+    fn ref_mut_implicit_self() -> Self {
         Self::Ref(Rc::new(Self::implicit_self()), Mutability::Mut)
     }
 
@@ -286,5 +287,98 @@ impl ResolvedTy {
         }
 
         Some(ret_ty)
+    }
+}
+
+macro_rules! prelude_pool {
+    ($(($name:ident, $b:expr)),*) => {
+        #[derive(Debug)]
+        pub struct PreludePool {
+            $(
+                pub $name: TypePtr
+            ),*
+        }
+
+        impl Default for PreludePool {
+            fn default() -> Self {
+
+                $(
+                    let $name: TypePtr = $b.into();
+                )*
+
+                Self {
+                    $(
+                        $name
+                    ),*
+                }
+            }
+        }
+    };
+}
+
+prelude_pool! {
+    (unit, ResolvedTy::Tup(Vec::new())),
+    (infer, ResolvedTy::Infer),
+    (never, ResolvedTy::Never),
+    (bool, ResolvedTy::BuiltIn(Symbol("bool".to_string()), Vec::new())),
+    (char, ResolvedTy::BuiltIn(Symbol("char".to_string()), Vec::new())),
+    (integer, ResolvedTy::BuiltIn(Symbol("integer".to_string()), Vec::new())),
+    (signed_integer, ResolvedTy::BuiltIn(Symbol("signed_integer".to_string()), Vec::new())),
+    (i32, ResolvedTy::BuiltIn(Symbol("i32".to_string()), Vec::new())),
+    (u32, ResolvedTy::BuiltIn(Symbol("u32".to_string()), Vec::new())),
+    (isize, ResolvedTy::BuiltIn(Symbol("isize".to_string()), Vec::new())),
+    (usize, ResolvedTy::BuiltIn(Symbol("usize".to_string()), Vec::new())),
+    (str, ResolvedTy::BuiltIn(Symbol("str".to_string()), Vec::new())),
+    (string, ResolvedTy::BuiltIn(Symbol("String".to_string()), Vec::new())),
+    (big_self, ResolvedTy::Named(FullName(vec![Symbol("Self".to_string())]))),
+    (implicit_self, ResolvedTy::ImplicitSelf),
+
+    (ref_str, ResolvedTy::Ref(str.clone(), Mutability::Not)),
+    (ref_implicit_self, ResolvedTy::Ref(implicit_self.clone(), Mutability::Not)),
+    (ref_mut_implicit_self, ResolvedTy::Ref(implicit_self.clone(), Mutability::Mut))
+}
+
+#[derive(Debug, Default)]
+pub struct ResolvedTypes(HashSet<TypePtr>);
+
+impl From<TypePtr> for ResolvedTypes {
+    fn from(value: TypePtr) -> Self {
+        Self(HashSet::from([value]))
+    }
+}
+
+impl<const N: usize> From<[TypePtr; N]> for ResolvedTypes {
+    fn from(value: [TypePtr; N]) -> Self {
+        Self(HashSet::from(value))
+    }
+}
+
+impl FromIterator<TypePtr> for ResolvedTypes {
+    fn from_iter<T: IntoIterator<Item = TypePtr>>(iter: T) -> Self {
+        Self(HashSet::from_iter(iter))
+    }
+}
+
+impl ResolvedTypes {
+    pub fn intersection(&self, other: &Self) -> Self {
+        self.0.intersection(&other.0).cloned().collect()
+    }
+
+    pub fn union(&self, other: &Self) -> Self {
+        self.0.union(&other.0).cloned().collect()
+    }
+
+    pub fn intersections<const T: usize>(sets: [Self; T]) -> Self {
+        let mut iter = sets.into_iter();
+
+        let Some(mut intersection) = iter.next() else {
+            return Self::default();
+        };
+
+        for other in iter {
+            intersection.0.retain(|e| other.0.contains(e));
+        }
+
+        intersection
     }
 }
