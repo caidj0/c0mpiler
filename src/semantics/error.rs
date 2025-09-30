@@ -61,6 +61,7 @@ pub enum SemanticErrorKind {
     ExprAfterExit,
     MainFunctionNotExited,
     NotSizedType,
+    MainFunctionWithNonUnit,
 }
 
 #[macro_export]

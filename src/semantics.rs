@@ -1432,7 +1432,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 // local 函数参数能被 item 遮蔽，从而应该是在此处添加到 scope 的
                 self.add_bindings(bindings, VariableKind::Inited)?;
-                *self.get_scope_mut().kind.as_fn_mut().unwrap().0 = ret_ty;
+                let unit = pool!(self, unit);
+                let kind = self.get_scope_mut().kind.as_fn_mut().unwrap();
+                if kind.1.is_un_exited() && ret_ty != unit {
+                    return Err(make_semantic_error!(MainFunctionWithNonUnit));
+                } 
+                *kind.0 = ret_ty;
 
                 self.exit_scope()?;
             }
@@ -2016,7 +2021,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     if let Ok(fn_scope) = self.get_fn_scope_mut() {
                         let (_, main_fn_state) = fn_scope.kind.as_fn_mut().unwrap();
                         match (&main_fn_state, ret_ty.is_never()) {
-                            // 只有 Exit 函数返回类型为 Never
+                            // 检查 Exit 函数，只有 Exit 函数返回类型为 Never
                             (MainFunctionState::Not, true) => {
                                 return Err(make_semantic_error!(NotMainFunction));
                             }
@@ -2033,7 +2038,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     Ok(Some(ExprResult {
                         expr_tys: ret_ty.clone().into(),
                         category: ExprCategory::Not,
-                        int_flow,
+                        int_flow: int_flow.concat(if ret_ty.is_never() {
+                            InterruptControlFlow::Return
+                        } else {
+                            InterruptControlFlow::Not
+                        }),
                     }))
                 } else {
                     Err(make_semantic_error!(NonFunctionCall))
