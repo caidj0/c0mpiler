@@ -5,7 +5,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{Mutability, NodeId, Symbol},
     const_eval::ConstEvalValue,
-    semantics::resolved_ty::{PreludePool, ResolvedTy, TypePtr},
+    semantics::resolved_ty::{PreludePool, ResolvedTy, ResolvedTypes, TypePtr},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -91,7 +91,7 @@ pub struct Variable {
     pub kind: VariableKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DerefLevel {
     Not,
     Deref(Mutability),
@@ -117,7 +117,7 @@ impl DerefLevel {
     }
 }
 
-#[derive(Debug, EnumAsInner, Clone)]
+#[derive(Debug, EnumAsInner)]
 pub enum ScopeKind {
     Lambda,
     Root,
@@ -129,7 +129,7 @@ pub enum ScopeKind {
         main_fn: MainFunctionState,
     },
     Loop {
-        ret_ty: Option<TypePtr>,
+        ret_ty: Option<ResolvedTypes>,
     },
     CycleExceptLoop,
 }
@@ -190,7 +190,7 @@ impl InterruptControlFlow {
 
 #[derive(Debug)]
 pub struct ExprResult {
-    pub expr_tys: TypePtr,
+    pub expr_tys: ResolvedTypes,
     pub category: ExprCategory,
     pub int_flow: InterruptControlFlow,
 }

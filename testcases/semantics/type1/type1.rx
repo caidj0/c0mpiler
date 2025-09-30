@@ -1,0 +1,6 @@
+fn main() {
+    let a: [&i32; 2] = [&mut & 1, & &mut 2i32];
+    let b: &[&mut [&i32; 1]; 2] = &mut [&mut [&1], &mut [&mut 2]];
+
+    exit(0);
+}

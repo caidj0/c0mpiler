@@ -1,6 +1,6 @@
 pub mod literal_eval;
 
-use std::{collections::HashMap, iter::repeat_n, rc::Rc};
+use std::{collections::HashMap, iter::repeat_n};
 
 use enum_as_inner::EnumAsInner;
 
@@ -17,7 +17,7 @@ use crate::{
     semantics::{
         AnalyzerState, SemanticAnalyzer,
         error::ConstEvalError,
-        resolved_ty::{PreludePool, ResolvedTy, TypePtr},
+        resolved_ty::{PreludePool, ResolvedTy, ResolvedTypes, TypePtr},
         utils::{FullName, ImplInfoItem, TypeKind, ValueContainer, Variable, VariableKind},
         visitor::Visitor,
     },
@@ -59,30 +59,37 @@ impl ConstEvalValue {
         matches!(self, Self::I32(_) | Self::ISize(_) | Self::SignedInteger(_))
     }
 
-    fn to_resolved_ty(&self, prelude_pool: &PreludePool) -> TypePtr {
+    fn to_resolved_types(&self, prelude_pool: &PreludePool) -> ResolvedTypes {
         match self {
-            ConstEvalValue::Placeholder => prelude_pool.infer.clone(),
-            ConstEvalValue::U32(_) => prelude_pool.u32.clone(),
-            ConstEvalValue::I32(_) => prelude_pool.i32.clone(),
-            ConstEvalValue::USize(_) => prelude_pool.usize.clone(),
-            ConstEvalValue::ISize(_) => prelude_pool.isize.clone(),
-            ConstEvalValue::Integer(_) => prelude_pool.integer.clone(),
-            ConstEvalValue::SignedInteger(_) => prelude_pool.signed_integer.clone(),
+            ConstEvalValue::Placeholder => panic!("Impossible!"),
+            ConstEvalValue::U32(_) => prelude_pool.u32.clone().into(),
+            ConstEvalValue::I32(_) => prelude_pool.i32.clone().into(),
+            ConstEvalValue::USize(_) => prelude_pool.usize.clone().into(),
+            ConstEvalValue::ISize(_) => prelude_pool.isize.clone().into(),
+            ConstEvalValue::Integer(_) => ResolvedTypes::from([
+                prelude_pool.u32.clone(),
+                prelude_pool.i32.clone(),
+                prelude_pool.usize.clone(),
+                prelude_pool.isize.clone(),
+            ]),
+            ConstEvalValue::SignedInteger(_) => {
+                ResolvedTypes::from([prelude_pool.i32.clone(), prelude_pool.isize.clone()])
+            }
             ConstEvalValue::UnitStruct(full_name)
             | ConstEvalValue::Struct(full_name, _)
-            | ConstEvalValue::Enum(full_name, _) => ResolvedTy::Named(full_name.clone()).into(),
-            ConstEvalValue::Bool(_) => prelude_pool.bool.clone(),
-            ConstEvalValue::Char(_) => prelude_pool.char.clone(),
-            ConstEvalValue::RefStr(_) => prelude_pool.ref_str.clone(),
-            ConstEvalValue::Array(const_eval_values) => ResolvedTy::Array(
+            | ConstEvalValue::Enum(full_name, _) => {
+                TypePtr::from(ResolvedTy::Named(full_name.clone())).into()
+            }
+            ConstEvalValue::Bool(_) => prelude_pool.bool.clone().into(),
+            ConstEvalValue::Char(_) => prelude_pool.char.clone().into(),
+            ConstEvalValue::RefStr(_) => prelude_pool.ref_str.clone().into(),
+            ConstEvalValue::Array(const_eval_values) => ResolvedTypes::Array(
                 const_eval_values
                     .first()
-                    .map_or(prelude_pool.infer.clone(), |x| {
-                        x.to_resolved_ty(prelude_pool)
-                    }),
+                    .map_or(ResolvedTypes::Infer, |x| x.to_resolved_types(prelude_pool))
+                    .into(),
                 const_eval_values.len().try_into().unwrap(),
-            )
-            .into(),
+            ),
             ConstEvalValue::UnEvaled(..) => panic!("Impossible!"),
         }
     }
@@ -90,13 +97,13 @@ impl ConstEvalValue {
     pub fn cast(
         self,
         prelude_pool: &PreludePool,
-        ty: &Rc<ResolvedTy>,
+        ty: &ResolvedTypes,
         explicit: bool,
     ) -> Result<Self, ConstEvalError> {
         fn cast_to_integer<T>(
             prelude_pool: &PreludePool,
             num: T,
-            ty: &Rc<ResolvedTy>,
+            ty: &ResolvedTypes,
         ) -> Result<ConstEvalValue, ConstEvalError>
         where
             T: TryInto<u32> + TryInto<i32>,
@@ -108,24 +115,33 @@ impl ConstEvalValue {
                 num.try_into().map_err(|_| make_const_eval_error!(Overflow))
             }
 
-            Ok(if *ty == prelude_pool.u32 {
+            Ok(if *ty == prelude_pool.u32.clone().into() {
                 ConstEvalValue::U32(try_into(num)?)
-            } else if *ty == prelude_pool.usize {
+            } else if *ty == prelude_pool.usize.clone().into() {
                 ConstEvalValue::USize(try_into(num)?)
-            } else if *ty == prelude_pool.i32 {
+            } else if *ty == prelude_pool.i32.clone().into() {
                 ConstEvalValue::I32(try_into(num)?)
-            } else if *ty == prelude_pool.isize {
+            } else if *ty == prelude_pool.isize.clone().into() {
                 ConstEvalValue::ISize(try_into(num)?)
-            } else if *ty == prelude_pool.signed_integer {
+            } else if *ty
+                == ResolvedTypes::from([prelude_pool.i32.clone(), prelude_pool.isize.clone()])
+            {
                 ConstEvalValue::SignedInteger(try_into(num)?)
-            } else if *ty == prelude_pool.integer {
+            } else if *ty
+                == ResolvedTypes::from([
+                    prelude_pool.i32.clone(),
+                    prelude_pool.isize.clone(),
+                    prelude_pool.u32.clone(),
+                    prelude_pool.usize.clone(),
+                ])
+            {
                 ConstEvalValue::Integer(try_into(num)?)
             } else {
                 return Err(make_const_eval_error!(NotSupportedCast));
             })
         }
 
-        if self.to_resolved_ty(prelude_pool) == *ty {
+        if self.to_resolved_types(prelude_pool) == *ty {
             return Ok(self);
         }
 
@@ -147,17 +163,25 @@ impl ConstEvalValue {
             ConstEvalValue::Bool(b) => cast_to_integer(prelude_pool, b, ty),
             ConstEvalValue::Char(c) => cast_to_integer(prelude_pool, c as u32, ty),
             ConstEvalValue::Array(values) => {
-                let ResolvedTy::Array(elm_ty, size) = ty.as_ref() else {
-                    return Err(make_const_eval_error!(TypeMisMatch));
-                };
+                let (elm_tys, len): (ResolvedTypes, u32) =
+                    if let ResolvedTypes::Array(elm_tys, len) = ty {
+                        ((**elm_tys).clone(), *len)
+                    } else if let Some(tys) = ty.as_types()
+                        && tys.len() == 1
+                        && let ResolvedTy::Array(elm_ty, len) = tys.iter().next().unwrap().as_ref()
+                    {
+                        (elm_ty.clone().into(), *len)
+                    } else {
+                        return Err(make_const_eval_error!(TypeMisMatch));
+                    };
 
-                if values.len() != *size as usize {
+                if values.len() != len as usize {
                     return Err(make_const_eval_error!(TypeMisMatch));
                 }
 
                 let elms = values
                     .into_iter()
-                    .map(|x| x.cast(prelude_pool, elm_ty, explicit))
+                    .map(|x| x.cast(prelude_pool, &elm_tys, explicit))
                     .collect::<Result<Vec<ConstEvalValue>, ConstEvalError>>()?;
 
                 Ok(ConstEvalValue::Array(elms))
@@ -167,7 +191,7 @@ impl ConstEvalValue {
             | ConstEvalValue::RefStr(_)
             | ConstEvalValue::Struct(_, _)
             | ConstEvalValue::Enum(..) => {
-                if self.to_resolved_ty(prelude_pool) == *ty {
+                if self.to_resolved_types(prelude_pool) == *ty {
                     Ok(self)
                 } else {
                     Err(make_const_eval_error!(NotSupportedCast))
@@ -191,8 +215,8 @@ impl<'a> ConstEvaler<'a> {
         evaler.visit_expr(expr)
     }
 
-    fn to_resolved_ty(&self, value: &ConstEvalValue) -> TypePtr {
-        value.to_resolved_ty(&self.analyzer.prelude_pool)
+    fn to_resolved_types(&self, value: &ConstEvalValue) -> ResolvedTypes {
+        value.to_resolved_types(&self.analyzer.prelude_pool)
     }
 }
 
@@ -295,9 +319,9 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
 
         let tys = values
             .iter()
-            .map(|x| self.to_resolved_ty(x))
-            .collect::<Vec<TypePtr>>();
-        let ut_ty = ResolvedTy::utilize(tys).ok_or(make_const_eval_error!(TypeMisMatch))?;
+            .map(|x| self.to_resolved_types(x))
+            .collect::<Vec<ResolvedTypes>>();
+        let ut_ty = ResolvedTypes::utilize(tys).ok_or(make_const_eval_error!(TypeMisMatch))?;
 
         let values = values
             .into_iter()
@@ -360,7 +384,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                     let value2 = value2
                         .cast(
                             &self.analyzer.prelude_pool,
-                            &self.analyzer.prelude_pool.u32,
+                            &self.analyzer.prelude_pool.u32.clone().into(),
                             true,
                         )?
                         .into_u32()
@@ -392,9 +416,9 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                     )
                 }
                 _ => {
-                    let ty = ResolvedTy::utilize(vec![
-                        value1.to_resolved_ty(&self.analyzer.prelude_pool),
-                        value2.to_resolved_ty(&self.analyzer.prelude_pool),
+                    let ty = ResolvedTypes::utilize(vec![
+                        value1.to_resolved_types(&self.analyzer.prelude_pool),
+                        value2.to_resolved_types(&self.analyzer.prelude_pool),
                     ])
                     .ok_or(make_const_eval_error!(NotSupportedBinary))?;
 
@@ -498,7 +522,7 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
         let cast_ty = self.analyzer.resolve_ty(cast_ty)?;
 
         let expr_res = self.visit_expr(expr)?;
-        expr_res.cast(&self.analyzer.prelude_pool, &cast_ty, true)
+        expr_res.cast(&self.analyzer.prelude_pool, &cast_ty.into(), true)
     }
 
     fn visit_let_expr(&mut self, _expr: &'ast crate::ast::expr::LetExpr) -> Self::ExprRes {
@@ -694,7 +718,10 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                     let Some((s, res)) = dic.remove_entry(field_ident) else {
                         return Err(make_semantic_error!(MissingField).into());
                     };
-                    dic.insert(s, res.cast(&self.analyzer.prelude_pool, field_ty, false)?);
+                    dic.insert(
+                        s,
+                        res.cast(&self.analyzer.prelude_pool, &field_ty.clone().into(), false)?,
+                    );
                 }
 
                 Ok(ConstEvalValue::Struct(

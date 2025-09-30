@@ -39,7 +39,6 @@ fn run(src: &str) -> Result<(), String> {
 #[test]
 fn my_semantic() {
     let escape_list = [
-        "autoderef1", // TODO: &&A -> &A, &mut &mut A -> &mut A
         "copy_trait1",
         "copy_trait2",
         "copy_trait3", // 不清楚 Copy Trait 要实现到哪一步

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, rc::Rc, vec};
+use std::{collections::HashSet, hash::Hash, rc::Rc, vec};
 
 use enum_as_inner::EnumAsInner;
 
@@ -19,7 +19,6 @@ pub enum ResolvedTy {
     Tup(Vec<TypePtr>),
     Fn(Vec<TypePtr>, TypePtr),
     ImplicitSelf,
-    Infer, // for underscore
     Never,
 }
 
@@ -35,14 +34,6 @@ impl ResolvedTy {
 
     fn char() -> Self {
         Self::BuiltIn(Symbol("char".to_string()), Vec::new())
-    }
-
-    fn integer() -> Self {
-        Self::BuiltIn(Symbol("integer".to_string()), Vec::new())
-    }
-
-    fn signed_integer() -> Self {
-        Self::BuiltIn(Symbol("signed_integer".to_string()), Vec::new())
     }
 
     fn i32() -> Self {
@@ -89,36 +80,23 @@ impl ResolvedTy {
         Self::Ref(Rc::new(Self::implicit_self()), Mutability::Mut)
     }
 
-    pub fn deref_once(&self) -> Option<(Rc<Self>, DerefLevel)> {
+    pub fn deref_once(&self) -> Option<(Rc<Self>, Mutability)> {
         if let ResolvedTy::Ref(resolved, mutbl) = self {
-            Some((resolved.clone(), DerefLevel::Deref(*mutbl)))
+            Some((resolved.clone(), *mutbl))
         } else {
             None
         }
     }
 
-    pub fn deref_all(&self) -> Option<(Rc<Self>, DerefLevel)> {
-        let (mut ret_ty, mut level) = self.deref_once()?;
-
-        while let ResolvedTy::Ref(resolved, mutbl) = ret_ty.as_ref() {
-            level = level.merge(DerefLevel::Deref(*mutbl));
-            ret_ty = resolved.clone();
-        }
-
-        Some((ret_ty, level))
-    }
-
     pub fn is_number_type(&self) -> bool {
-        *self == Self::integer()
-            || *self == Self::i32()
+        *self == Self::i32()
             || *self == Self::u32()
             || *self == Self::usize()
             || *self == Self::isize()
-            || *self == Self::signed_integer()
     }
 
     pub fn is_signed_number_type(&self) -> bool {
-        *self == Self::i32() || *self == Self::isize() || *self == Self::signed_integer()
+        *self == Self::i32() || *self == Self::isize()
     }
 
     pub fn is_implicit_self_or_ref_implicit_self(&self) -> bool {
@@ -205,56 +183,43 @@ impl ResolvedTy {
     }
 
     // 包括相等类型 + 其他情况
-    pub fn can_trans_to_target_type(&self, target: &Self) -> bool {
+    pub fn can_trans_to_target_type(&self, target: &Self, top_level: bool) -> bool {
         if self == target {
             return true;
         }
 
         match (self, target) {
-            (ResolvedTy::BuiltIn(_, _), ResolvedTy::BuiltIn(_, _)) => {
-                (*self == ResolvedTy::integer() && target.is_number_type())
-                    || (*self == ResolvedTy::signed_integer() && target.is_signed_number_type())
-            }
-            (ResolvedTy::Named(_), ResolvedTy::Named(_)) => false,
             (
                 ResolvedTy::Ref(resolved_ty1, mutability1),
                 ResolvedTy::Ref(resolved_ty2, mutability2),
-            ) => match (mutability1, mutability2) {
-                // TODO: &&A -> &A, &mut &mut A -> &mut A
-                (Mutability::Not, Mutability::Mut) => false,
-                _ => resolved_ty1.can_trans_to_target_type(resolved_ty2),
-            },
+            ) => {
+                if mutability1 == mutability2
+                    || (top_level && mutability1.can_trans_to(mutability2))
+                {
+                    resolved_ty1.can_trans_to_target_type(resolved_ty2, false)
+                } else {
+                    false
+                }
+            }
             (ResolvedTy::Array(resolved_ty1, len1), ResolvedTy::Array(resolved_ty2, len2)) => {
-                /*
-                    TODO:
-                    let d: [&mut i32; 2] = [&mut 1, &mut 2]; // Correct
-                    let e: [&i32; 2] = {
-                        let aa: [&mut i32; 2] = [&mut 1, &mut 2];
-                        aa
-                    }; // Error
-
-                    要么解析 expr 时传入 target type，要么为 trans 添加等级（后者真的完美吗？）
-                */
-
                 if len1 == len2 {
-                    resolved_ty1.can_trans_to_target_type(resolved_ty2)
+                    resolved_ty1.can_trans_to_target_type(resolved_ty2, false)
                 } else {
                     false
                 }
             }
             (ResolvedTy::Slice(resolved_ty1), ResolvedTy::Slice(resolved_ty2)) => {
-                resolved_ty1.can_trans_to_target_type(resolved_ty2)
+                resolved_ty1.can_trans_to_target_type(resolved_ty2, false)
             }
             (ResolvedTy::Tup(items1), ResolvedTy::Tup(items2)) => {
                 if items1.len() != items2.len() {
                     return false;
                 }
-                for (x, y) in items1.iter().zip(items2.iter()) {
-                    if !x.can_trans_to_target_type(y) {
-                        return false;
-                    }
-                }
-                true
+
+                items1
+                    .iter()
+                    .zip(items2.iter())
+                    .all(|(x, y)| x.can_trans_to_target_type(y, false))
             }
             (ResolvedTy::Fn(_, _), ResolvedTy::Fn(_, _)) => {
                 unimplemented!()
@@ -262,31 +227,21 @@ impl ResolvedTy {
             (ResolvedTy::ImplicitSelf, ResolvedTy::ImplicitSelf) => {
                 panic!("Impossible")
             }
-            (_, ResolvedTy::Infer) => true,
-            (ResolvedTy::Infer, _) => true, // TODO: Infer 类型到底如何变化？真的可以随意推导吗？
             (ResolvedTy::Never, _) => true,
             _ => false,
         }
     }
 
-    pub fn utilize(types: Vec<TypePtr>) -> Option<TypePtr> {
-        if types.is_empty() {
-            return Some(Rc::new(ResolvedTy::Infer));
-        }
-
-        let mut iter = types.into_iter();
-        let mut ret_ty = iter.next().unwrap();
-        for x in iter {
-            if !x.can_trans_to_target_type(&ret_ty) {
-                if ret_ty.can_trans_to_target_type(&x) {
-                    ret_ty = x;
-                } else {
-                    return None;
-                }
+    pub fn out_of_array(&self) -> Option<(TypePtr, DerefLevel)> {
+        match self {
+            ResolvedTy::Ref(resolved_ty, mutability) => resolved_ty
+                .out_of_array()
+                .map(|(a, b)| (a, b.merge(DerefLevel::Deref(*mutability)))),
+            ResolvedTy::Array(resolved_ty, _) | ResolvedTy::Slice(resolved_ty) => {
+                Some((resolved_ty.clone(), DerefLevel::Not))
             }
+            _ => None,
         }
-
-        Some(ret_ty)
     }
 }
 
@@ -318,12 +273,9 @@ macro_rules! prelude_pool {
 
 prelude_pool! {
     (unit, ResolvedTy::Tup(Vec::new())),
-    (infer, ResolvedTy::Infer),
     (never, ResolvedTy::Never),
     (bool, ResolvedTy::BuiltIn(Symbol("bool".to_string()), Vec::new())),
     (char, ResolvedTy::BuiltIn(Symbol("char".to_string()), Vec::new())),
-    (integer, ResolvedTy::BuiltIn(Symbol("integer".to_string()), Vec::new())),
-    (signed_integer, ResolvedTy::BuiltIn(Symbol("signed_integer".to_string()), Vec::new())),
     (i32, ResolvedTy::BuiltIn(Symbol("i32".to_string()), Vec::new())),
     (u32, ResolvedTy::BuiltIn(Symbol("u32".to_string()), Vec::new())),
     (isize, ResolvedTy::BuiltIn(Symbol("isize".to_string()), Vec::new())),
@@ -338,47 +290,236 @@ prelude_pool! {
     (ref_mut_implicit_self, ResolvedTy::Ref(implicit_self.clone(), Mutability::Mut))
 }
 
-#[derive(Debug, Default)]
-pub struct ResolvedTypes(HashSet<TypePtr>);
+#[derive(Debug, EnumAsInner, Clone, PartialEq, Eq)]
+pub enum ResolvedTypes {
+    Types(HashSet<TypePtr>),
+    Ref(Box<Self>, Mutability),
+    Array(Box<Self>, u32),
+    Infer,
+    Never,
+}
 
 impl From<TypePtr> for ResolvedTypes {
     fn from(value: TypePtr) -> Self {
-        Self(HashSet::from([value]))
+        Self::Types(HashSet::from([value]))
+    }
+}
+
+impl From<HashSet<TypePtr>> for ResolvedTypes {
+    fn from(value: HashSet<TypePtr>) -> Self {
+        Self::Types(value)
     }
 }
 
 impl<const N: usize> From<[TypePtr; N]> for ResolvedTypes {
     fn from(value: [TypePtr; N]) -> Self {
-        Self(HashSet::from(value))
+        Self::Types(HashSet::from(value))
     }
 }
 
 impl FromIterator<TypePtr> for ResolvedTypes {
     fn from_iter<T: IntoIterator<Item = TypePtr>>(iter: T) -> Self {
-        Self(HashSet::from_iter(iter))
+        Self::Types(HashSet::from_iter(iter))
     }
 }
 
 impl ResolvedTypes {
-    pub fn intersection(&self, other: &Self) -> Self {
-        self.0.intersection(&other.0).cloned().collect()
-    }
-
-    pub fn union(&self, other: &Self) -> Self {
-        self.0.union(&other.0).cloned().collect()
-    }
-
-    pub fn intersections<const T: usize>(sets: [Self; T]) -> Self {
+    fn intersections(sets: Vec<HashSet<TypePtr>>) -> Option<HashSet<TypePtr>> {
         let mut iter = sets.into_iter();
 
-        let Some(mut intersection) = iter.next() else {
-            return Self::default();
-        };
+        let mut intersection = iter.next()?;
 
         for other in iter {
-            intersection.0.retain(|e| other.0.contains(e));
+            intersection.retain(|e| other.contains(e));
         }
 
-        intersection
+        if intersection.is_empty() {
+            None
+        } else {
+            Some(intersection)
+        }
+    }
+
+    pub fn utilize(sets: Vec<Self>) -> Option<Self> {
+        let has_never = sets.iter().any(|x| x.is_never());
+        let has_infer = sets.iter().any(|x| x.is_infer());
+
+        let sets: Vec<Self> = sets
+            .into_iter()
+            .filter(|x| !x.is_never() && !x.is_infer())
+            .collect();
+
+        if sets.is_empty() {
+            if has_never {
+                return Some(Self::Never);
+            } else if has_infer {
+                return Some(Self::Infer);
+            } else {
+                return None;
+            }
+        }
+
+        let special = (|| {
+            if sets.iter().all(|x| x.is_ref()) {
+                let (inners, mutbls) = sets
+                    .iter()
+                    .map(|x| x.clone().into_ref().unwrap())
+                    .collect::<(Vec<_>, Vec<_>)>();
+
+                let mutbl = if mutbls.iter().all(|x| x.is_mut()) {
+                    Mutability::Mut
+                } else {
+                    Mutability::Not
+                };
+
+                let inner = Self::utilize(inners.into_iter().map(|x| *x).collect())?;
+
+                Some(Self::Ref(inner.into(), mutbl))
+            } else if sets.iter().all(|x| x.is_array()) {
+                let (inners, lens) = sets
+                    .iter()
+                    .map(|x| x.clone().into_array().unwrap())
+                    .collect::<(Vec<_>, Vec<_>)>();
+
+                let len = {
+                    let mut iter = lens.into_iter();
+                    let len = iter.next().unwrap();
+                    if iter.any(|x| x != len) {
+                        return None;
+                    }
+                    len
+                };
+
+                let inner = Self::utilize(inners.into_iter().map(|x| *x).collect())?;
+
+                Some(Self::Array(inner.into(), len))
+            } else {
+                None
+            }
+        })();
+
+        if special.is_none() {
+            let inners = sets
+                .into_iter()
+                .map(|x| x.to_resolved_tys())
+                .collect::<Vec<_>>();
+
+            let inner = Self::intersections(inners)?;
+
+            Some(Self::Types(inner))
+        } else {
+            special
+        }
+    }
+
+    // 对于 ResolvedTypes -> ResolvedTypes 的情况，应用 utilize
+    pub fn can_trans_to_target_type(&self, target: &Rc<ResolvedTy>) -> bool {
+        match (self, target.as_ref()) {
+            (Self::Types(types), _) => types
+                .iter()
+                .any(|x| x.can_trans_to_target_type(target, true)),
+            (Self::Ref(inner, mutbl), ResolvedTy::Ref(target_inner, target_mutbl)) => {
+                mutbl.can_trans_to(target_mutbl)
+                    && (inner.can_trans_to_target_type(target_inner)
+                        || inner.can_trans_to_target_type(target)/* 为了解决 &&a -> &a 的问题 */)
+            }
+            (Self::Array(inner, len), ResolvedTy::Array(target_inner, target_len)) => {
+                len == target_len && inner.can_trans_to_target_type(target_inner)
+            }
+            (Self::Infer, _) => true,
+            (Self::Never, _) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_number_type(&self) -> bool {
+        match self {
+            ResolvedTypes::Types(hash_set) => hash_set.iter().all(|x| x.is_number_type()),
+            ResolvedTypes::Never => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_signed_number_type(&self) -> bool {
+        match self {
+            ResolvedTypes::Types(hash_set) => hash_set.iter().all(|x| x.is_signed_number_type()),
+            ResolvedTypes::Never => true,
+            _ => false,
+        }
+    }
+
+    pub fn deref_once(self) -> Option<(Self, Mutability)> {
+        match self {
+            ResolvedTypes::Types(hash_set) => {
+                let (types, levels): (HashSet<TypePtr>, Vec<Mutability>) = hash_set
+                    .into_iter()
+                    .filter_map(|x| x.deref_once())
+                    .collect();
+
+                if types.is_empty() {
+                    return None;
+                }
+
+                let mutbl = *levels.first().unwrap();
+                debug_assert!(levels.iter().all(|x| *x == mutbl));
+
+                Some((Self::Types(types), mutbl))
+            }
+            ResolvedTypes::Ref(resolved_types, mutability) => Some((*resolved_types, mutability)),
+            _ => None,
+        }
+    }
+
+    pub fn out_of_array(self) -> Option<(Self, DerefLevel)> {
+        match self {
+            ResolvedTypes::Types(hash_set) => {
+                let (types, levels): (HashSet<TypePtr>, Vec<DerefLevel>) = hash_set
+                    .into_iter()
+                    .filter_map(|x| x.out_of_array())
+                    .collect();
+
+                if types.is_empty() {
+                    return None;
+                }
+
+                let level = *levels.first().unwrap();
+                debug_assert!(levels.iter().all(|x| *x == level));
+
+                Some((Self::Types(types), level))
+            }
+            ResolvedTypes::Ref(resolved_types, mutability) => resolved_types
+                .out_of_array()
+                .map(|(a, b)| (a, b.merge(DerefLevel::Deref(mutability)))),
+            ResolvedTypes::Array(resolved_types, _) => Some((*resolved_types, DerefLevel::Not)),
+            _ => None,
+        }
+    }
+
+    pub fn to_resolved_tys(&self) -> HashSet<TypePtr> {
+        match self {
+            ResolvedTypes::Types(hash_set) => hash_set.iter().cloned().collect(),
+            ResolvedTypes::Ref(resolved_types, mutability) => resolved_types
+                .to_resolved_tys()
+                .iter()
+                .flat_map(|x| {
+                    let mut ret = vec![TypePtr::from(ResolvedTy::Ref(x.clone(), *mutability))];
+
+                    if let ResolvedTy::Ref(inner, inner_mutbl) = x.as_ref() {
+                        ret.push(
+                            ResolvedTy::Ref(inner.clone(), inner_mutbl.merge(*mutability)).into(),
+                        )
+                    }
+
+                    ret.into_iter()
+                })
+                .collect(),
+            ResolvedTypes::Array(resolved_types, len) => resolved_types
+                .to_resolved_tys()
+                .iter()
+                .map(|x| ResolvedTy::Array(x.clone(), *len).into())
+                .collect(),
+            ResolvedTypes::Infer => HashSet::new(),
+            ResolvedTypes::Never => HashSet::from([ResolvedTy::Never.into()]),
+        }
     }
 }

@@ -19,5 +19,7 @@ fn main() {
     a.foo(&mut c);
     a.foo(&mut &mut c);
 
+    let d: [&i32; 3] = [&1, &&1, &mut & &mut 1];
+
     exit(0);
 }
