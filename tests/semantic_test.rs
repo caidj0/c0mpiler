@@ -46,7 +46,7 @@ fn my_semantic() {
     ];
     let case_path = "testcases/semantics";
 
-    run_test_cases(&escape_list, case_path);
+    run_test_cases(&escape_list, case_path, true);
 }
 
 #[test]
@@ -54,33 +54,42 @@ fn semantics_1() {
     let escape_list = [];
     let case_path = "RCompiler-Testcases/semantic-1";
 
-    run_test_cases(&escape_list, case_path);
+    run_test_cases(&escape_list, case_path, true);
 }
 
 #[test]
 #[ignore]
 fn semantics_2() {
-    let escape_list = [
-        "comprehensive1",  // Tuple Type
-        "comprehensive10", // No Exit
-        "comprehensive11",
-        "comprehensive12",
-        "comprehensive13",
-        "comprehensive14",
-        "comprehensive15", // if condtion without parentheses
-    ];
+    let escape_list = [];
     let case_path = "RCompiler-Testcases/semantic-2";
 
-    run_test_cases(&escape_list, case_path);
+    run_test_cases(&escape_list, case_path, false);
 }
 
-fn run_test_cases(escape_list: &[&'static str], case_path: &'static str) {
+fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at_fault: bool) {
     let mut entries: Vec<_> = fs::read_dir(case_path)
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
     entries.sort_by_key(|x| x.file_name());
+
+    let mut total: usize = 0;
+    let mut success: usize = 0;
+
+    macro_rules! fault {
+        ($($t:tt)*) => {
+            if stop_at_fault {
+                panic!($($t)*);
+            } else {
+                println!($($t)*);
+                println!();
+                continue;
+            }
+        };
+    }
+
     for x in entries {
+        total += 1;
         let name = x.file_name().into_string().unwrap();
         if escape_list.contains(&name.as_str()) {
             println!("{name} skiped!");
@@ -96,18 +105,24 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str) {
         let result = match panic::catch_unwind(|| run(src.as_str())) {
             Ok(result) => result,
             Err(_) => {
-                panic!("{name} caused panic!");
+                fault!("{name} caused panic!");
             }
         };
 
         match (should_pass, result) {
             (true, Ok(_)) | (false, Err(_)) => println!("{name} passed!"),
             (true, Err(e)) => {
-                panic!("{name} check failed, expect pass!\n{e}");
+                fault!("{name} check failed, expect pass!\n{e}");
             }
             (false, Ok(_)) => {
-                panic!("{name} check passed, expect fail!");
+                fault!("{name} check passed, expect fail!");
             }
         }
+        success += 1;
+    }
+
+    println!("Test Result: {}/{}", success, total);
+    if success < total {
+        panic!();
     }
 }
