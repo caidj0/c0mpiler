@@ -971,6 +971,7 @@ impl SemanticAnalyzer {
             expr_tys: pool!(self, unit).into(),
             category: ExprCategory::Not,
             int_flow,
+            value: None,
         }
     }
 
@@ -983,6 +984,7 @@ impl SemanticAnalyzer {
             expr_tys: ResolvedTypes::Never,
             category: ExprCategory::Not,
             int_flow,
+            value: None,
         }
     }
 
@@ -1872,6 +1874,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         expr_tys: expr_ty,
                         category,
                         int_flow,
+                        ..
                     } = expr_res.unwrap();
 
                     no_assignee!(category);
@@ -1951,6 +1954,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     expr_tys: ty,
                     category,
                     int_flow,
+                    ..
                 } = x.unwrap();
                 (ty, (category, int_flow))
             })
@@ -1969,6 +1973,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             expr_tys: ret_ty,
             category: cat,
             int_flow,
+            value: None,
         }))
     }
 
@@ -2043,6 +2048,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         } else {
                             InterruptControlFlow::Not
                         }),
+                        value: None,
                     }))
                 } else {
                     Err(make_semantic_error!(NonFunctionCall))
@@ -2075,6 +2081,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 expr_tys: ty,
                 category,
                 mut int_flow,
+                ..
             }) => {
                 no_assignee!(category);
                 let params_res = params_res.into_iter().collect::<Option<Vec<_>>>().unwrap();
@@ -2127,6 +2134,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     expr_tys: ret_ty.clone().into(),
                     category: ExprCategory::Not,
                     int_flow,
+                    value: None,
                 }))
             }
             None => {
@@ -2143,6 +2151,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     expr_tys: pool!(self, unit).into(),
                     category: ExprCategory::Place(Mutability::Mut),
                     int_flow: InterruptControlFlow::Not,
+                    value: None,
                 })
             } else {
                 None
@@ -2174,12 +2183,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     expr_tys: pool!(self, bool).into(),
                     category: ExprCategory::Not,
                     int_flow,
+                    value: None,
                 }));
                 let result_f = |ty: ResolvedTypes| {
                     Ok(Some(ExprResult {
                         expr_tys: ty,
                         category: ExprCategory::Not,
                         int_flow,
+                        value: None,
                     }))
                 };
 
@@ -2194,6 +2205,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             expr_tys: pool!(self, bool).into(),
                             category: ExprCategory::Not,
                             int_flow,
+                            value: None,
                         }));
                     };
 
@@ -2267,6 +2279,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         expr_tys: pool!(self, string).into(),
                         category: ExprCategory::Not,
                         int_flow,
+                        value: None,
                     }));
                 };
 
@@ -2329,6 +2342,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 expr_tys: ty,
                 category,
                 int_flow,
+                value,
             }) => {
                 debug_assert!(matches!(self.stage, AnalyzeStage::Body));
                 no_assignee!(category);
@@ -2342,6 +2356,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                 expr_tys: de,
                                 category: ExprCategory::Place(mutbl),
                                 int_flow,
+                                value: None,
                             }))
                         } else {
                             Err(make_semantic_error!(UnDereferenceable))
@@ -2354,23 +2369,34 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                                 expr_tys: ty.clone(),
                                 category: ExprCategory::Not,
                                 int_flow,
+                                value: None,
                             }))
                         } else {
                             Err(make_semantic_error!(NoImplementation))
                         }
                     }
                     UnOp::Neg => {
-                        if let Some(uted) = ResolvedTypes::utilize(vec![
+                        if value == Some(2147483648)
+                            && ty == [pool!(self, u32), pool!(self, usize)].into()
+                        {
+                            Ok(Some(ExprResult {
+                                expr_tys: [pool!(self, i32), pool!(self, isize)].into(),
+                                category: ExprCategory::Not,
+                                int_flow,
+                                value,
+                            }))
+                        } else if let Some(uted) = ResolvedTypes::utilize(vec![
                             ty,
                             ResolvedTypes::Types(HashSet::from([
                                 pool!(self, i32),
-                                pool!(self, u32),
+                                pool!(self, isize),
                             ])),
                         ]) {
                             Ok(Some(ExprResult {
                                 expr_tys: uted,
                                 category: ExprCategory::Not,
                                 int_flow,
+                                value,
                             }))
                         } else {
                             Err(make_semantic_error!(NoImplementation))
@@ -2385,44 +2411,50 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     fn visit_lit_expr(&mut self, expr: &'ast crate::ast::expr::LitExpr) -> Self::ExprRes {
         match self.stage {
             AnalyzeStage::SymbolCollect | AnalyzeStage::Definition | AnalyzeStage::Impl => Ok(None),
-            AnalyzeStage::Body => Ok(Some(ExprResult {
-                expr_tys: match expr.kind {
-                    LitKind::Bool => pool!(self, bool).into(),
-                    LitKind::Char => pool!(self, char).into(),
-                    LitKind::Integer => match &expr.suffix {
-                        Some(s) => {
-                            if s == "u32" {
-                                pool!(self, u32).into()
-                            } else if s == "i32" {
-                                pool!(self, i32).into()
-                            } else if s == "isize" {
-                                pool!(self, isize).into()
-                            } else if s == "usize" {
-                                pool!(self, usize).into()
-                            } else {
-                                return Err(make_semantic_error!(UnknownSuffix));
-                            }
+            AnalyzeStage::Body => {
+                let (expr_tys, value) = match expr.kind {
+                    LitKind::Bool => (pool!(self, bool).into(), None),
+                    LitKind::Char => (pool!(self, char).into(), None),
+                    LitKind::Integer => {
+                        let value = expr.to_integer()?;
+                        match value {
+                            ConstEvalValue::U32(v) => (pool!(self, u32).into(), Some(v)),
+                            ConstEvalValue::I32(v) => (pool!(self, i32).into(), Some(v as u32)),
+                            ConstEvalValue::USize(v) => (pool!(self, usize).into(), Some(v)),
+                            ConstEvalValue::ISize(v) => (pool!(self, usize).into(), Some(v as u32)),
+                            ConstEvalValue::Integer(v) => (
+                                if v < 2147483648 {
+                                    [
+                                        pool!(self, u32),
+                                        pool!(self, i32),
+                                        pool!(self, isize),
+                                        pool!(self, usize),
+                                    ]
+                                    .into()
+                                } else {
+                                    [pool!(self, u32), pool!(self, usize)].into()
+                                },
+                                Some(v),
+                            ),
+                            _ => panic!("Impossible!"),
                         }
-                        None => [
-                            pool!(self, u32),
-                            pool!(self, i32),
-                            pool!(self, isize),
-                            pool!(self, usize),
-                        ]
-                        .into(),
-                    },
+                    }
                     LitKind::Str | LitKind::StrRaw(_) => {
                         if expr.suffix.is_none() {
-                            pool!(self, ref_str).into()
+                            (pool!(self, ref_str).into(), None)
                         } else {
                             return Err(make_semantic_error!(UnknownSuffix));
                         }
                     }
                     _ => return Err(make_semantic_error!(Unimplemented)),
-                },
-                category: ExprCategory::Not,
-                int_flow: InterruptControlFlow::Not,
-            })),
+                };
+                Ok(Some(ExprResult {
+                    expr_tys,
+                    category: ExprCategory::Not,
+                    int_flow: InterruptControlFlow::Not,
+                    value,
+                }))
+            }
         }
     }
 
@@ -2433,6 +2465,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 expr_tys: expr_ty,
                 category,
                 int_flow,
+                ..
             }) => {
                 debug_assert!(matches!(self.stage, AnalyzeStage::Body));
                 no_assignee!(category);
@@ -2451,6 +2484,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         expr_tys: target_ty.into(),
                         category: ExprCategory::Not,
                         int_flow,
+                        value: None,
                     }))
                 } else {
                     Err(make_semantic_error!(IncompatibleCast))
@@ -2491,6 +2525,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         int_flow: con_res
                             .int_flow
                             .concat(take_res.int_flow.shunt(els_res.int_flow)),
+                        value: None,
                     }))
                 } else if take_res
                     .expr_tys
@@ -2582,6 +2617,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             .unwrap_or(pool!(self, never).into()),
                         category: ExprCategory::Not,
                         int_flow: out_of_cycle_int_flow,
+                        value: None,
                     }))
                 }
             }
@@ -2758,6 +2794,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     expr_tys: field.ty.into(),
                     category: ExprCategory::Place(res_mut.merge_with_deref_level(deref_level)),
                     int_flow: res.int_flow,
+                    value: None,
                 }))
             }
             None => Ok(None),
@@ -2792,6 +2829,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             DerefLevel::Deref(mutability) => mutability,
                         }),
                         int_flow: res1.int_flow.concat(res2.int_flow),
+                        value: None,
                     }))
                 } else {
                     Err(make_semantic_error!(TypeMismatch))
@@ -2816,6 +2854,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 expr_tys: ResolvedTypes::Infer,
                 category: ExprCategory::Only,
                 int_flow: InterruptControlFlow::Not,
+                value: None,
             })),
         }
     }
@@ -2868,12 +2907,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         expr_tys: variable.ty.clone().into(),
                         category: ExprCategory::Place(variable.mutbl),
                         int_flow: InterruptControlFlow::Not,
+                        value: None,
                     }))
                 }
                 ValueContainer::ImplInfoItem(ty, _) => Ok(Some(ExprResult {
                     expr_tys: ty.into(),
                     category: ExprCategory::Place(Mutability::Not),
                     int_flow: InterruptControlFlow::Not,
+                    value: None,
                 })),
                 ValueContainer::Temp(variable) => {
                     debug_assert!(
@@ -2887,6 +2928,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         expr_tys: variable.ty.into(),
                         category: ExprCategory::Place(variable.mutbl),
                         int_flow: InterruptControlFlow::Not,
+                        value: None,
                     }))
                 }
             }
@@ -2901,6 +2943,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 expr_tys: ty,
                 category,
                 int_flow,
+                ..
             }) => {
                 no_assignee!(category);
                 let ret_ty = ResolvedTypes::Ref(ty.into(), expr.0);
@@ -2908,6 +2951,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     expr_tys: ret_ty,
                     category: ExprCategory::Not,
                     int_flow,
+                    value: None,
                 }))
             }
             None => Ok(None),
@@ -3051,15 +3095,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                         let int_flow = exp_fields.iter().fold(
                             InterruptControlFlow::Not,
-                            |x,
-                             (
-                                _,
-                                ExprResult {
-                                    expr_tys: _,
-                                    category: _,
-                                    int_flow: y,
-                                },
-                            )| x.concat(*y),
+                            |x, (_, ExprResult { int_flow: y, .. })| x.concat(*y),
                         );
 
                         let mut dic: HashMap<Symbol, ExprResult> = HashMap::new();
@@ -3088,6 +3124,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             .into(),
                             category,
                             int_flow,
+                            value: None,
                         }))
                     }
 
@@ -3119,6 +3156,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ),
                     category: ExprCategory::Not,
                     int_flow: res.int_flow,
+                    value: None,
                 }))
             }
             None => Ok(None),

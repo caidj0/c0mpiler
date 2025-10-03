@@ -191,6 +191,7 @@ impl InterruptControlFlow {
 #[derive(Debug)]
 pub struct ExprResult {
     pub expr_tys: ResolvedTypes,
+    pub value: Option<u32>,
     pub category: ExprCategory,
     pub int_flow: InterruptControlFlow,
 }

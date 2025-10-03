@@ -500,12 +500,16 @@ impl<'a, 'ast> Visitor<'ast> for ConstEvaler<'a> {
                 ConstEvalValue::ISize(v) => Ok(ConstEvalValue::ISize(
                     v.checked_neg().ok_or(make_const_eval_error!(Overflow))?,
                 )),
-                ConstEvalValue::Integer(v) => Ok(ConstEvalValue::SignedInteger(
-                    TryInto::<i32>::try_into(v)
-                        .map_err(|_| make_const_eval_error!(Overflow))?
-                        .checked_neg()
-                        .ok_or(make_const_eval_error!(Overflow))?,
-                )),
+                ConstEvalValue::Integer(v) => {
+                    Ok(ConstEvalValue::SignedInteger(if v == 2147483648 {
+                        -2147483648
+                    } else {
+                        TryInto::<i32>::try_into(v)
+                            .map_err(|_| make_const_eval_error!(Overflow))?
+                            .checked_neg()
+                            .ok_or(make_const_eval_error!(Overflow))?
+                    }))
+                }
                 ConstEvalValue::SignedInteger(v) => Ok(ConstEvalValue::SignedInteger(
                     v.checked_neg().ok_or(make_const_eval_error!(Overflow))?,
                 )),
