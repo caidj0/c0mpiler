@@ -1262,7 +1262,7 @@ impl Eatable for AddrOfExpr {
         } else {
             Mutability::Not
         };
-        let expr = Expr::eat(iter)?;
+        let expr = Expr::eat_with_priority(iter, UNARY_PRIORITY + 1)?;
 
         let mut ret = Self(mutability, Box::new(expr));
 

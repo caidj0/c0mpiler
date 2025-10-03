@@ -9,7 +9,7 @@ use c0mpiler::{
 
 fn run(src: &str) -> Result<(), String> {
     let lexer = Lexer::new(src);
-    let buffer = TokenBuffer::new(lexer);
+    let buffer = TokenBuffer::new(lexer)?;
     let mut iter = buffer.iter();
     let krate = Crate::eat(&mut iter);
     match krate {
@@ -89,12 +89,12 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at
     }
 
     for x in entries {
-        total += 1;
         let name = x.file_name().into_string().unwrap();
         if escape_list.contains(&name.as_str()) {
             println!("{name} skiped!");
             continue;
         }
+        total += 1;
         let path = x.path();
         let info_path = path.join("testcase_info.json");
         let info: TestCaseInfo =

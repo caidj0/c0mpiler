@@ -1,0 +1,4 @@
+fn main() {
+    "\x80"; // hex escape out of range 
+    exit(0);
+}

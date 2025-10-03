@@ -1,0 +1,10 @@
+trait A { }
+
+impl A for isize {
+    const BAR: i32 = 123; // const `BAR` is not a member of trait `A`
+    fn foo(&self) { } // method `foo` is not a member of trait `A`
+}
+
+fn main() { 
+    exit(0);
+}

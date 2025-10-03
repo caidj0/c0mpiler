@@ -1,0 +1,8 @@
+fn foo() {
+    if ({ if (true) { return; } else { return; }; }) {}
+}
+
+fn main() {
+    foo();
+    exit(0);
+}

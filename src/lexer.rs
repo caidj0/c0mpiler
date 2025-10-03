@@ -227,7 +227,7 @@ impl<'a> TokenIter<'a> {
 }
 
 impl<'a> TokenBuffer<'a> {
-    pub fn new(mut lexer: Lexer<'a>) -> TokenBuffer<'a> {
+    pub fn new(mut lexer: Lexer<'a>) -> Result<TokenBuffer<'a>, String> {
         let mut buffer = Vec::new();
 
         loop {
@@ -240,12 +240,12 @@ impl<'a> TokenBuffer<'a> {
                     buffer.push(token);
                 }
                 Err(info) => {
-                    panic!("Tokenize error: {} at {}", info.0, info.1);
+                    return Err(format!("Tokenize error: {} at {}", info.0, info.1));
                 }
             }
         }
 
-        TokenBuffer { buffer }
+        Ok(TokenBuffer { buffer })
     }
 
     pub fn iter(&self) -> TokenIter<'_> {

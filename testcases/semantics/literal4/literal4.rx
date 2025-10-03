@@ -1,0 +1,4 @@
+fn main() {
+    'nope'; // Too long character literal
+    exit(0);
+}

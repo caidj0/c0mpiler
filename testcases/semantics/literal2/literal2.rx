@@ -1,0 +1,4 @@
+fn main() {
+    "Hello world!"ccb; // string with suffix
+    exit(0);
+}

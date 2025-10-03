@@ -1,0 +1,4 @@
+fn main() {
+    '\x1'; // Too short character escape
+    exit(0);
+}

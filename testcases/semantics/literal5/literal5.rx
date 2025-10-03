@@ -1,0 +1,4 @@
+fn main() {
+    '\x10\x10'; // Too long character literal
+    exit(0);
+}

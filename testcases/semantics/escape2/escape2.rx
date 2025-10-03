@@ -1,0 +1,5 @@
+fn main() {
+    let ok: &str = r"ab\[c";
+    let bad: &str = "ab\[c"; // Unknown escape
+    exit(0);
+}

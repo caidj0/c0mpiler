@@ -7,9 +7,9 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str = fs::read_to_string("testcases/semantics/type2/type2.rx").unwrap();
+    let test_str = fs::read_to_string("testcases/semantics/operator1/operator1.rx").unwrap();
     let lexer = Lexer::new(test_str.as_str());
-    let buffer = TokenBuffer::new(lexer);
+    let buffer = TokenBuffer::new(lexer).unwrap();
 
     let mut iter = buffer.iter();
     let krate = Crate::eat(&mut iter);

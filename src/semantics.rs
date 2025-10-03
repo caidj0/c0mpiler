@@ -1436,7 +1436,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let kind = self.get_scope_mut().kind.as_fn_mut().unwrap();
                 if kind.1.is_un_exited() && ret_ty != unit {
                     return Err(make_semantic_error!(MainFunctionWithNonUnit));
-                } 
+                }
                 *kind.0 = ret_ty;
 
                 self.exit_scope()?;

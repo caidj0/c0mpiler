@@ -132,10 +132,28 @@ pub struct RefTy(pub MutTy);
 
 impl Eatable for RefTy {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
-        match_keyword!(iter, TokenType::And);
+        let begin = iter.get_pos();
+        let is_double_and = is_keyword!(iter, TokenType::AndAnd);
+        if !is_double_and {
+            match_keyword!(iter, TokenType::And);
+        }
         let ty = MutTy::eat(iter)?;
 
-        Ok(Self(ty))
+        if is_double_and {
+            Ok(Self(MutTy {
+                ty: Box::new(Ty {
+                    kind: TyKind::Ref(Self(ty)),
+                    id: iter.assign_id(),
+                    span: Span {
+                        begin,
+                        end: iter.get_pos(),
+                    },
+                }),
+                mutbl: Mutability::Not,
+            }))
+        } else {
+            Ok(Self(ty))
+        }
     }
 }
 

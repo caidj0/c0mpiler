@@ -1,0 +1,4 @@
+fn false() {}
+fn main() {
+    exit(0);
+}
