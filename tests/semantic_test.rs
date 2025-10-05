@@ -1,4 +1,4 @@
-use std::{fs, panic};
+use std::{fs, panic, path::PathBuf, str::FromStr};
 
 use c0mpiler::{
     ast::{Crate, Eatable},
@@ -67,11 +67,10 @@ fn semantics_2() {
 }
 
 fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at_fault: bool) {
-    let mut entries: Vec<_> = fs::read_dir(case_path)
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
-    entries.sort_by_key(|x| x.file_name());
+    let path = PathBuf::from_str(case_path).unwrap();
+    let infos_path = path.join("global.json");
+    let infos: Vec<TestCaseInfo> =
+        serde_json::from_str(fs::read_to_string(infos_path).unwrap().as_str()).unwrap();
 
     let mut total: usize = 0;
     let mut success: usize = 0;
@@ -88,20 +87,16 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at
         };
     }
 
-    for x in entries {
-        let name = x.file_name().into_string().unwrap();
+    for x in infos {
+        let name = x.name;
         if escape_list.contains(&name.as_str()) {
             println!("{name} skiped!");
             continue;
         }
         total += 1;
-        let path = x.path();
-        let info_path = path.join("testcase_info.json");
-        let info: TestCaseInfo =
-            serde_json::from_str(fs::read_to_string(info_path).unwrap().as_str()).unwrap();
-        let src_path = path.join(format!("{name}.rx"));
+        let src_path = path.join(format!("src/{name}/{name}.rx"));
         let src = fs::read_to_string(src_path).unwrap();
-        let should_pass = info.compileexitcode == 0;
+        let should_pass = x.compileexitcode == 0;
         let result = match panic::catch_unwind(|| run(src.as_str())) {
             Ok(result) => result,
             Err(_) => {

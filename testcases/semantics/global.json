@@ -1,0 +1,114 @@
+[
+    {
+        "name": "assignee1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "assignee2",
+        "compileexitcode": -1
+    },
+    {
+        "name": "assignee3",
+        "compileexitcode": -1
+    },
+    {
+        "name": "autoderef1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "bad_ident1",
+        "compileexitcode": -1
+    },
+    {
+        "name": "chained_comparison",
+        "compileexitcode": -1
+    },
+    {
+        "name": "const_eval1",
+        "compileexitcode": -1
+    },
+    {
+        "name": "copy_trait1",
+        "compileexitcode": -1
+    },
+    {
+        "name": "copy_trait2",
+        "compileexitcode": -1
+    },
+    {
+        "name": "copy_trait3",
+        "compileexitcode": -1
+    },
+    {
+        "name": "escape1",
+        "compileexitcode": -1
+    },
+    {
+        "name": "escape2",
+        "compileexitcode": -1
+    },
+    {
+        "name": "expr_as_stmt",
+        "compileexitcode": -1
+    },
+    {
+        "name": "item_order1",
+        "compileexitcode": -1
+    },
+    {
+        "name": "item_order2",
+        "compileexitcode": 0
+    },
+    {
+        "name": "literal1",
+        "compileexitcode": -1
+    },
+    {
+        "name": "literal2",
+        "compileexitcode": -1
+    },
+    {
+        "name": "literal3",
+        "compileexitcode": -1
+    },
+    {
+        "name": "literal4",
+        "compileexitcode": -1
+    },
+    {
+        "name": "literal5",
+        "compileexitcode": -1
+    },
+    {
+        "name": "no_pure_str",
+        "compileexitcode": -1
+    },
+    {
+        "name": "operator1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait2",
+        "compileexitcode": -1
+    },
+    {
+        "name": "type1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "type2",
+        "compileexitcode": -1
+    },
+    {
+        "name": "unit_struct1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "unreachable1",
+        "compileexitcode": 0
+    }
+]
