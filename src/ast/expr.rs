@@ -31,8 +31,7 @@ define_priority! {
     or 10, and 20, compare 30, bitor 40, bitxor 50,
     bitand 60, shlshr 70, addsub 80, muldivrem 90,
     cast 500,
-    unary 1000000,
-    block 100000000
+    unary 1000000
 } // BlockExpression - Expression 处有歧义，暂时认为 block 后不能跟优先级在 index 之下的运算符
 
 #[derive(Debug)]
@@ -105,7 +104,7 @@ impl Eatable for Expr {
 impl Expr {
     pub fn eat_by_stmt(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();
-        let result = Expr::eat_with_priority_and_struct(
+        let result = Expr::eat_with_config(
             &mut using_iter,
             ExprEatConfig {
                 min_priority: 0,
@@ -118,7 +117,7 @@ impl Expr {
     }
 
     pub fn eat_without_struct(iter: &mut TokenIter) -> ASTResult<Self> {
-        Self::eat_with_priority_and_struct(
+        Self::eat_with_config(
             iter,
             ExprEatConfig {
                 min_priority: 0,
@@ -129,7 +128,7 @@ impl Expr {
     }
 
     pub fn eat_with_priority(iter: &mut TokenIter, min_priority: usize) -> ASTResult<Self> {
-        Self::eat_with_priority_and_struct(
+        Self::eat_with_config(
             iter,
             ExprEatConfig {
                 min_priority,
@@ -140,10 +139,10 @@ impl Expr {
     }
 
     // 这个 eat 失败时不会自动恢复 iter 位置，要小心使用
-    pub fn eat_with_priority_and_struct(
+    pub fn eat_with_config(
         iter: &mut TokenIter,
         ExprEatConfig {
-            mut min_priority,
+            min_priority,
             has_struct,
             is_stmt_environment,
         }: ExprEatConfig,
@@ -168,18 +167,14 @@ impl Expr {
             .map_err(|err2| err.select(err2))
         });
 
-        if let Ok(x) = &kind
+        let block_stmt = if let Ok(x) = &kind
             && is_stmt_environment
             && x.is_expr_with_block()
         {
-            min_priority = BLOCK_PRIORITY;
-        }
-
-        kind = kind.or_else(|err| match RangeHelper::eat_with_priority(iter, 0) {
-            Ok(Some(helper)) => Ok(ExprKind::Range(RangeExpr(None, helper.0, helper.1))),
-            Ok(None) => Err(err),
-            Err(err2) => Err(err.select(err2)),
-        });
+            true
+        } else {
+            false
+        };
 
         let kind = if let Ok(mut expr1) = kind {
             loop {
@@ -202,22 +197,30 @@ impl Expr {
                     })
                 } else if let Ok(helper) = FieldHelper::eat(iter) {
                     expr1 = ExprKind::Field(FieldExpr(warp_expr(expr1, iter), helper.0))
-                } else if let Some(helper) = CallHelper::try_eat(iter)? {
+                } else if !block_stmt && let Some(helper) = CallHelper::try_eat(iter)? {
                     expr1 = ExprKind::Call(CallExpr(warp_expr(expr1, iter), helper.0))
-                } else if let Some(helper) = IndexHelper::try_eat(iter)? {
+                } else if !block_stmt && let Some(helper) = IndexHelper::try_eat(iter)? {
                     expr1 = ExprKind::Index(IndexExpr(warp_expr(expr1, iter), helper.0))
-                } else if let Some(helper) = CastHelper::eat_with_priority(iter, min_priority)? {
+                } else if !block_stmt
+                    && let Some(helper) = CastHelper::eat_with_priority(iter, min_priority)?
+                {
                     expr1 = ExprKind::Cast(CastExpr(warp_expr(expr1, iter), helper.0))
-                } else if let Some(helper) =
-                    BinaryHelper::eat_with_priority_and_struct(iter, min_priority, has_struct)?
+                } else if !block_stmt
+                    && let Some(helper) =
+                        BinaryHelper::eat_with_priority_and_struct(iter, min_priority, has_struct)?
                 {
                     expr1 = ExprKind::Binary(BinaryExpr(helper.0, warp_expr(expr1, iter), helper.1))
-                } else if let Some(helper) = RangeHelper::eat_with_priority(iter, min_priority)? {
+                } else if !block_stmt
+                    && let Some(helper) = RangeHelper::eat_with_priority(iter, min_priority)?
+                {
                     expr1 =
                         ExprKind::Range(RangeExpr(Some(warp_expr(expr1, iter)), helper.0, helper.1))
-                } else if let Some(helper) = AssignHelper::eat_with_priority(iter, min_priority)? {
+                } else if !block_stmt
+                    && let Some(helper) = AssignHelper::eat_with_priority(iter, min_priority)?
+                {
                     expr1 = ExprKind::Assign(AssignExpr(warp_expr(expr1, iter), helper.0))
-                } else if let Some(helper) = AssignOpHelper::eat_with_priority(iter, min_priority)?
+                } else if !block_stmt
+                    && let Some(helper) = AssignOpHelper::eat_with_priority(iter, min_priority)?
                 {
                     expr1 =
                         ExprKind::AssignOp(AssignOpExpr(helper.0, warp_expr(expr1, iter), helper.1))
@@ -496,7 +499,7 @@ impl BinaryHelper {
             return Ok(None);
         };
 
-        let expr2 = Expr::eat_with_priority_and_struct(
+        let expr2 = Expr::eat_with_config(
             &mut using_iter,
             ExprEatConfig {
                 min_priority: op.get_priority() + 1,
@@ -871,25 +874,30 @@ impl Eatable for IfExpr {
 
         let block = BlockExpr::eat(iter)?;
 
-        let else_expr = if iter.peek()?.token_type == TokenType::Else {
-            iter.advance();
-
+        let else_expr = if is_keyword!(iter, TokenType::Else) {
             let t = iter.peek()?;
+            let begin = t.pos;
 
-            let else_expr = Expr::eat(iter)?;
-
-            match else_expr.kind {
-                ExprKind::Block(_) | ExprKind::If(_) => Some(Box::new(else_expr)),
-                _ => {
-                    return Err(SyntaxError {
-                        kind: crate::ast::SyntaxErrorKind::MisMatch {
-                            expected: "Block or If".to_owned(),
-                            actual: format!("{t:?}"),
-                        },
-                        pos: t.pos,
-                    });
-                }
-            }
+            Some(Box::new(Expr {
+                kind: match t.token_type {
+                    TokenType::If => ExprKind::If(IfExpr::eat(iter)?),
+                    TokenType::OpenCurly => ExprKind::Block(BlockExpr::eat(iter)?),
+                    _ => {
+                        return Err(SyntaxError {
+                            kind: crate::ast::SyntaxErrorKind::MisMatch {
+                                expected: "Block or If".to_owned(),
+                                actual: format!("{t:?}"),
+                            },
+                            pos: t.pos,
+                        });
+                    }
+                },
+                span: Span {
+                    begin,
+                    end: iter.get_pos(),
+                },
+                id: iter.assign_id(),
+            }))
         } else {
             None
         };
