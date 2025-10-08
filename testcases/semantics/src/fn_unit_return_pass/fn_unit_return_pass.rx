@@ -1,0 +1,8 @@
+fn report() {
+    let value: i32 = 1;
+}
+
+fn main() {
+    report();
+    exit(0);
+}

@@ -1,0 +1,8 @@
+struct Flag {
+    enabled: bool,
+}
+
+fn main() {
+    let flag: Flag = Flag { enabled: 1 };
+    exit(0);
+}

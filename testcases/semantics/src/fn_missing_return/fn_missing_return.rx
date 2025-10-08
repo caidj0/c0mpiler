@@ -1,0 +1,7 @@
+fn id() -> i32 {
+}
+
+fn main() {
+    let value: i32 = id();
+    exit(0);
+}

@@ -1,0 +1,9 @@
+struct Pair {
+    first: i32,
+    second: i32,
+}
+
+fn main() {
+    let pair: Pair = Pair { first: 1 };
+    exit(0);
+}

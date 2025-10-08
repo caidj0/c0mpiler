@@ -1,0 +1,22 @@
+fn main() {
+    loop {
+        if (true) {
+            break [[[[[[[[1]]]]]]]];
+        } else {
+            break [[[[[[[[2usize]]]]]]]];
+        }
+    };
+
+    let mut a: i32 = 1;
+    let mut b: i32 = 1;
+
+    loop {
+        if (true) {
+            break [&a];
+        } else {
+            break [&mut b];
+        }
+    };
+
+    exit(0);
+}

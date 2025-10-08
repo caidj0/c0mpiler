@@ -1,0 +1,19 @@
+fn main() {
+    let a:i32 = loop {
+        if (true) {
+            break 1;
+        } else {
+            break 2;
+        }
+    };
+
+    loop {
+        if (true) {
+            break 1;
+        } else {
+            break 2usize;
+        }
+    };
+
+    exit(0);
+}

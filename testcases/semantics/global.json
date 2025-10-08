@@ -80,6 +80,14 @@
         "compileexitcode": -1
     },
     {
+        "name": "literal6",
+        "compileexitcode": 0
+    },
+    {
+        "name": "literal6_bad",
+        "compileexitcode": -1
+    },
+    {
         "name": "no_pure_str",
         "compileexitcode": -1
     },
@@ -109,6 +117,98 @@
     },
     {
         "name": "unreachable1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "list1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "assign_immutable",
+        "compileexitcode": -1
+    },
+    {
+        "name": "fn_arg_count_mismatch",
+        "compileexitcode": -1
+    },
+    {
+        "name": "fn_arg_type_mismatch",
+        "compileexitcode": -1
+    },
+    {
+        "name": "fn_call_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "fn_missing_return",
+        "compileexitcode": -1
+    },
+    {
+        "name": "fn_return_mismatch",
+        "compileexitcode": -1
+    },
+    {
+        "name": "fn_unit_return_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "if_branch_mismatch",
+        "compileexitcode": -1
+    },
+    {
+        "name": "if_cond_nonbool",
+        "compileexitcode": -1
+    },
+    {
+        "name": "if_expr_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "struct_extra_field",
+        "compileexitcode": -1
+    },
+    {
+        "name": "struct_field_type_mismatch",
+        "compileexitcode": -1
+    },
+    {
+        "name": "struct_init_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "struct_method_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "struct_missing_field2",
+        "compileexitcode": -1
+    },
+    {
+        "name": "array_assign_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "block_expr_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "const_let_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "reference_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "while_loop_pass",
+        "compileexitcode": 0
+    },
+    {
+        "name": "loop1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "loop2",
         "compileexitcode": 0
     }
 ]

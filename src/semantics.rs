@@ -2376,31 +2376,31 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         }
                     }
                     UnOp::Neg => {
-                        if value == Some(2147483648)
-                            && ty == [pool!(self, u32), pool!(self, usize)].into()
-                        {
-                            Ok(Some(ExprResult {
-                                expr_tys: [pool!(self, i32), pool!(self, isize)].into(),
-                                category: ExprCategory::Not,
-                                int_flow,
-                                value,
-                            }))
-                        } else if let Some(uted) = ResolvedTypes::utilize(vec![
-                            ty,
-                            ResolvedTypes::Types(HashSet::from([
-                                pool!(self, i32),
-                                pool!(self, isize),
-                            ])),
-                        ]) {
-                            Ok(Some(ExprResult {
-                                expr_tys: uted,
-                                category: ExprCategory::Not,
-                                int_flow,
-                                value,
-                            }))
-                        } else {
-                            Err(make_semantic_error!(NoImplementation))
-                        }
+                        Ok(Some(ExprResult {
+                            expr_tys: {
+                                // 为了正确处理 ±2147483648 的 work around
+                                let signed = [pool!(self, i32), pool!(self, isize)].into();
+                                let unsigned = [pool!(self, u32), pool!(self, usize)].into();
+                                if value == Some(2147483648) && ty == unsigned {
+                                    signed
+                                } else if value == Some(2147483648) && ty == signed {
+                                    unsigned
+                                } else if let Some(uted) = ResolvedTypes::utilize(vec![
+                                    ty,
+                                    ResolvedTypes::Types(HashSet::from([
+                                        pool!(self, i32),
+                                        pool!(self, isize),
+                                    ])),
+                                ]) {
+                                    uted
+                                } else {
+                                    return Err(make_semantic_error!(NoImplementation));
+                                }
+                            },
+                            value: value.map(|x| !x + 1),
+                            category: ExprCategory::Not,
+                            int_flow,
+                        }))
                     }
                 }
             }
@@ -3104,6 +3104,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             if dic.insert(x.0, x.1).is_some() {
                                 return Err(make_semantic_error!(MultiSpecifiedField));
                             }
+                        }
+
+                        if dic.len() > fields.len() {
+                            return Err(make_semantic_error!(UnknownField));
                         }
 
                         for (field_ident, field_type) in fields {

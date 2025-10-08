@@ -1,0 +1,6 @@
+fn main() {
+    let value: i32 = 5;
+    let reference: &i32 = &value;
+    let same: i32 = *reference;
+    exit(0);
+}

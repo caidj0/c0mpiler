@@ -342,7 +342,6 @@ impl ResolvedTypes {
 
     pub fn utilize(sets: Vec<Self>) -> Option<Self> {
         let has_never = sets.iter().any(|x| x.is_never());
-        let has_infer = sets.iter().any(|x| x.is_infer());
 
         let sets: Vec<Self> = sets
             .into_iter()
@@ -352,10 +351,8 @@ impl ResolvedTypes {
         if sets.is_empty() {
             if has_never {
                 return Some(Self::Never);
-            } else if has_infer {
-                return Some(Self::Infer);
             } else {
-                return None;
+                return Some(Self::Infer);
             }
         }
 

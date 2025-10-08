@@ -1,0 +1,6 @@
+const VALUE: i32 = 4;
+
+fn main() {
+    let number: i32 = VALUE;
+    exit(0);
+}

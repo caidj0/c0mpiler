@@ -1,0 +1,8 @@
+struct Wrapper {
+    value: i32,
+}
+
+fn main() {
+    let wrap: Wrapper = Wrapper { value: 1, extra: 2 };
+    exit(0);
+}

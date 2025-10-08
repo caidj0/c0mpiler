@@ -1,0 +1,8 @@
+fn give() -> i32 {
+    return true;
+}
+
+fn main() {
+    let value: i32 = give();
+    exit(0);
+}
