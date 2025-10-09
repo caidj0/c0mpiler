@@ -10,11 +10,14 @@ use std::{
 };
 
 use crate::ir::{
-    ir_type::{ArrayType, IntType, PtrType, StructType, StructTypePtr, Type, TypePtr},
+    ir_type::{
+        ArrayType, FunctionType, IntType, PtrType, StructType, StructTypePtr, Type, TypePtr,
+    },
     ir_value::{
-        ConstantArray, ConstantArrayPtr, ConstantInt, ConstantIntPtr, ConstantPtr, ConstantString,
-        ConstantStringPtr, ConstantStruct, ConstantStructPtr, FunctionPtr, Instruction,
-        InstructionPtr, Value, ValueBase, ValuePtr,
+        Argument, ArgumentPtr, BasicBlock, BasicBlockPtr, BinaryOpcode, ConstantArray,
+        ConstantArrayPtr, ConstantInt, ConstantIntPtr, ConstantPtr, ConstantString,
+        ConstantStringPtr, ConstantStruct, ConstantStructPtr, Function, FunctionPtr, ICmpCode,
+        Instruction, InstructionPtr, Value, ValueBase, ValuePtr,
     },
 };
 
@@ -79,11 +82,16 @@ impl LLVMContext {
     pub fn create_builder(&self) -> LLVMBuilder {
         LLVMBuilder {
             ctx_impl: self.ctx_impl.clone(),
+            target_block: None,
         }
     }
 
     pub fn create_module(&mut self, name: String) -> Rc<LLVMModule> {
-        let module = Rc::new(LLVMModule::default());
+        let module = Rc::new(LLVMModule {
+            ctx_impl: self.ctx_impl.clone(),
+            functions: HashMap::default(),
+            function_order: Vec::new(),
+        });
         self.modules.insert(name, module.clone());
         module
     }
@@ -109,15 +117,11 @@ impl LLVMContext {
     }
 
     pub fn array_type(&self, inner_type: TypePtr, length: u32) -> TypePtr {
-        self.ctx_impl
-            .borrow_mut()
-            .get_array_type(inner_type, length)
+        self.ctx_impl.borrow_mut().array_type(inner_type, length)
     }
 
     pub fn struct_type(&self, inner_types: Vec<TypePtr>, packed: bool) -> TypePtr {
-        self.ctx_impl
-            .borrow_mut()
-            .get_struct_type(inner_types, packed)
+        self.ctx_impl.borrow_mut().struct_type(inner_types, packed)
     }
 
     pub fn create_opaque_struct_type(&self, name: String) -> TypePtr {
@@ -159,8 +163,32 @@ impl LLVMContext {
     pub fn get_string(&self, string: String) -> ConstantStringPtr {
         self.ctx_impl.borrow_mut().get_string(string)
     }
+
+    pub fn append_basic_block(&self, func: FunctionPtr, name: String) -> BasicBlockPtr {
+        let mut blocks = func.kind.as_function().unwrap().blocks.borrow_mut();
+        let label_ty = self.ctx_impl.borrow_mut().label_type();
+
+        let block = BasicBlockPtr(
+            Value {
+                base: ValueBase {
+                    name: Some(name.clone()),
+                    ty: label_ty,
+                },
+                kind: ir_value::ValueKind::BasicBlock(BasicBlock {
+                    instructions: RefCell::default(),
+                }),
+            }
+            .into(),
+        );
+
+        let len = blocks.len();
+        blocks.insert(name, (block.clone(), len));
+
+        block
+    }
 }
 
+#[derive(Debug)]
 pub struct LLVMContextImpl {
     ty_pool: ContextTypePool,
     named_strcut_ty: HashMap<String, TypePtr>,
@@ -202,18 +230,23 @@ impl LLVMContextImpl {
         self.ty_pool.label_type()
     }
 
-    fn get_array_type(&mut self, inner_type: TypePtr, length: u32) -> TypePtr {
+    fn array_type(&mut self, inner_type: TypePtr, length: u32) -> TypePtr {
         self.ty_pool
             .get_ty(&Type::Array(ArrayType(inner_type, length)))
     }
 
-    fn get_struct_type(&mut self, inner_types: Vec<TypePtr>, packed: bool) -> TypePtr {
+    fn struct_type(&mut self, inner_types: Vec<TypePtr>, packed: bool) -> TypePtr {
         self.ty_pool.get_ty(&Type::Struct(StructType(RefCell::new(
             ir_type::StructTypeEnum::Body {
                 ty: inner_types,
                 packed,
             },
         ))))
+    }
+
+    fn function_type(&mut self, ret_type: TypePtr, arg_tys: Vec<TypePtr>) -> TypePtr {
+        self.ty_pool
+            .get_ty(&Type::Function(FunctionType(ret_type, arg_tys)))
     }
 
     fn create_opaque_struct_type(&mut self, name: String) -> TypePtr {
@@ -270,7 +303,7 @@ impl LLVMContextImpl {
         if let Some(ret) = self.array_pool.get(&key) {
             ret.clone()
         } else {
-            let array_ty = self.get_array_type(key.0.clone(), key.1.len() as u32);
+            let array_ty = self.array_type(key.0.clone(), key.1.len() as u32);
 
             let ret = ConstantArrayPtr(ConstantPtr(
                 Value {
@@ -328,7 +361,7 @@ impl LLVMContextImpl {
             ret.clone()
         } else {
             let i8_type = self.i8_type();
-            let array_ty = self.get_array_type(i8_type, (string.len() + 1) as u32);
+            let array_ty = self.array_type(i8_type, (string.len() + 1) as u32);
 
             let ret = ConstantStringPtr(ConstantPtr(
                 Value {
@@ -352,15 +385,30 @@ impl LLVMContextImpl {
 
 pub struct LLVMBuilder {
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
+    target_block: Option<BasicBlockPtr>,
 }
 
 impl LLVMBuilder {
+    fn insert(&self, ins: InstructionPtr) -> InstructionPtr {
+        let bb = self
+            .target_block
+            .as_ref()
+            .unwrap()
+            .kind
+            .as_basic_block()
+            .unwrap();
+        bb.instructions.borrow_mut().push(ins.clone());
+        ins
+    }
+
     pub fn build_alloca(&self, ty: TypePtr, name: String) -> InstructionPtr {
-        InstructionPtr(
+        let ptr_type = self.ctx_impl.borrow_mut().ptr_type();
+
+        self.insert(InstructionPtr(
             Value {
                 base: ValueBase {
                     name: Some(name),
-                    ty: ty,
+                    ty: ptr_type,
                 },
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Alloca,
@@ -368,34 +416,327 @@ impl LLVMBuilder {
                 }),
             }
             .into(),
-        )
+        ))
     }
 
-    pub fn build_conditional_branch(&self, cond: ValuePtr, iftrue: ValuePtr, ifelse: ValuePtr) -> InstructionPtr {
-        debug_assert!({
-            let mut ctx = self.ctx_impl.borrow_mut();
-            let i1_type = ctx.i1_type();
-            let label_type = ctx.label_type();
+    pub fn build_load(&self, ty: TypePtr, ptr: ValuePtr, name: String) -> InstructionPtr {
+        debug_assert!(ptr.is_ptr_type());
 
-            cond.base.ty == i1_type && iftrue.base.ty == label_type && ifelse.base.ty == label_type
-        });
-
-        InstructionPtr(
+        self.insert(InstructionPtr(
             Value {
-                base: ValueBase { name: None, ty: ty }, // 它的类型是什么？Store 指令是怎么插进去的？
+                base: ValueBase {
+                    name: Some(name),
+                    ty: ty,
+                },
                 kind: ir_value::ValueKind::Instruction(Instruction {
-                    kind: ir_value::InstructionKind::Branch,
-                    operands: vec![cond],
+                    kind: ir_value::InstructionKind::Load,
+                    operands: vec![ptr],
                 }),
             }
             .into(),
-        )
+        ))
+    }
+
+    pub fn build_store(&self, value: ValuePtr, ptr: ValuePtr) -> InstructionPtr {
+        debug_assert!(ptr.is_ptr_type());
+
+        let void_type = self.ctx_impl.borrow_mut().void_type();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: None,
+                    ty: void_type,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Store,
+                    operands: vec![value, ptr],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_conditional_branch(
+        &self,
+        cond: ValuePtr,
+        iftrue: BasicBlockPtr,
+        ifelse: BasicBlockPtr,
+    ) -> InstructionPtr {
+        debug_assert!({
+            let mut ctx = self.ctx_impl.borrow_mut();
+            let i1_type = ctx.i1_type();
+            cond.base.ty == i1_type
+        });
+
+        let void_type = self.ctx_impl.borrow_mut().void_type();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: None,
+                    ty: void_type,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Branch,
+                    operands: vec![cond, iftrue.into(), ifelse.into()],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_branch(&self, dest: BasicBlockPtr) -> InstructionPtr {
+        let void_type = self.ctx_impl.borrow_mut().void_type();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: None,
+                    ty: void_type,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Branch,
+                    operands: vec![dest.into()],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_return(&self, value: Option<ValuePtr>) -> InstructionPtr {
+        let void_type = self.ctx_impl.borrow_mut().void_type();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: None,
+                    ty: void_type,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Ret {
+                        is_void: value.is_none(),
+                    },
+                    operands: value.into_iter().collect(),
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_getelementptr(
+        &self,
+        base_ty: TypePtr,
+        ptr: ValuePtr,
+        gets: Vec<ValuePtr>,
+    ) -> InstructionPtr {
+        debug_assert!(ptr.is_ptr_type());
+
+        let ptr_type = self.ctx_impl.borrow_mut().ptr_type();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: None,
+                    ty: ptr_type,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::GetElementPtr { base_ty },
+                    operands: [vec![ptr], gets].concat(),
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_icmp(
+        &self,
+        cond: ICmpCode,
+        value1: ValuePtr,
+        value2: ValuePtr,
+        name: String,
+    ) -> InstructionPtr {
+        debug_assert!(value1.base.ty == value2.base.ty);
+
+        let bool_type = self.ctx_impl.borrow_mut().i1_type();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: Some(name),
+                    ty: bool_type,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Icmp(cond),
+                    operands: vec![value1, value2],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_call(
+        &self,
+        func: FunctionPtr,
+        args: Vec<ValuePtr>,
+        name: String,
+    ) -> InstructionPtr {
+        debug_assert!(
+            func.is_function_type() && {
+                let target_tys = &func.base.ty.as_function().unwrap().1;
+                target_tys.len() == args.len()
+                    && target_tys
+                        .iter()
+                        .zip(args.iter())
+                        .all(|(x, y)| *x == y.base.ty)
+            }
+        );
+
+        let ret_ty = func.base.ty.as_function().unwrap().0.clone();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: Some(name),
+                    ty: ret_ty,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Call,
+                    operands: [vec![func.into()], args].concat(),
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_phi(
+        &self,
+        ty: TypePtr,
+        froms: Vec<(ValuePtr, BasicBlockPtr)>,
+        name: String,
+    ) -> InstructionPtr {
+        debug_assert!(froms.iter().all(|(t, _)| t.base.ty == ty));
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: Some(name),
+                    ty,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Phi,
+                    operands: froms
+                        .into_iter()
+                        .flat_map(|(x, y)| [x, y.into()].into_iter())
+                        .collect(),
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_select(
+        &self,
+        cond: ValuePtr,
+        value1: ValuePtr,
+        value2: ValuePtr,
+        name: String,
+    ) -> InstructionPtr {
+        debug_assert!(cond.is_array_type() && value1.base.ty == value2.base.ty);
+
+        let ty = value1.base.ty.clone();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: Some(name),
+                    ty,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Select,
+                    operands: vec![cond, value1, value2],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_binary(
+        &self,
+        operator: BinaryOpcode,
+        ty: TypePtr,
+        value1: ValuePtr,
+        value2: ValuePtr,
+        name: String,
+    ) -> InstructionPtr {
+        debug_assert!(value1.base.ty == value2.base.ty);
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase {
+                    name: Some(name),
+                    ty,
+                },
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Binary(operator),
+                    operands: vec![value1, value2],
+                }),
+            }
+            .into(),
+        ))
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct LLVMModule {
+    ctx_impl: Rc<RefCell<LLVMContextImpl>>,
     functions: HashMap<String, FunctionPtr>,
+    function_order: Vec<String>,
 }
 
-impl LLVMModule {}
+impl LLVMModule {
+    pub fn add_function(
+        &mut self,
+        ret_ty: TypePtr,
+        arg_tys: Vec<(String, TypePtr)>,
+        name: String,
+    ) -> FunctionPtr {
+        let mut ctx = self.ctx_impl.borrow_mut();
+
+        let func_ty = ctx.function_type(ret_ty, arg_tys.iter().map(|(_, ty)| ty.clone()).collect());
+        let params = arg_tys
+            .into_iter()
+            .map(|(name, ty)| {
+                ArgumentPtr(
+                    Value {
+                        base: ValueBase {
+                            name: Some(name),
+                            ty: ty,
+                        },
+                        kind: ir_value::ValueKind::Argument(Argument),
+                    }
+                    .into(),
+                )
+            })
+            .collect();
+
+        let func = FunctionPtr(
+            Value {
+                base: ValueBase {
+                    name: Some(name.clone()),
+                    ty: func_ty,
+                },
+                kind: ir_value::ValueKind::Function(Function {
+                    params,
+                    blocks: RefCell::default(), // 把 basicblock 的 refcell 移到这里？
+                }),
+            }
+            .into(),
+        );
+
+        self.functions.insert(name.clone(), func.clone());
+        self.function_order.push(name);
+
+        func
+    }
+}
