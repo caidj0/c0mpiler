@@ -16,10 +16,44 @@ pub struct Value {
     pub kind: ValueKind,
 }
 
+impl Value {
+    pub fn new(base: ValueBase, kind: ValueKind) -> Self {
+        Self { base, kind }
+    }
+
+    pub fn set_name(&self, name: String) {
+        *self.base.name.borrow_mut() = Some(name);
+    }
+
+    pub fn get_name(&self) -> Option<String> {
+        self.base.name.borrow().clone()
+    }
+
+    pub fn get_type(&self) -> &TypePtr {
+        &self.base.ty
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct ValueBase {
-    pub name: Option<String>,
+    pub name: RefCell<Option<String>>,
     pub ty: TypePtr,
+}
+
+impl ValueBase {
+    pub fn new(ty: TypePtr) -> Self {
+        Self {
+            name: RefCell::new(None),
+            ty,
+        }
+    }
+
+    pub fn new_with_name(name: String, ty: TypePtr) -> Self {
+        Self {
+            name: RefCell::new(Some(name)),
+            ty,
+        }
+    }
 }
 
 #[derive(Debug, EnumAsInner, PartialEq, Eq)]
@@ -39,6 +73,10 @@ macro_rules! check_value_type {
 
                 pub fn [<is_ $cat:snake _type>] (&self) -> bool {
                     self.base.ty.[<is_ $cat:snake>]()
+                }
+
+                pub fn [<get_type_as_ $cat:snake>] (&self) -> Option<& crate::ir::ir_type::[<$cat:camel Type>]> {
+                    self.base.ty.[<as_ $cat:snake>]()
                 }
 
                 )*
@@ -75,14 +113,31 @@ pub struct Instruction {
     pub operands: Vec<ValuePtr>,
 }
 
+impl Instruction {
+    pub fn get_instruction_name(&self) -> &'static str {
+        match &self.kind {
+            InstructionKind::Binary(binary_opcode) => binary_opcode.get_operator_name(),
+            InstructionKind::Call => "call",
+            InstructionKind::Branch { .. } => "br",
+            InstructionKind::GetElementPtr { .. } => "getelementptr",
+            InstructionKind::Alloca { .. } => "alloca",
+            InstructionKind::Load => "load",
+            InstructionKind::Ret { .. } => "ret",
+            InstructionKind::Store => "store",
+            InstructionKind::Icmp(..) => "icmp",
+            InstructionKind::Phi => "phi",
+            InstructionKind::Select => "select",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum InstructionKind {
     Binary(BinaryOpcode), // 单目运算符都需要转化为双目运算符
     Call,
-    Branch,
-    Return,
+    Branch { has_cond: bool },
     GetElementPtr { base_ty: TypePtr },
-    Alloca,
+    Alloca { inner_ty: TypePtr },
     Load,
     Ret { is_void: bool },
     Store,
@@ -109,6 +164,26 @@ pub enum BinaryOpcode {
     Xor,
 }
 
+impl BinaryOpcode {
+    pub fn get_operator_name(&self) -> &'static str {
+        match self {
+            BinaryOpcode::Add => "add",
+            BinaryOpcode::Sub => "sub",
+            BinaryOpcode::Mul => "mul",
+            BinaryOpcode::UDiv => "udiv",
+            BinaryOpcode::SDiv => "sdiv",
+            BinaryOpcode::URem => "urem",
+            BinaryOpcode::SRem => "srem",
+            BinaryOpcode::Shl => "shl",
+            BinaryOpcode::LShr => "lshr",
+            BinaryOpcode::AShr => "ashr",
+            BinaryOpcode::And => "and",
+            BinaryOpcode::Or => "or",
+            BinaryOpcode::Xor => "xor",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum ICmpCode {
     Eq,
@@ -123,10 +198,37 @@ pub enum ICmpCode {
     Sle,
 }
 
+impl ICmpCode {
+    pub fn get_operator_name(&self) -> &'static str {
+        match &self {
+            ICmpCode::Eq => "eq",
+            ICmpCode::Ne => "ne",
+            ICmpCode::Ugt => "ugt",
+            ICmpCode::Uge => "uge",
+            ICmpCode::Ult => "ult",
+            ICmpCode::Ule => "ule",
+            ICmpCode::Sgt => "sgt",
+            ICmpCode::Sge => "sge",
+            ICmpCode::Slt => "slt",
+            ICmpCode::Sle => "sle",
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Function {
     pub params: Vec<ArgumentPtr>,
     pub blocks: RefCell<HashMap<String, (BasicBlockPtr, usize)>>,
+}
+
+impl Function {
+    pub fn get_nth_argument(&self, n: usize) -> Option<&ArgumentPtr> {
+        self.params.get(n)
+    }
+
+    pub fn args(&self) -> &[ArgumentPtr] {
+        &self.params
+    }
 }
 
 // 只有常量池才会
@@ -185,3 +287,35 @@ impl Hash for ConstantPtr {
         self.kind.as_constant().unwrap().hash(state);
     }
 }
+
+macro_rules! value_dispatch {
+    ($($name:ident),*) => {
+        $(
+            paste::paste!{
+                impl [<$name:camel Ptr>] {
+                    pub fn [<as_ $name:snake>] (&self) -> & $name {
+                        self.kind.[<as_ $name:snake>]().unwrap()
+                    }
+                }
+            }
+        )*
+    };
+}
+
+value_dispatch!(BasicBlock, Argument, Constant, Instruction, Function);
+
+macro_rules! into_extend {
+    ($grandfather:ident; $father:ident ;$($name:ident),*) => {
+        $(
+            paste::paste!{
+                impl From<$name> for $grandfather {
+                    fn from(value: $name) -> Self {
+                        Into::<$father>::into(value).into()
+                    }
+                }
+            }
+        )*
+    };
+}
+
+into_extend!(ValuePtr; ConstantPtr; ConstantIntPtr, ConstantArrayPtr, ConstantStructPtr, ConstantStringPtr);

@@ -1,3 +1,4 @@
+pub mod ir_output;
 pub mod ir_type;
 pub mod ir_value;
 
@@ -11,7 +12,8 @@ use std::{
 
 use crate::ir::{
     ir_type::{
-        ArrayType, FunctionType, IntType, PtrType, StructType, StructTypePtr, Type, TypePtr,
+        ArrayType, ArrayTypePtr, FunctionType, FunctionTypePtr, IntType, IntTypePtr, LabelType,
+        PtrType, PtrTypePtr, StructType, StructTypePtr, Type, TypePtr, VoidType,
     },
     ir_value::{
         Argument, ArgumentPtr, BasicBlock, BasicBlockPtr, BinaryOpcode, ConstantArray,
@@ -21,8 +23,14 @@ use crate::ir::{
     },
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct ContextPool<T>(HashSet<Rc<T>>);
+
+impl<T> Default for ContextPool<T> {
+    fn default() -> Self {
+        Self(Default::default())
+    }
+}
 
 impl<T> ContextPool<T>
 where
@@ -59,7 +67,7 @@ impl ContextTypePool {
     }
 
     fn void_type(&mut self) -> TypePtr {
-        self.get_ty(&Type::Void)
+        self.get_ty(&Type::Void(VoidType))
     }
 
     fn ptr_type(&mut self) -> TypePtr {
@@ -67,14 +75,13 @@ impl ContextTypePool {
     }
 
     fn label_type(&mut self) -> TypePtr {
-        self.get_ty(&Type::Label)
+        self.get_ty(&Type::Label(LabelType))
     }
 }
 
 // 存放符号表，常量等
+#[derive(Debug, Default)]
 pub struct LLVMContext {
-    modules: HashMap<String, Rc<LLVMModule>>,
-
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
 }
 
@@ -86,45 +93,47 @@ impl LLVMContext {
         }
     }
 
-    pub fn create_module(&mut self, name: String) -> Rc<LLVMModule> {
-        let module = Rc::new(LLVMModule {
+    pub fn create_module(&mut self, name: String) -> LLVMModule {
+        LLVMModule {
+            _name: name,
             ctx_impl: self.ctx_impl.clone(),
             functions: HashMap::default(),
-            function_order: Vec::new(),
-        });
-        self.modules.insert(name, module.clone());
-        module
+        }
     }
 
-    pub fn i1_type(&self) -> TypePtr {
+    pub fn i1_type(&self) -> IntTypePtr {
         self.ctx_impl.borrow_mut().i1_type()
     }
 
-    pub fn i8_type(&self) -> TypePtr {
+    pub fn i8_type(&self) -> IntTypePtr {
         self.ctx_impl.borrow_mut().i8_type()
     }
 
-    pub fn i32_type(&self) -> TypePtr {
+    pub fn i32_type(&self) -> IntTypePtr {
         self.ctx_impl.borrow_mut().i32_type()
     }
 
-    pub fn void_type(&self) -> TypePtr {
+    pub fn void_type(&self) -> IntTypePtr {
         self.ctx_impl.borrow_mut().void_type()
     }
 
-    pub fn ptr_type(&self) -> TypePtr {
+    pub fn ptr_type(&self) -> PtrTypePtr {
         self.ctx_impl.borrow_mut().ptr_type()
     }
 
-    pub fn array_type(&self, inner_type: TypePtr, length: u32) -> TypePtr {
+    pub fn array_type(&self, inner_type: TypePtr, length: u32) -> ArrayTypePtr {
         self.ctx_impl.borrow_mut().array_type(inner_type, length)
     }
 
-    pub fn struct_type(&self, inner_types: Vec<TypePtr>, packed: bool) -> TypePtr {
+    pub fn struct_type(&self, inner_types: Vec<TypePtr>, packed: bool) -> StructTypePtr {
         self.ctx_impl.borrow_mut().struct_type(inner_types, packed)
     }
 
-    pub fn create_opaque_struct_type(&self, name: String) -> TypePtr {
+    pub fn function_type(&self, ret_type: TypePtr, arg_tys: Vec<TypePtr>) -> FunctionTypePtr {
+        self.ctx_impl.borrow_mut().function_type(ret_type, arg_tys)
+    }
+
+    pub fn create_opaque_struct_type(&self, name: String) -> StructTypePtr {
         self.ctx_impl.borrow_mut().create_opaque_struct_type(name)
     }
 
@@ -164,16 +173,13 @@ impl LLVMContext {
         self.ctx_impl.borrow_mut().get_string(string)
     }
 
-    pub fn append_basic_block(&self, func: FunctionPtr, name: String) -> BasicBlockPtr {
-        let mut blocks = func.kind.as_function().unwrap().blocks.borrow_mut();
+    pub fn append_basic_block(&self, func: &FunctionPtr, name: String) -> BasicBlockPtr {
+        let mut blocks = func.as_function().blocks.borrow_mut();
         let label_ty = self.ctx_impl.borrow_mut().label_type();
 
         let block = BasicBlockPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name.clone()),
-                    ty: label_ty,
-                },
+                base: ValueBase::new_with_name(name.clone(), label_ty),
                 kind: ir_value::ValueKind::BasicBlock(BasicBlock {
                     instructions: RefCell::default(),
                 }),
@@ -188,7 +194,7 @@ impl LLVMContext {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LLVMContextImpl {
     ty_pool: ContextTypePool,
     named_strcut_ty: HashMap<String, TypePtr>,
@@ -202,59 +208,65 @@ pub struct LLVMContextImpl {
 }
 
 impl LLVMContextImpl {
-    fn int_type(&mut self, bit_width: u8) -> TypePtr {
-        self.ty_pool.int_type(bit_width)
+    fn int_type(&mut self, bit_width: u8) -> IntTypePtr {
+        IntTypePtr(self.ty_pool.int_type(bit_width))
     }
 
-    fn i1_type(&mut self) -> TypePtr {
-        self.ty_pool.i1_type()
+    fn i1_type(&mut self) -> IntTypePtr {
+        IntTypePtr(self.ty_pool.i1_type())
     }
 
-    fn i8_type(&mut self) -> TypePtr {
-        self.ty_pool.i8_type()
+    fn i8_type(&mut self) -> IntTypePtr {
+        IntTypePtr(self.ty_pool.i8_type())
     }
 
-    fn i32_type(&mut self) -> TypePtr {
-        self.ty_pool.i32_type()
+    fn i32_type(&mut self) -> IntTypePtr {
+        IntTypePtr(self.ty_pool.i32_type())
     }
 
-    fn void_type(&mut self) -> TypePtr {
-        self.ty_pool.void_type()
+    fn void_type(&mut self) -> IntTypePtr {
+        IntTypePtr(self.ty_pool.void_type())
     }
 
-    fn ptr_type(&mut self) -> TypePtr {
-        self.ty_pool.ptr_type()
+    fn ptr_type(&mut self) -> PtrTypePtr {
+        PtrTypePtr(self.ty_pool.ptr_type())
     }
 
     fn label_type(&mut self) -> TypePtr {
         self.ty_pool.label_type()
     }
 
-    fn array_type(&mut self, inner_type: TypePtr, length: u32) -> TypePtr {
-        self.ty_pool
-            .get_ty(&Type::Array(ArrayType(inner_type, length)))
+    fn array_type(&mut self, inner_type: TypePtr, length: u32) -> ArrayTypePtr {
+        ArrayTypePtr(
+            self.ty_pool
+                .get_ty(&Type::Array(ArrayType(inner_type, length))),
+        )
     }
 
-    fn struct_type(&mut self, inner_types: Vec<TypePtr>, packed: bool) -> TypePtr {
-        self.ty_pool.get_ty(&Type::Struct(StructType(RefCell::new(
-            ir_type::StructTypeEnum::Body {
+    fn struct_type(&mut self, inner_types: Vec<TypePtr>, packed: bool) -> StructTypePtr {
+        StructTypePtr(self.ty_pool.get_ty(&Type::Struct(StructType {
+            name: RefCell::new(None),
+            kind: RefCell::new(ir_type::StructTypeEnum::Body {
                 ty: inner_types,
                 packed,
-            },
-        ))))
+            }),
+        })))
     }
 
-    fn function_type(&mut self, ret_type: TypePtr, arg_tys: Vec<TypePtr>) -> TypePtr {
-        self.ty_pool
-            .get_ty(&Type::Function(FunctionType(ret_type, arg_tys)))
+    fn function_type(&mut self, ret_type: TypePtr, arg_tys: Vec<TypePtr>) -> FunctionTypePtr {
+        FunctionTypePtr(
+            self.ty_pool
+                .get_ty(&Type::Function(FunctionType(ret_type, arg_tys))),
+        )
     }
 
-    fn create_opaque_struct_type(&mut self, name: String) -> TypePtr {
-        let ret = Rc::new(Type::Struct(StructType(RefCell::new(
-            ir_type::StructTypeEnum::Opaque,
-        ))));
+    fn create_opaque_struct_type(&mut self, name: String) -> StructTypePtr {
+        let ret = Rc::new(Type::Struct(StructType {
+            name: RefCell::new(Some(name.clone())),
+            kind: RefCell::new(ir_type::StructTypeEnum::Opaque),
+        }));
         self.named_strcut_ty.insert(name, ret.clone());
-        ret
+        StructTypePtr(ret)
     }
 
     fn get_int(&mut self, value: u32, bit_width: u8) -> ConstantIntPtr {
@@ -262,10 +274,7 @@ impl LLVMContextImpl {
             ret.clone()
         } else {
             let ret = ConstantIntPtr(ConstantPtr(ValuePtr::new(Value {
-                base: ValueBase {
-                    name: None,
-                    ty: self.int_type(bit_width),
-                },
+                base: ValueBase::new(self.int_type(bit_width).into()),
                 kind: ir_value::ValueKind::Constant(ir_value::Constant::ConstantInt(ConstantInt(
                     value,
                 ))),
@@ -296,7 +305,7 @@ impl LLVMContextImpl {
     }
 
     fn get_array(&mut self, inner_ty: TypePtr, values: Vec<ConstantPtr>) -> ConstantArrayPtr {
-        debug_assert!(values.iter().all(|x| x.base.ty == inner_ty));
+        debug_assert!(values.iter().all(|x| *x.get_type() == inner_ty));
 
         let key = (inner_ty, values);
 
@@ -307,10 +316,7 @@ impl LLVMContextImpl {
 
             let ret = ConstantArrayPtr(ConstantPtr(
                 Value {
-                    base: ValueBase {
-                        name: None,
-                        ty: array_ty,
-                    },
+                    base: ValueBase::new(array_ty.into()),
                     kind: ir_value::ValueKind::Constant(ir_value::Constant::ConstantArray(
                         ConstantArray(key.1.clone()),
                     )),
@@ -330,8 +336,12 @@ impl LLVMContextImpl {
         values: Vec<ConstantPtr>,
     ) -> ConstantStructPtr {
         debug_assert!(
-            struct_ty
-                .is_fields_type_same(&values.iter().map(|x| x.base.ty.clone()).collect::<Vec<_>>())
+            struct_ty.is_fields_type_same(
+                &values
+                    .iter()
+                    .map(|x| x.get_type().clone())
+                    .collect::<Vec<_>>()
+            )
         );
 
         if let Some(ret) = self.struct_pool.get(&values) {
@@ -339,10 +349,7 @@ impl LLVMContextImpl {
         } else {
             let ret = ConstantStructPtr(ConstantPtr(
                 Value {
-                    base: ValueBase {
-                        name: None,
-                        ty: struct_ty.into(),
-                    },
+                    base: ValueBase::new(struct_ty.into()),
                     kind: ir_value::ValueKind::Constant(ir_value::Constant::ConstantStruct(
                         ConstantStruct(values.clone()),
                     )),
@@ -361,14 +368,11 @@ impl LLVMContextImpl {
             ret.clone()
         } else {
             let i8_type = self.i8_type();
-            let array_ty = self.array_type(i8_type, (string.len() + 1) as u32);
+            let array_ty = self.array_type(i8_type.into(), (string.len() + 1) as u32);
 
             let ret = ConstantStringPtr(ConstantPtr(
                 Value {
-                    base: ValueBase {
-                        name: None,
-                        ty: array_ty,
-                    },
+                    base: ValueBase::new(array_ty.into()),
                     kind: ir_value::ValueKind::Constant(ir_value::Constant::ConstantString(
                         ConstantString(string.clone()),
                     )),
@@ -389,14 +393,12 @@ pub struct LLVMBuilder {
 }
 
 impl LLVMBuilder {
+    pub fn locate(&mut self, target_block: BasicBlockPtr) {
+        self.target_block = Some(target_block)
+    }
+
     fn insert(&self, ins: InstructionPtr) -> InstructionPtr {
-        let bb = self
-            .target_block
-            .as_ref()
-            .unwrap()
-            .kind
-            .as_basic_block()
-            .unwrap();
+        let bb = self.target_block.as_ref().unwrap().as_basic_block();
         bb.instructions.borrow_mut().push(ins.clone());
         ins
     }
@@ -406,12 +408,9 @@ impl LLVMBuilder {
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name),
-                    ty: ptr_type,
-                },
+                base: ValueBase::new_with_name(name, ptr_type.into()),
                 kind: ir_value::ValueKind::Instruction(Instruction {
-                    kind: ir_value::InstructionKind::Alloca,
+                    kind: ir_value::InstructionKind::Alloca { inner_ty: ty },
                     operands: vec![],
                 }),
             }
@@ -424,10 +423,7 @@ impl LLVMBuilder {
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name),
-                    ty: ty,
-                },
+                base: ValueBase::new_with_name(name, ty),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Load,
                     operands: vec![ptr],
@@ -444,10 +440,7 @@ impl LLVMBuilder {
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: None,
-                    ty: void_type,
-                },
+                base: ValueBase::new(void_type.into()),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Store,
                     operands: vec![value, ptr],
@@ -466,19 +459,16 @@ impl LLVMBuilder {
         debug_assert!({
             let mut ctx = self.ctx_impl.borrow_mut();
             let i1_type = ctx.i1_type();
-            cond.base.ty == i1_type
+            *cond.get_type() == i1_type.into()
         });
 
         let void_type = self.ctx_impl.borrow_mut().void_type();
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: None,
-                    ty: void_type,
-                },
+                base: ValueBase::new(void_type.into()),
                 kind: ir_value::ValueKind::Instruction(Instruction {
-                    kind: ir_value::InstructionKind::Branch,
+                    kind: ir_value::InstructionKind::Branch { has_cond: true },
                     operands: vec![cond, iftrue.into(), ifelse.into()],
                 }),
             }
@@ -491,12 +481,9 @@ impl LLVMBuilder {
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: None,
-                    ty: void_type,
-                },
+                base: ValueBase::new(void_type.into()),
                 kind: ir_value::ValueKind::Instruction(Instruction {
-                    kind: ir_value::InstructionKind::Branch,
+                    kind: ir_value::InstructionKind::Branch { has_cond: false },
                     operands: vec![dest.into()],
                 }),
             }
@@ -509,10 +496,7 @@ impl LLVMBuilder {
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: None,
-                    ty: void_type,
-                },
+                base: ValueBase::new(void_type.into()),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Ret {
                         is_void: value.is_none(),
@@ -536,10 +520,7 @@ impl LLVMBuilder {
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: None,
-                    ty: ptr_type,
-                },
+                base: ValueBase::new(ptr_type.into()),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::GetElementPtr { base_ty },
                     operands: [vec![ptr], gets].concat(),
@@ -556,16 +537,13 @@ impl LLVMBuilder {
         value2: ValuePtr,
         name: String,
     ) -> InstructionPtr {
-        debug_assert!(value1.base.ty == value2.base.ty);
+        debug_assert!(value1.get_type() == value2.get_type());
 
         let bool_type = self.ctx_impl.borrow_mut().i1_type();
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name),
-                    ty: bool_type,
-                },
+                base: ValueBase::new_with_name(name, bool_type.into()),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Icmp(cond),
                     operands: vec![value1, value2],
@@ -583,23 +561,20 @@ impl LLVMBuilder {
     ) -> InstructionPtr {
         debug_assert!(
             func.is_function_type() && {
-                let target_tys = &func.base.ty.as_function().unwrap().1;
+                let target_tys = &func.get_type_as_function().unwrap().1;
                 target_tys.len() == args.len()
                     && target_tys
                         .iter()
                         .zip(args.iter())
-                        .all(|(x, y)| *x == y.base.ty)
+                        .all(|(x, y)| x == y.get_type())
             }
         );
 
-        let ret_ty = func.base.ty.as_function().unwrap().0.clone();
+        let ret_ty = func.get_type_as_function().unwrap().0.clone();
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name),
-                    ty: ret_ty,
-                },
+                base: ValueBase::new_with_name(name, ret_ty),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Call,
                     operands: [vec![func.into()], args].concat(),
@@ -615,14 +590,11 @@ impl LLVMBuilder {
         froms: Vec<(ValuePtr, BasicBlockPtr)>,
         name: String,
     ) -> InstructionPtr {
-        debug_assert!(froms.iter().all(|(t, _)| t.base.ty == ty));
+        debug_assert!(froms.iter().all(|(t, _)| *t.get_type() == ty));
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name),
-                    ty,
-                },
+                base: ValueBase::new_with_name(name, ty),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Phi,
                     operands: froms
@@ -642,16 +614,13 @@ impl LLVMBuilder {
         value2: ValuePtr,
         name: String,
     ) -> InstructionPtr {
-        debug_assert!(cond.is_array_type() && value1.base.ty == value2.base.ty);
+        debug_assert!(cond.is_array_type() && value1.get_type() == value2.get_type());
 
-        let ty = value1.base.ty.clone();
+        let ty = value1.get_type().clone();
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name),
-                    ty,
-                },
+                base: ValueBase::new_with_name(name, ty),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Select,
                     operands: vec![cond, value1, value2],
@@ -669,14 +638,11 @@ impl LLVMBuilder {
         value2: ValuePtr,
         name: String,
     ) -> InstructionPtr {
-        debug_assert!(value1.base.ty == value2.base.ty);
+        debug_assert!(value1.get_type() == value2.get_type());
 
         self.insert(InstructionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name),
-                    ty,
-                },
+                base: ValueBase::new_with_name(name, ty),
                 kind: ir_value::ValueKind::Instruction(Instruction {
                     kind: ir_value::InstructionKind::Binary(operator),
                     operands: vec![value1, value2],
@@ -689,30 +655,27 @@ impl LLVMBuilder {
 
 #[derive(Debug)]
 pub struct LLVMModule {
+    _name: String,
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
-    functions: HashMap<String, FunctionPtr>,
-    function_order: Vec<String>,
+
+    // 应该不需要 GlobalVariable, 因为没有可变变量, constant 直接复制进去就行了😇
+    functions: HashMap<String, (FunctionPtr, usize)>,
 }
 
 impl LLVMModule {
     pub fn add_function(
         &mut self,
-        ret_ty: TypePtr,
-        arg_tys: Vec<(String, TypePtr)>,
+        func_ty: FunctionTypePtr,
         name: String,
+        args_name: Option<Vec<String>>,
     ) -> FunctionPtr {
-        let mut ctx = self.ctx_impl.borrow_mut();
-
-        let func_ty = ctx.function_type(ret_ty, arg_tys.iter().map(|(_, ty)| ty.clone()).collect());
-        let params = arg_tys
-            .into_iter()
-            .map(|(name, ty)| {
+        let mut params: Vec<ArgumentPtr> = func_ty
+            .1
+            .iter()
+            .map(|x| {
                 ArgumentPtr(
                     Value {
-                        base: ValueBase {
-                            name: Some(name),
-                            ty: ty,
-                        },
+                        base: ValueBase::new(x.clone()),
                         kind: ir_value::ValueKind::Argument(Argument),
                     }
                     .into(),
@@ -720,23 +683,64 @@ impl LLVMModule {
             })
             .collect();
 
+        if let Some(args_name) = args_name {
+            debug_assert!(params.len() == args_name.len());
+
+            params
+                .iter_mut()
+                .zip(args_name.into_iter())
+                .for_each(|(param, name)| param.set_name(name));
+        }
+
         let func = FunctionPtr(
             Value {
-                base: ValueBase {
-                    name: Some(name.clone()),
-                    ty: func_ty,
-                },
+                base: ValueBase::new_with_name(name.clone(), func_ty.into()),
                 kind: ir_value::ValueKind::Function(Function {
                     params,
-                    blocks: RefCell::default(), // 把 basicblock 的 refcell 移到这里？
+                    blocks: RefCell::default(),
                 }),
             }
             .into(),
         );
 
-        self.functions.insert(name.clone(), func.clone());
-        self.function_order.push(name);
+        let len = self.functions.len();
+        self.functions.insert(name.clone(), (func.clone(), len));
 
         func
     }
+}
+
+#[test]
+fn foo() {
+    let mut context = LLVMContext::default();
+    let mut builder = context.create_builder();
+    let mut module = context.create_module("module".to_string());
+
+    let struct_type = context.create_opaque_struct_type("Struct".to_string());
+    struct_type.set_body(
+        vec![context.i32_type().into(), context.i32_type().into()],
+        false,
+    );
+
+    let i32_type = context.i32_type();
+
+    let function_type = context.function_type(i32_type.clone().into(), vec![]);
+
+    let func = module.add_function(function_type, "main".to_string(), None);
+    let bb = context.append_basic_block(&func, "entry".to_string());
+
+    builder.locate(bb);
+
+    let sum = builder.build_binary(
+        BinaryOpcode::Add,
+        i32_type.clone().into(),
+        context.get_i32(3).into(),
+        context.get_i32(3).into(),
+        "sum".to_string(),
+    );
+
+    builder.build_return(Some(sum.into()));
+
+    let result = module.print();
+    println!("{result}");
 }

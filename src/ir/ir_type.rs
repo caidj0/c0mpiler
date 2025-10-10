@@ -11,11 +11,10 @@ pub enum Type {
     Ptr(PtrType),
     Struct(StructType),
     Array(ArrayType),
-    Void,
+    Void(VoidType),
 
-    Label, // basic block 专用
+    Label(LabelType), // basic block 专用
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IntType(pub u8);
@@ -23,27 +22,40 @@ pub struct IntType(pub u8);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FunctionType(pub Rc<Type>, pub Vec<Rc<Type>>);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StructType(pub RefCell<StructTypeEnum>);
+#[derive(Debug, Clone, Eq)]
+pub struct StructType {
+    pub name: RefCell<Option<String>>,
+    pub kind: RefCell<StructTypeEnum>,
+}
+
+impl PartialEq for StructType {
+    fn eq(&self, other: &Self) -> bool {
+        self.kind == other.kind
+    }
+}
 
 impl Hash for StructType {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let ptr = self.0.borrow();
+        let ptr = self.kind.borrow();
         ptr.as_body().unwrap().hash(state);
     }
 }
 
 impl StructType {
     pub fn set_body(&self, ty: Vec<TypePtr>, packed: bool) {
-        (*self.0.borrow_mut()) = StructTypeEnum::Body { ty, packed };
+        (*self.kind.borrow_mut()) = StructTypeEnum::Body { ty, packed };
     }
 
     pub fn get_body(&self) -> Option<Vec<Rc<Type>>> {
-        self.0.borrow().as_body().map(|x| x.0).cloned()
+        self.kind.borrow().as_body().map(|x| x.0).cloned()
+    }
+
+    pub fn get_name(&self) -> Option<String> {
+        self.name.borrow().clone()
     }
 
     pub fn is_fields_type_same(&self, tys: &[TypePtr]) -> bool {
-        let borrowed = self.0.borrow();
+        let borrowed = self.kind.borrow();
         let Some((body, _)) = borrowed.as_body() else {
             return false;
         };
@@ -63,6 +75,12 @@ pub struct ArrayType(pub Rc<Type>, pub u32);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PtrType;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct LabelType;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VoidType;
 
 macro_rules! define_extension {
     ($($name:ident),*) => {
@@ -91,4 +109,4 @@ macro_rules! define_extension {
     };
 }
 
-define_extension!(Int, Function, Ptr, Struct, Array);
+define_extension!(Int, Function, Ptr, Struct, Array, Label, Void);

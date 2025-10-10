@@ -1,0 +1,434 @@
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
+
+use crate::ir::{
+    LLVMModule,
+    ir_type::{Type, TypePtr},
+    ir_value::{
+        ArgumentPtr, BasicBlockPtr, Constant, ConstantPtr, FunctionPtr, InstructionPtr, Value,
+        ValuePtr,
+    },
+};
+
+const IR_INDENT_NUM: usize = 4;
+
+#[derive(Default)]
+struct PrintHelper {
+    result: String,
+
+    used_named_struct: HashSet<String>,
+
+    // 局部变量和 label 共用命名空间，全局 namespace 不能重名
+    local_name_space: HashSet<String>,
+    local_rename_map: HashMap<*const Value, String>,
+
+    indent: usize,
+    value_with_type: bool,
+    no_struct_type_alias: bool,
+}
+
+impl PrintHelper {
+    fn add_struct_defination(&mut self, map: &HashMap<String, TypePtr>) {
+        let mut helper = PrintHelper::default();
+        helper.used_named_struct = self.used_named_struct.clone();
+
+        let mut diff = self.used_named_struct.clone();
+
+        while !diff.is_empty() {
+            for x in diff {
+                helper.no_struct_type_alias = true;
+                helper.append_white(&format!("%{} = type", x));
+                map.get(&x).unwrap().ir_print(&mut helper);
+                helper.appendln("");
+            }
+            diff = helper
+                .used_named_struct
+                .difference(&self.used_named_struct)
+                .cloned()
+                .collect();
+            self.used_named_struct = helper.used_named_struct.clone();
+        }
+
+        self.result = helper.result + &self.result;
+    }
+
+    fn append(&mut self, s: &str) {
+        self.result += s;
+    }
+
+    fn append_white(&mut self, s: &str) {
+        self.result += s;
+        self.result += " ";
+    }
+
+    fn appendln(&mut self, s: &str) {
+        self.result += s;
+        self.result += "\n";
+        self.result += " ".repeat(self.indent * IR_INDENT_NUM).as_str();
+    }
+
+    fn clear_local_name_space(&mut self) {
+        self.local_name_space.clear();
+        self.local_rename_map.clear();
+    }
+
+    fn increase_indent(&mut self) {
+        self.indent += 1;
+    }
+
+    fn decrease_indent(&mut self) {
+        if self.indent > 0 {
+            self.indent -= 1;
+
+            if self.result.ends_with(&" ".repeat(IR_INDENT_NUM)) {
+                self.result.truncate(self.result.len() - IR_INDENT_NUM);
+            }
+        }
+    }
+
+    fn seek_available_name(raw_name: Option<String>, space: &mut HashSet<String>) -> String {
+        let raw_name = raw_name.unwrap_or("".to_string());
+        let mut name = if raw_name.is_empty() {
+            "0".to_string()
+        } else {
+            raw_name.clone()
+        };
+        let mut count: usize = 0;
+
+        while space.contains(&name) {
+            count += 1;
+            name = format!("{raw_name}{count}");
+        }
+
+        space.insert(name.clone());
+
+        name
+    }
+
+    fn intern_local_name(&mut self, value: &ValuePtr) -> String {
+        let raw_ptr = Rc::as_ptr(value);
+        if let Some(res) = self.local_rename_map.get(&raw_ptr) {
+            res.clone()
+        } else {
+            let name = Self::seek_available_name(value.get_name(), &mut self.local_name_space);
+            self.local_rename_map.insert(raw_ptr, name.clone());
+            name
+        }
+    }
+}
+
+trait IRPrint {
+    fn ir_print(&self, helper: &mut PrintHelper);
+}
+
+impl LLVMModule {
+    pub fn print(&self) -> String {
+        let mut helper = PrintHelper::default();
+        self.ir_print(&mut helper);
+        let ctx = self.ctx_impl.borrow();
+        helper.add_struct_defination(&ctx.named_strcut_ty);
+        helper.result
+    }
+}
+
+impl IRPrint for LLVMModule {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        let mut functions = self.functions.values().collect::<Vec<_>>();
+        functions.sort_by_key(|(_, x)| x);
+
+        functions.iter().for_each(|(func, _)| func.ir_print(helper));
+    }
+}
+
+// 对 ValuePtr 打印则只打印 name，对具体的 Ptr 打印才打印内部结构
+impl IRPrint for ValuePtr {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        if helper.value_with_type {
+            self.get_type().ir_print(helper);
+            helper.append_white("");
+        }
+
+        match &self.kind {
+            crate::ir::ir_value::ValueKind::BasicBlock(_)
+            | crate::ir::ir_value::ValueKind::Argument(_)
+            | crate::ir::ir_value::ValueKind::Instruction(_) => {
+                let name = helper.intern_local_name(self);
+                helper.append(&format!("%{}", name));
+            }
+            crate::ir::ir_value::ValueKind::Constant(constant) => {
+                constant.ir_print(helper);
+            }
+            crate::ir::ir_value::ValueKind::Function(_) => {
+                helper.append(&format!("@{}", self.get_name().unwrap()));
+            }
+        }
+    }
+}
+
+impl IRPrint for ConstantPtr {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        if helper.value_with_type {
+            self.get_type().ir_print(helper);
+            helper.append_white("");
+        }
+
+        self.as_constant().ir_print(helper);
+    }
+}
+
+impl IRPrint for FunctionPtr {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        helper.append("define ");
+        let ret_type = &self.get_type().as_function().unwrap().0;
+        ret_type.ir_print(helper);
+        helper.append(" ");
+
+        self.0.ir_print(helper);
+
+        helper.append(" (");
+        self.as_function().args().ir_print(helper);
+        helper.append(") ");
+
+        helper.increase_indent();
+        helper.appendln("{");
+
+        let blocks = self.as_function().blocks.borrow();
+        let mut blocks = blocks.values().clone().collect::<Vec<_>>();
+        blocks.sort_by_key(|x| x.1);
+        blocks.iter().for_each(|(block, _)| block.ir_print(helper));
+
+        helper.decrease_indent();
+        helper.appendln("}");
+
+        helper.clear_local_name_space();
+    }
+}
+
+impl IRPrint for ArgumentPtr {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        self.get_type().ir_print(helper);
+        helper.append(" ");
+        self.0.ir_print(helper);
+    }
+}
+
+impl IRPrint for BasicBlockPtr {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        helper.appendln(&format!("{}:", self.get_name().unwrap()));
+
+        let ins_ref = self.as_basic_block().instructions.borrow();
+        for ins in ins_ref.iter() {
+            ins.ir_print(helper);
+            helper.appendln("");
+        }
+    }
+}
+
+impl IRPrint for InstructionPtr {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        use super::ir_value::InstructionKind::*;
+
+        let ins = self.as_instruction();
+        let operands = &ins.operands;
+
+        if !self.get_type().is_void() {
+            let name = helper.intern_local_name(&self);
+            helper.append_white(&format!("%{name} ="));
+        }
+
+        helper.append_white(self.as_instruction().get_instruction_name());
+
+        match &ins.kind {
+            Binary(_) => {
+                self.get_type().ir_print(helper);
+                helper.append_white("");
+                operands.ir_print(helper);
+            }
+            Call => {
+                self.get_type().ir_print(helper);
+                helper.append_white("");
+
+                let operands = &operands;
+                let (func_ptr, args_ptr) = operands.split_at(1);
+
+                func_ptr.ir_print(helper);
+
+                helper.append("(");
+                helper.value_with_type = true;
+                args_ptr.ir_print(helper);
+                helper.value_with_type = false;
+                helper.append(")");
+            }
+            Branch { has_cond } => {
+                debug_assert!((*has_cond && operands.len() == 3) || operands.len() == 1);
+                helper.value_with_type = true;
+                operands.ir_print(helper);
+                helper.value_with_type = false;
+            }
+            GetElementPtr { base_ty } => {
+                base_ty.ir_print(helper);
+                helper.append_white(",");
+                helper.value_with_type = true;
+                operands.ir_print(helper);
+                helper.value_with_type = false;
+            }
+            Alloca { inner_ty } => {
+                inner_ty.ir_print(helper);
+                // Alloca 暂时没有携带任何操作数
+            }
+            Load => {
+                self.get_type().ir_print(helper);
+                helper.append_white(",");
+                helper.value_with_type = true;
+                operands.ir_print(helper);
+                helper.value_with_type = false;
+            }
+            Ret { is_void } => {
+                if *is_void {
+                    helper.append("void");
+                } else {
+                    helper.value_with_type = true;
+                    operands.ir_print(helper);
+                    helper.value_with_type = false;
+                }
+            }
+            Store => {
+                helper.value_with_type = true;
+                operands.ir_print(helper);
+                helper.value_with_type = false;
+            }
+            Icmp(icmp_code) => {
+                helper.append_white(icmp_code.get_operator_name());
+                operands[0].get_type().ir_print(helper);
+                helper.append_white("");
+                operands.ir_print(helper);
+            }
+            Phi => {
+                self.get_type().ir_print(helper);
+                helper.append_white("");
+
+                struct PhiPrintHelper<'a>(&'a [ValuePtr]);
+
+                impl<'a> IRPrint for PhiPrintHelper<'a> {
+                    fn ir_print(&self, helper: &mut PrintHelper) {
+                        helper.append("[");
+                        self.0.ir_print(helper);
+                        helper.append("]");
+                    }
+                }
+
+                debug_assert!(operands.len() % 2 == 0);
+
+                let chunked: Vec<_> = operands.chunks(2).map(|x| PhiPrintHelper(x)).collect();
+                chunked.ir_print(helper);
+            }
+            Select => operands.ir_print(helper),
+        }
+    }
+}
+
+impl IRPrint for Type {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        match self {
+            Type::Int(int_type) => helper.append(&format!("i{}", int_type.0)),
+            Type::Function(function_type) => {
+                function_type.0.ir_print(helper);
+                helper.append(" (");
+                function_type.1.ir_print(helper);
+                helper.append(")");
+            }
+            Type::Ptr(_) => helper.append("ptr"),
+            Type::Struct(struct_type) => {
+                if !helper.no_struct_type_alias
+                    && let Some(name) = struct_type.get_name()
+                {
+                    helper.append(&format!("%{name}"));
+                    helper.used_named_struct.insert(name);
+                } else {
+                    helper.no_struct_type_alias = false;
+                    helper.append("{");
+                    struct_type.get_body().unwrap().ir_print(helper);
+                    helper.append("}");
+                }
+            }
+            Type::Array(array_type) => {
+                helper.append(&format!("[{} x ", array_type.1));
+                array_type.0.ir_print(helper);
+                helper.append("]");
+            }
+            Type::Void(_) => helper.append("void"),
+            Type::Label(_) => helper.append("label"),
+        }
+    }
+}
+
+impl<T> IRPrint for [T]
+where
+    T: IRPrint,
+{
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        let mut iter = self.iter();
+
+        iter.next().map(|x| x.ir_print(helper));
+
+        for x in iter {
+            helper.append(", ");
+            x.ir_print(helper);
+        }
+    }
+}
+
+impl<T> IRPrint for [Rc<T>]
+where
+    T: IRPrint,
+{
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        let mut iter = self.iter();
+
+        iter.next().map(|x| x.ir_print(helper));
+
+        for x in iter {
+            helper.append(", ");
+            x.ir_print(helper);
+        }
+    }
+}
+
+impl IRPrint for Constant {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        match self {
+            Constant::ConstantInt(constant_int) => helper.append(&format!("{}", constant_int.0)), // clang 能够正确处理大于 2147483647 的数
+            Constant::ConstantArray(constant_array) => {
+                helper.append("[");
+                helper.value_with_type = true;
+                constant_array.0.ir_print(helper);
+                helper.value_with_type = false;
+                helper.append("]");
+            }
+            Constant::ConstantStruct(constant_struct) => {
+                helper.append("{");
+                helper.value_with_type = true;
+                constant_struct.0.ir_print(helper);
+                helper.value_with_type = false;
+                helper.append("}");
+            }
+            Constant::ConstantString(constant_string) => {
+                helper.append(&format!(r##""{}""##, bytes_escape(&constant_string.0)));
+            }
+        }
+    }
+}
+
+fn bytes_escape(input: &str) -> String {
+    let mut ret = String::new();
+    for byte in input.as_bytes() {
+        if byte.is_ascii_graphic() && *byte != b'"' && *byte != b'\\' {
+            ret.push(char::from(*byte));
+        } else {
+            ret.push_str(&format!("\\{byte:X}"));
+        }
+    }
+    ret
+}
