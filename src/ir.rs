@@ -1,3 +1,4 @@
+pub mod globalxxx;
 pub mod ir_output;
 pub mod ir_type;
 pub mod ir_value;
@@ -11,6 +12,7 @@ use std::{
 };
 
 use crate::ir::{
+    globalxxx::{FunctionPtr, GlobalObject, GlobalVariable, GlobalVariablePtr},
     ir_type::{
         ArrayType, ArrayTypePtr, FunctionType, FunctionTypePtr, IntType, IntTypePtr, LabelType,
         PtrType, PtrTypePtr, StructType, StructTypePtr, Type, TypePtr, VoidType,
@@ -18,7 +20,7 @@ use crate::ir::{
     ir_value::{
         Argument, ArgumentPtr, BasicBlock, BasicBlockPtr, BinaryOpcode, ConstantArray,
         ConstantArrayPtr, ConstantInt, ConstantIntPtr, ConstantPtr, ConstantString,
-        ConstantStringPtr, ConstantStruct, ConstantStructPtr, Function, FunctionPtr, ICmpCode,
+        ConstantStringPtr, ConstantStruct, ConstantStructPtr, GlobalObjectPtr, ICmpCode,
         Instruction, InstructionPtr, Value, ValueBase, ValuePtr,
     },
 };
@@ -97,6 +99,7 @@ impl LLVMContext {
         LLVMModule {
             _name: name,
             ctx_impl: self.ctx_impl.clone(),
+            global_variables: HashMap::default(),
             functions: HashMap::default(),
         }
     }
@@ -658,7 +661,8 @@ pub struct LLVMModule {
     _name: String,
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
 
-    // 应该不需要 GlobalVariable, 因为没有可变变量, constant 直接复制进去就行了😇
+    // 复杂常量（数组、结构体）等还是需要放在 global_variables 中，因为它们使用 GEP 操作，从而需要一个地址
+    global_variables: HashMap<String, GlobalVariablePtr>,
     functions: HashMap<String, (FunctionPtr, usize)>,
 }
 
@@ -692,21 +696,63 @@ impl LLVMModule {
                 .for_each(|(param, name)| param.set_name(name));
         }
 
-        let func = FunctionPtr(
+        let func = FunctionPtr(GlobalObjectPtr(
             Value {
-                base: ValueBase::new_with_name(name.clone(), func_ty.into()),
-                kind: ir_value::ValueKind::Function(Function {
-                    params,
-                    blocks: RefCell::default(),
+                base: ValueBase::new_with_name(
+                    name.clone(),
+                    self.ctx_impl.borrow_mut().ptr_type().into(),
+                ),
+                kind: ir_value::ValueKind::GlobalObject(GlobalObject {
+                    inner_ty: func_ty.into(),
+                    kind: globalxxx::GlobalObjectKind::Function(globalxxx::Function {
+                        params,
+                        blocks: RefCell::default(),
+                    }),
                 }),
             }
             .into(),
-        );
+        ));
 
         let len = self.functions.len();
         self.functions.insert(name.clone(), (func.clone(), len));
 
         func
+    }
+
+    pub fn get_function(&self, name: &str) -> Option<FunctionPtr> {
+        self.functions.get(name).cloned().map(|(f, _)| f)
+    }
+
+    pub fn add_global_variable(
+        &mut self,
+        is_constant: bool,
+        initializer: ConstantPtr,
+        name: String,
+    ) -> GlobalVariablePtr {
+        let var = GlobalVariablePtr(GlobalObjectPtr(
+            Value {
+                base: ValueBase::new_with_name(
+                    name.clone(),
+                    self.ctx_impl.borrow_mut().ptr_type().into(),
+                ),
+                kind: ir_value::ValueKind::GlobalObject(GlobalObject {
+                    inner_ty: initializer.get_type().clone(),
+                    kind: globalxxx::GlobalObjectKind::GlobalVariable(GlobalVariable {
+                        is_constant,
+                        initializer,
+                    }),
+                }),
+            }
+            .into(),
+        ));
+
+        self.global_variables.insert(name, var.clone());
+
+        var
+    }
+
+    pub fn get_global_variable(&mut self, name: &str) -> Option<GlobalVariablePtr> {
+        self.global_variables.get(name).cloned()
     }
 }
 

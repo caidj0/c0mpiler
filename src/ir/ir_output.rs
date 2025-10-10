@@ -4,12 +4,10 @@ use std::{
 };
 
 use crate::ir::{
-    LLVMModule,
-    ir_type::{Type, TypePtr},
-    ir_value::{
-        ArgumentPtr, BasicBlockPtr, Constant, ConstantPtr, FunctionPtr, InstructionPtr, Value,
+    globalxxx::{FunctionPtr, GlobalVariablePtr}, ir_type::{Type, TypePtr}, ir_value::{
+        ArgumentPtr, BasicBlockPtr, Constant, ConstantPtr, InstructionPtr, Value,
         ValuePtr,
-    },
+    }, LLVMModule
 };
 
 const IR_INDENT_NUM: usize = 4;
@@ -160,7 +158,7 @@ impl IRPrint for ValuePtr {
             crate::ir::ir_value::ValueKind::Constant(constant) => {
                 constant.ir_print(helper);
             }
-            crate::ir::ir_value::ValueKind::Function(_) => {
+            crate::ir::ir_value::ValueKind::GlobalObject(_) => {
                 helper.append(&format!("@{}", self.get_name().unwrap()));
             }
         }
@@ -203,6 +201,12 @@ impl IRPrint for FunctionPtr {
         helper.appendln("}");
 
         helper.clear_local_name_space();
+    }
+}
+
+impl IRPrint for GlobalVariablePtr {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        todo!()
     }
 }
 

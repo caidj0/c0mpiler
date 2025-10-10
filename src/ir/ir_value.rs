@@ -6,11 +6,12 @@ use std::rc::Rc;
 
 use enum_as_inner::EnumAsInner;
 
+use crate::ir::globalxxx::GlobalObject;
 use crate::ir::ir_type::TypePtr;
 
 pub type ValuePtr = Rc<Value>;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Value {
     pub base: ValueBase,
     pub kind: ValueKind,
@@ -34,7 +35,7 @@ impl Value {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ValueBase {
     pub name: RefCell<Option<String>>,
     pub ty: TypePtr,
@@ -56,13 +57,13 @@ impl ValueBase {
     }
 }
 
-#[derive(Debug, EnumAsInner, PartialEq, Eq)]
+#[derive(Debug, EnumAsInner)]
 pub enum ValueKind {
     BasicBlock(BasicBlock),
     Argument(Argument),
     Constant(Constant),
     Instruction(Instruction),
-    Function(Function),
+    GlobalObject(GlobalObject),
 }
 
 macro_rules! check_value_type {
@@ -107,7 +108,7 @@ pub struct ConstantStruct(pub Vec<ConstantPtr>);
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ConstantString(pub String);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct Instruction {
     pub kind: InstructionKind,
     pub operands: Vec<ValuePtr>,
@@ -215,30 +216,7 @@ impl ICmpCode {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Function {
-    pub params: Vec<ArgumentPtr>,
-    pub blocks: RefCell<HashMap<String, (BasicBlockPtr, usize)>>,
-}
-
-impl Function {
-    pub fn get_nth_argument(&self, n: usize) -> Option<&ArgumentPtr> {
-        self.params.get(n)
-    }
-
-    pub fn args(&self) -> &[ArgumentPtr] {
-        &self.params
-    }
-}
-
-// 只有常量池才会
-impl Hash for Function {
-    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {
-        panic!("This function shouldn't be called!");
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct BasicBlock {
     pub instructions: RefCell<Vec<InstructionPtr>>,
 }
@@ -249,14 +227,15 @@ impl Hash for BasicBlock {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug)]
 pub struct Argument;
 
+#[macro_export]
 macro_rules! define_extension {
     ($parent:ident; $($name:ident),*) => {
         paste::paste!{
             $(
-                #[derive(Debug, Clone, PartialEq, Eq)]
+                #[derive(Debug, Clone)]
                 pub struct [<$name Ptr>] (
                     pub(crate) [<$parent Ptr>]
                 );
@@ -279,7 +258,7 @@ macro_rules! define_extension {
     };
 }
 
-define_extension!(Value; BasicBlock, Argument, Constant, Instruction, Function);
+define_extension!(Value; BasicBlock, Argument, Constant, Instruction, GlobalObject);
 define_extension!(Constant; ConstantInt, ConstantArray, ConstantStruct, ConstantString);
 
 impl Hash for ConstantPtr {
@@ -287,6 +266,14 @@ impl Hash for ConstantPtr {
         self.kind.as_constant().unwrap().hash(state);
     }
 }
+
+impl PartialEq for ConstantPtr {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_constant() == other.as_constant()
+    }
+}
+
+impl Eq for ConstantPtr {}
 
 macro_rules! value_dispatch {
     ($($name:ident),*) => {
@@ -302,8 +289,9 @@ macro_rules! value_dispatch {
     };
 }
 
-value_dispatch!(BasicBlock, Argument, Constant, Instruction, Function);
+value_dispatch!(BasicBlock, Argument, Constant, Instruction, GlobalObject);
 
+#[macro_export]
 macro_rules! into_extend {
     ($grandfather:ident; $father:ident ;$($name:ident),*) => {
         $(
