@@ -22,6 +22,12 @@ pub struct GlobalObject {
     pub kind: GlobalObjectKind,
 }
 
+impl GlobalObject {
+    pub fn get_inner_ty(&self) -> &TypePtr {
+        &self.inner_ty
+    }
+}
+
 #[derive(Debug, EnumAsInner)]
 pub enum GlobalObjectKind {
     Function(Function),

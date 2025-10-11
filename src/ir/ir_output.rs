@@ -4,10 +4,12 @@ use std::{
 };
 
 use crate::ir::{
-    globalxxx::{FunctionPtr, GlobalVariablePtr}, ir_type::{Type, TypePtr}, ir_value::{
-        ArgumentPtr, BasicBlockPtr, Constant, ConstantPtr, InstructionPtr, Value,
-        ValuePtr,
-    }, LLVMModule
+    LLVMModule,
+    globalxxx::{FunctionPtr, GlobalVariablePtr},
+    ir_type::{Type, TypePtr},
+    ir_value::{
+        ArgumentPtr, BasicBlockPtr, Constant, ConstantPtr, InstructionPtr, Value, ValuePtr,
+    },
 };
 
 const IR_INDENT_NUM: usize = 4;
@@ -133,6 +135,11 @@ impl LLVMModule {
 
 impl IRPrint for LLVMModule {
     fn ir_print(&self, helper: &mut PrintHelper) {
+        self.global_variables.iter().for_each(|(_, v)| {
+            v.ir_print(helper);
+            helper.appendln("");
+        });
+
         let mut functions = self.functions.values().collect::<Vec<_>>();
         functions.sort_by_key(|(_, x)| x);
 
@@ -179,7 +186,8 @@ impl IRPrint for ConstantPtr {
 impl IRPrint for FunctionPtr {
     fn ir_print(&self, helper: &mut PrintHelper) {
         helper.append("define ");
-        let ret_type = &self.get_type().as_function().unwrap().0;
+        let func_type = self.as_global_object().get_inner_ty().as_function().unwrap();
+        let ret_type = &func_type.0;
         ret_type.ir_print(helper);
         helper.append(" ");
 
@@ -206,7 +214,16 @@ impl IRPrint for FunctionPtr {
 
 impl IRPrint for GlobalVariablePtr {
     fn ir_print(&self, helper: &mut PrintHelper) {
-        todo!()
+        helper.append_white(&format!("@{} =", self.get_name().unwrap()));
+        helper.append_white(if self.as_global_variable().is_constant {
+            "constant"
+        } else {
+            "global"
+        });
+
+        helper.value_with_type = true;
+        self.as_global_variable().initializer.ir_print(helper);
+        helper.value_with_type = false;
     }
 }
 
