@@ -563,18 +563,22 @@ impl LLVMBuilder {
         args: Vec<ValuePtr>,
         name: Option<&str>,
     ) -> InstructionPtr {
-        debug_assert!(
-            func.is_function_type() && {
-                let target_tys = &func.get_type_as_function().unwrap().1;
-                target_tys.len() == args.len()
-                    && target_tys
-                        .iter()
-                        .zip(args.iter())
-                        .all(|(x, y)| x == y.get_type())
-            }
-        );
+        let func_type = func
+            .as_global_object()
+            .get_inner_ty()
+            .as_function()
+            .unwrap();
 
-        let ret_ty = func.get_type_as_function().unwrap().0.clone();
+        debug_assert!({
+            let target_tys = &func_type.1;
+            target_tys.len() == args.len()
+                && target_tys
+                    .iter()
+                    .zip(args.iter())
+                    .all(|(x, y)| x == y.get_type())
+        });
+
+        let ret_ty = func_type.0.clone();
 
         self.insert(InstructionPtr(
             Value {
@@ -777,8 +781,12 @@ fn foo() {
     let i32_type = context.i32_type();
 
     let function_type = context.function_type(i32_type.clone().into(), vec![]);
+    let foo_type =
+        context.function_type(context.void_type().into(), vec![context.i32_type().into()]);
 
     let func = module.add_function(function_type, "main", None);
+    let foo = module.add_function(foo_type.into(), "foo", None);
+
     let bb = context.append_basic_block(&func, "entry");
 
     builder.locate(bb);
@@ -799,7 +807,9 @@ fn foo() {
         None,
     );
 
-    builder.build_return(Some(sum.into()));
+    builder.build_call(foo, vec![sum.into()], None);
+
+    builder.build_return(Some(context.get_i32(0).into()));
 
     let result = module.print();
     println!("{result}");

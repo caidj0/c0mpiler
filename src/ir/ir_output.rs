@@ -140,10 +140,15 @@ impl IRPrint for LLVMModule {
             helper.appendln("");
         });
 
+        helper.appendln("");
+
         let mut functions = self.functions.values().collect::<Vec<_>>();
         functions.sort_by_key(|(_, x)| x);
 
-        functions.iter().for_each(|(func, _)| func.ir_print(helper));
+        functions.iter().for_each(|(func, _)| {
+            func.ir_print(helper);
+            helper.appendln("");
+        });
     }
 }
 
@@ -185,28 +190,40 @@ impl IRPrint for ConstantPtr {
 
 impl IRPrint for FunctionPtr {
     fn ir_print(&self, helper: &mut PrintHelper) {
-        helper.append("define ");
-        let func_type = self.as_global_object().get_inner_ty().as_function().unwrap();
+        let func = self.as_function();
+        let args = func.args();
+        let blocks = func.blocks.borrow();
+        let is_declare = blocks.is_empty();
+
+        helper.append_white(if is_declare { "declare" } else { "define" });
+
+        let func_type = self
+            .as_global_object()
+            .get_inner_ty()
+            .as_function()
+            .unwrap();
         let ret_type = &func_type.0;
         ret_type.ir_print(helper);
-        helper.append(" ");
+        helper.append_white("");
 
         self.0.ir_print(helper);
+        helper.append_white("");
 
-        helper.append(" (");
-        self.as_function().args().ir_print(helper);
-        helper.append(") ");
+        helper.append("(");
+        args.ir_print(helper);
+        helper.append_white(")");
 
-        helper.increase_indent();
-        helper.appendln("{");
+        if !is_declare {
+            helper.increase_indent();
+            helper.appendln("{");
 
-        let blocks = self.as_function().blocks.borrow();
-        let mut blocks = blocks.values().clone().collect::<Vec<_>>();
-        blocks.sort_by_key(|x| x.1);
-        blocks.iter().for_each(|(block, _)| block.ir_print(helper));
+            let mut blocks = blocks.values().clone().collect::<Vec<_>>();
+            blocks.sort_by_key(|x| x.1);
+            blocks.iter().for_each(|(block, _)| block.ir_print(helper));
 
-        helper.decrease_indent();
-        helper.appendln("}");
+            helper.decrease_indent();
+            helper.appendln("}");
+        }
 
         helper.clear_local_name_space();
     }
