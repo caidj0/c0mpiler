@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::rc::Rc;
@@ -42,16 +41,9 @@ pub struct ValueBase {
 }
 
 impl ValueBase {
-    pub fn new(ty: TypePtr) -> Self {
+    pub fn new(ty: TypePtr, name: Option<&str>) -> Self {
         Self {
-            name: RefCell::new(None),
-            ty,
-        }
-    }
-
-    pub fn new_with_name(name: String, ty: TypePtr) -> Self {
-        Self {
-            name: RefCell::new(Some(name)),
+            name: RefCell::new(name.map(|x| x.to_string())),
             ty,
         }
     }
