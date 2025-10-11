@@ -390,6 +390,7 @@ impl LLVMContextImpl {
     }
 }
 
+#[derive(Debug)]
 pub struct LLVMBuilder {
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
     target_block: Option<BasicBlockPtr>,
@@ -785,7 +786,7 @@ fn foo() {
         context.function_type(context.void_type().into(), vec![context.i32_type().into()]);
 
     let func = module.add_function(function_type, "main", None);
-    let foo = module.add_function(foo_type.into(), "foo", None);
+    let foo = module.add_function(foo_type.into(), "printlnInt", None);
 
     let bb = context.append_basic_block(&func, "entry");
 

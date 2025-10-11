@@ -453,6 +453,7 @@ impl IRPrint for Constant {
                 helper.append("}");
             }
             Constant::ConstantString(constant_string) => {
+                // TODO: 匿名常量的处理
                 helper.append(&format!(r##""{}""##, bytes_escape(&constant_string.0)));
             }
         }
