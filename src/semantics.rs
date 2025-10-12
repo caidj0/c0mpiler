@@ -1,4 +1,5 @@
 pub mod error;
+pub mod forir;
 pub mod primitives;
 pub mod resolved_ty;
 pub mod super_trait;
@@ -6,6 +7,7 @@ pub mod utils;
 pub mod visitor;
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     iter,
     rc::Rc,
@@ -30,6 +32,7 @@ use crate::{
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
     const_eval::{ConstEvalValue, ConstEvaler},
+    irgen::IRGenHelper,
     lexer::TokenPosition,
     make_semantic_error,
     semantics::{
@@ -99,13 +102,15 @@ impl Default for AnalyzerState {
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
     impls: HashMap<TypePtr, Impls>, // (本征 impl, trait impl)
-    scopes: HashMap<NodeId, Scope>,
+    pub(crate) scopes: HashMap<NodeId, Scope>,
     current_scope: NodeId,
     stage: AnalyzeStage,
     pub(crate) state: AnalyzerState,
 
     builtin_impls: BuiltInImpls,
     pub(crate) prelude_pool: PreludePool,
+
+    ir_helper: RefCell<IRGenHelper>,
 }
 
 type AssocItemRes = Result<(HashMap<Symbol, FnSig>, HashMap<Symbol, Constant>), SemanticError>;
@@ -207,6 +212,8 @@ impl SemanticAnalyzer {
             state: AnalyzerState::default(),
             builtin_impls: BuiltInImpls::new(&pool),
             prelude_pool: pool,
+
+            ir_helper: IRGenHelper::new().into(),
         }
     }
 
@@ -771,7 +778,7 @@ impl SemanticAnalyzer {
             .map(|x| x.1)
     }
 
-    fn get_type_info(&self, full_name: &FullName) -> &TypeInfo {
+    pub fn get_type_info(&self, full_name: &FullName) -> &TypeInfo {
         let symbols = &full_name.0;
         debug_assert!(symbols.len() >= 2);
         let scope_symbol = &symbols[symbols.len() - 2];
@@ -832,7 +839,7 @@ impl SemanticAnalyzer {
         false
     }
 
-    fn get_self_type_from(&self, mut id: NodeId) -> Result<TypePtr, SemanticError> {
+    pub(crate) fn get_self_type_from(&self, mut id: NodeId) -> Result<TypePtr, SemanticError> {
         loop {
             let scope = if let Some(scope) = self.scopes.get(&id) {
                 scope
@@ -1252,7 +1259,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }
             AnalyzeStage::Definition => {}
             AnalyzeStage::Impl => {}
-            AnalyzeStage::Body => {}
+            AnalyzeStage::Body => {
+                // let mut helper = self.ir_helper.borrow_mut();
+                // helper.add_struct_declares(&self, krate.id);
+                // helper.complete_struct_declares(&self);
+                // helper.add_globals(&self, krate.id);
+            }
         }
 
         self.enter_scope()?;
@@ -1324,8 +1336,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 }
             }
             AnalyzeStage::Definition => {}
-            AnalyzeStage::Impl => {}
-            AnalyzeStage::Body => {
+            AnalyzeStage::Impl => {
                 if self.is_free_scope() {
                     let var = self.search_value_mut(&item.ident.symbol).unwrap();
 
@@ -1343,6 +1354,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     }
                 }
             }
+            AnalyzeStage::Body => {}
         }
 
         Ok(())

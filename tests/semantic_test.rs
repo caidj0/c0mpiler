@@ -58,12 +58,11 @@ fn semantics_1() {
 }
 
 #[test]
-#[ignore]
 fn semantics_2() {
     let escape_list = [];
     let case_path = "RCompiler-Testcases/semantic-2";
 
-    run_test_cases(&escape_list, case_path, false);
+    run_test_cases(&escape_list, case_path, true);
 }
 
 fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at_fault: bool) {

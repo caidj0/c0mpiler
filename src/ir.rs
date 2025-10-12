@@ -140,6 +140,10 @@ impl LLVMContext {
         self.ctx_impl.borrow_mut().create_opaque_struct_type(name)
     }
 
+    pub fn get_named_struct_type(&self, name: &str) -> Option<StructTypePtr> {
+        self.ctx_impl.borrow().get_named_struct_type(name)
+    }
+
     pub fn get_i1(&self, value: bool) -> ConstantIntPtr {
         self.ctx_impl.borrow_mut().get_i1(value)
     }
@@ -270,6 +274,10 @@ impl LLVMContextImpl {
         }));
         self.named_strcut_ty.insert(name.to_string(), ret.clone());
         StructTypePtr(ret)
+    }
+
+    fn get_named_struct_type(&self, name: &str) -> Option<StructTypePtr> {
+        self.named_strcut_ty.get(name).cloned().map(StructTypePtr)
     }
 
     fn get_int(&mut self, value: u32, bit_width: u8) -> ConstantIntPtr {
