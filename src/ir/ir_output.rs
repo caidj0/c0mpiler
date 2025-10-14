@@ -31,8 +31,10 @@ struct PrintHelper {
 
 impl PrintHelper {
     fn add_struct_defination(&mut self, map: &HashMap<String, TypePtr>) {
-        let mut helper = PrintHelper::default();
-        helper.used_named_struct = self.used_named_struct.clone();
+        let mut helper = PrintHelper {
+            used_named_struct: self.used_named_struct.clone(),
+            ..Default::default()
+        };
 
         let mut diff = self.used_named_struct.clone();
 
@@ -272,7 +274,7 @@ impl IRPrint for InstructionPtr {
         let operands = &ins.operands;
 
         if !self.get_type().is_void() {
-            let name = helper.intern_local_name(&self);
+            let name = helper.intern_local_name(self);
             helper.append_white(&format!("%{name} ="));
         }
 
@@ -357,9 +359,9 @@ impl IRPrint for InstructionPtr {
                     }
                 }
 
-                debug_assert!(operands.len() % 2 == 0);
+                debug_assert!(operands.len().is_multiple_of(2));
 
-                let chunked: Vec<_> = operands.chunks(2).map(|x| PhiPrintHelper(x)).collect();
+                let chunked: Vec<_> = operands.chunks(2).map(PhiPrintHelper).collect();
                 chunked.ir_print(helper);
             }
             Select => operands.ir_print(helper),
@@ -409,7 +411,9 @@ where
     fn ir_print(&self, helper: &mut PrintHelper) {
         let mut iter = self.iter();
 
-        iter.next().map(|x| x.ir_print(helper));
+        if let Some(x) = iter.next() {
+            x.ir_print(helper)
+        }
 
         for x in iter {
             helper.append(", ");
@@ -425,7 +429,9 @@ where
     fn ir_print(&self, helper: &mut PrintHelper) {
         let mut iter = self.iter();
 
-        iter.next().map(|x| x.ir_print(helper));
+        if let Some(x) = iter.next() {
+            x.ir_print(helper)
+        }
 
         for x in iter {
             helper.append(", ");

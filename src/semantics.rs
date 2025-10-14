@@ -7,7 +7,6 @@ pub mod utils;
 pub mod visitor;
 
 use std::{
-    cell::RefCell,
     collections::{HashMap, HashSet},
     iter,
     rc::Rc,
@@ -32,7 +31,6 @@ use crate::{
         ty::{MutTy, PathTy, RefTy, Ty, TyKind},
     },
     const_eval::{ConstEvalValue, ConstEvaler},
-    irgen::IRGenHelper,
     lexer::TokenPosition,
     make_semantic_error,
     semantics::{
@@ -109,8 +107,6 @@ pub struct SemanticAnalyzer {
 
     builtin_impls: BuiltInImpls,
     pub(crate) prelude_pool: PreludePool,
-
-    ir_helper: RefCell<IRGenHelper>,
 }
 
 type AssocItemRes = Result<(HashMap<Symbol, FnSig>, HashMap<Symbol, Constant>), SemanticError>;
@@ -212,8 +208,6 @@ impl SemanticAnalyzer {
             state: AnalyzerState::default(),
             builtin_impls: BuiltInImpls::new(&pool),
             prelude_pool: pool,
-
-            ir_helper: IRGenHelper::new().into(),
         }
     }
 
@@ -1259,12 +1253,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }
             AnalyzeStage::Definition => {}
             AnalyzeStage::Impl => {}
-            AnalyzeStage::Body => {
-                // let mut helper = self.ir_helper.borrow_mut();
-                // helper.add_struct_declares(&self, krate.id);
-                // helper.complete_struct_declares(&self);
-                // helper.add_globals(&self, krate.id);
-            }
+            AnalyzeStage::Body => {}
         }
 
         self.enter_scope()?;

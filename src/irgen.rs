@@ -9,6 +9,7 @@ use crate::{
     semantics::{SemanticAnalyzer, resolved_ty::ResolvedTy, utils::FullName},
 };
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub struct IRGenHelper {
     pub(crate) context: LLVMContext,
@@ -18,6 +19,13 @@ pub struct IRGenHelper {
     structs: HashMap<FullName, StructTypePtr>,
 }
 
+impl Default for IRGenHelper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[allow(dead_code)]
 impl IRGenHelper {
     pub fn new() -> Self {
         let mut context = LLVMContext::default();
@@ -39,10 +47,6 @@ impl IRGenHelper {
         ty: &ResolvedTy,
         from: Option<NodeId>,
     ) -> TypePtr {
-        if ty.is_empty_length(analyzer, from) {
-            return self.context.void_type().into();
-        }
-
         match ty {
             ResolvedTy::BuiltIn(symbol, _) => match symbol.0.as_str() {
                 "bool" => self.context.i1_type().into(),
@@ -71,7 +75,7 @@ impl IRGenHelper {
             ResolvedTy::Array(resolved_ty, length) => self
                 .context
                 .array_type(
-                    self.resolved_ty_to_ir_type(analyzer, &resolved_ty, from),
+                    self.resolved_ty_to_ir_type(analyzer, resolved_ty, from),
                     *length,
                 )
                 .into(),
@@ -84,7 +88,7 @@ impl IRGenHelper {
             ResolvedTy::Fn(items, resolved_ty) => self
                 .context
                 .function_type(
-                    self.resolved_ty_to_ir_type(analyzer, &resolved_ty, from),
+                    self.resolved_ty_to_ir_type(analyzer, resolved_ty, from),
                     items
                         .iter()
                         .map(|x| self.resolved_ty_to_ir_type(analyzer, x, from))
@@ -102,17 +106,11 @@ impl IRGenHelper {
 
     pub(crate) fn add_struct_declares(&mut self, analyzer: &SemanticAnalyzer, scope_id: NodeId) {
         let scope = analyzer.scopes.get(&scope_id).unwrap();
-        for (_, info) in &scope.types {
-            if info.kind.is_empty_length(analyzer, Some(scope_id)) {
-                continue;
-            }
-            match &info.kind {
-                crate::semantics::utils::TypeKind::Struct { .. } => {
-                    let name = analyzer.get_full_name_from(scope_id, info.name.clone());
-                    let ptr = self.context.create_opaque_struct_type(&name.to_string());
-                    self.structs.insert(name, ptr);
-                }
-                _ => {}
+        for info in scope.types.values() {
+            if let crate::semantics::utils::TypeKind::Struct { .. } = &info.kind {
+                let name = analyzer.get_full_name_from(scope_id, info.name.clone());
+                let ptr = self.context.create_opaque_struct_type(&name.to_string());
+                self.structs.insert(name, ptr);
             }
         }
         for child in &scope.children {
@@ -154,7 +152,7 @@ impl IRGenHelper {
                 }
                 crate::semantics::utils::VariableKind::Constant(const_eval_value) => {
                     if let Some(initializer) =
-                        self.transform_constant(analyzer, scope_id, &var.ty, &const_eval_value)
+                        self.transform_constant(analyzer, scope_id, &var.ty, const_eval_value)
                     {
                         self.module
                             .add_global_variable(true, initializer, &name.to_string());
@@ -188,7 +186,7 @@ impl IRGenHelper {
             crate::const_eval::ConstEvalValue::Array(const_eval_values) => {
                 let inner_ty = ty.as_array().unwrap().0;
                 let inner_ty1 = self.resolved_ty_to_ir_type(analyzer, inner_ty, Some(scope_id));
-                if const_eval_values.len() == 0 || inner_ty1.is_void() {
+                if const_eval_values.is_empty() || inner_ty1.is_void() {
                     return None;
                 }
                 self.context
@@ -207,9 +205,7 @@ impl IRGenHelper {
             crate::const_eval::ConstEvalValue::Struct(full_name, hash_map) => {
                 let info = analyzer.get_type_info(full_name).kind.as_struct().unwrap();
 
-                let Some(struct_ty) = self.structs.get(full_name) else {
-                    return None;
-                };
+                let struct_ty = self.structs.get(full_name)?;
 
                 self.context
                     .get_struct(

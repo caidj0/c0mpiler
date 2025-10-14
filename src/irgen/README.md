@@ -1,10 +1,15 @@
 IRGen 通过调用 LLVMIRBuilder 将 ast 翻译到 IR。
 
-gener 要对空长度类型 (使用 `E` 指代) 特殊处理，这具体包括 `()`, `struct{}`, `[ty; 0]`, `enum{}`, `struct {E,E,...}`, `[E; num]`, `!`. 空长度类型不出现在 ir 中，使用 `void` 代替，在 struct 中出现则直接删去那一项（注意其余项下标的改变）. 空长度 struct 和 enum 直接也不进行定义.
+不需要对空长度类型特殊处理：clang 可以 handle 它们. 
+<!-- gener 要对空长度类型 (使用 `E` 指代) 特殊处理，这具体包括 `()`, `struct{}`, `[ty; 0]`, `enum{}`, `struct {E,E,...}`, `[E; num]`, `!`. 空长度类型不出现在 ir 中，使用 `void` 代替，在 struct 中出现则直接删去那一项（注意其余项下标的改变）. 空长度 struct 和 enum 直接也不进行定义. -->
 
 gener 需要能够翻译 item，包括 struct, enum, constant 和 function. Item 的命名要保证唯一性，这可以通过 `{scopeid}.name` 实现. struct 要注意前向声明（先添加 opaque, 再添加 body）. 简单常量（数字）应直接放到 ConstantInt 中，复杂常量应添加到 globalvariable 中，使用指针调用。Enum 可以参照 rust 直接转为数字（ir 中不会出现 enum 类型）。Free function 应该比较容易处理，对于 impl 内的 function 需要处理 Self 类型，对于 impl trait 中的 function 还需要为每个 impl 都单独实现一份函数, 记得实现 default function 和 default constant.
 
 在翻译 block 时, gener 需要能够正确获取全局变量（常量和函数），特别是 `{receiver}.{method}()` 的情况，它们在可以实现在 ir 中名称唯一，只要能找到就行。对于局部变量，gener 需要维护变量的类型（~~或者让 analyzer 记录每个有名字的变量的类型~~let 和 function arg 都是有类型的，直接使用那个类型即可）。对于尾随表达式，处理方法应该是将其作为 blockexpr 的类型，将 blockexpr 的 valueptr 设为尾随表达式的 valueptr（如果尾随表达式是一个 pathexpr，则设为对应的 valueptr，否则设为 instruction 的 valueptr），特别地，若 blockexpr 为 `void` 类型，则没有 valueptr（这个好像只能靠 analyzer 维护？）
+
+path expression 怎么找到对应的变量？method expression 怎么找到对应的方法？为 trait 实现的函数，特别是 Default 函数如何处理？
+
+
 
 Let Stmt 直接翻译为 alloca + store.
 
