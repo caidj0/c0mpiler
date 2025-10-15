@@ -5,6 +5,7 @@ pub mod resolved_ty;
 pub mod super_trait;
 pub mod utils;
 pub mod visitor;
+pub mod type_solver;
 
 use std::{
     collections::{HashMap, HashSet},
