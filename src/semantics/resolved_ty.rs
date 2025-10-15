@@ -2,7 +2,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use enum_as_inner::EnumAsInner;
 
-use crate::{ast::Mutability, semantics::utils::FullName};
+use crate::semantics::utils::FullName;
 
 pub type TypePtr = Rc<RefCell<ResolvedTy>>;
 
