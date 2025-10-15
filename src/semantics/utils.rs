@@ -252,7 +252,7 @@ pub enum AnalyzeStage {
     Body,
 }
 
-pub type Impls = (ImplInfo, HashMap<FullName, ImplInfo>);
+pub type Impls = (ImplInfo, HashMap<FullName, ImplInfo>); // (本征 impl, trait impl)
 
 #[derive(Debug)]
 pub struct BuiltInImpls {

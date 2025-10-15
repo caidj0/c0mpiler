@@ -99,7 +99,7 @@ impl Default for AnalyzerState {
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
-    impls: HashMap<TypePtr, Impls>, // (本征 impl, trait impl)
+    impls: HashMap<TypePtr, Impls>, 
     pub(crate) scopes: HashMap<NodeId, Scope>,
     current_scope: NodeId,
     stage: AnalyzeStage,

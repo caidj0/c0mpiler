@@ -7,7 +7,7 @@ gener 需要能够翻译 item，包括 struct, enum, constant 和 function. Item
 
 在翻译 block 时, gener 需要能够正确获取全局变量（常量和函数），特别是 `{receiver}.{method}()` 的情况，它们在可以实现在 ir 中名称唯一，只要能找到就行。对于局部变量，gener 需要维护变量的类型（~~或者让 analyzer 记录每个有名字的变量的类型~~let 和 function arg 都是有类型的，直接使用那个类型即可）。对于尾随表达式，处理方法应该是将其作为 blockexpr 的类型，将 blockexpr 的 valueptr 设为尾随表达式的 valueptr（如果尾随表达式是一个 pathexpr，则设为对应的 valueptr，否则设为 instruction 的 valueptr），特别地，若 blockexpr 为 `void` 类型，则没有 valueptr（这个好像只能靠 analyzer 维护？）
 
-path expression 怎么找到对应的变量？method expression 怎么找到对应的方法？为 trait 实现的函数，特别是 Default 函数如何处理？
+path expression 怎么找到对应的变量？method expression 怎么找到对应的方法？如何处理为 trait 实现的函数，特别是 Default 函数？
 
 
 
