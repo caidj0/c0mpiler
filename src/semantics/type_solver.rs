@@ -1,12 +1,10 @@
-use std::rc::Rc;
-
 use crate::semantics::resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypePtr};
 
 pub struct TypeSolver;
 
 impl TypeSolver {
     pub fn eq(left: &mut TypePtr, right: &mut TypePtr) -> Result<(), TypeSolveError> {
-        if Rc::ptr_eq(left, right) {
+        if TypePtr::ptr_eq(left, right) {
             return Ok(());
         }
 
@@ -33,8 +31,10 @@ impl TypeSolver {
         let lead = match (&mut left_ptr.kind, &mut right_ptr.kind) {
             (_, Any(AnyTyKind::Any)) => Leader::Left,
             (Any(AnyTyKind::Any), _) => Leader::Right,
-            (_, Never) => Leader::Left,
-            (Never, _) => Leader::Right,
+
+            // Never 类型不被修改
+            (_, Never) | (Never, _) => return Ok(()),
+
             (BuiltIn(b1), BuiltIn(b2)) => {
                 if b1 != b2 {
                     return Err(TypeSolveError::BuiltInMismatch);
@@ -51,6 +51,7 @@ impl TypeSolver {
                 Leader::Left
             }
             (Enum, Enum) => Leader::Left,
+            (Trait, Trait) => Leader::Left,
             (Array(t1, l1), Array(t2, l2)) => {
                 TypeSolver::eq(t1, t2)?;
                 if l1 != l2 {

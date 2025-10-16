@@ -2,8 +2,7 @@ use std::fs;
 
 use c0mpiler::{
     ast::{Crate, Eatable},
-    lexer::{Lexer, TokenBuffer},
-    semantics::SemanticAnalyzer,
+    lexer::{Lexer, TokenBuffer}, semantics::analyzer::SemanticAnalyzer,
 };
 
 fn main() {

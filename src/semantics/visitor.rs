@@ -39,12 +39,13 @@ pub trait Visitor<'ast> {
     type PatRes;
     type StmtRes;
 
+    type CrateExtra<'tmp>;
     type ItemExtra<'tmp>;
     type StmtExtra<'tmp>;
     type ExprExtra<'tmp>;
     type PatExtra<'tmp>;
 
-    fn visit_crate(&mut self, krate: &'ast Crate) -> Self::DefaultRes;
+    fn visit_crate<'tmp>(&mut self, krate: &'ast Crate, extra: Self::CrateExtra<'tmp>) -> Self::DefaultRes;
 
     add_func! {
         Item, Default,

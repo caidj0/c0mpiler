@@ -3,7 +3,7 @@ use std::{fs, panic, path::PathBuf, str::FromStr};
 use c0mpiler::{
     ast::{Crate, Eatable},
     lexer::{Lexer, TokenBuffer},
-    semantics::SemanticAnalyzer,
+    semantics::analyzer::SemanticAnalyzer,
     utils::test::TestCaseInfo,
 };
 

@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::{ast::expr::BinOp, semantics::resolved_ty::ResolvedTypes};
+use crate::{ast::expr::BinOp, semantics::resolved_ty::TypePtr};
 
 #[derive(Debug)]
 pub struct SemanticError {
@@ -55,7 +55,7 @@ pub enum SemanticErrorKind {
     ShadowedConstantByBinding,
     NoReturnFunction,
     MissingField,
-    NoBinaryOperation(BinOp, Box<ResolvedTypes>, Box<ResolvedTypes>),
+    NoBinaryOperation(BinOp, TypePtr, TypePtr),
     SelfInNoAssocFn,
     NotMainFunction,
     ExprAfterExit,
