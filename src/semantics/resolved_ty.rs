@@ -85,7 +85,7 @@ pub enum ResolvedTyKind {
     Tup(Vec<TypePtr>),
     Enum,
     Trait,
-    Array(TypePtr, u32),
+    Array(TypePtr, Option<u32>),
     Fn(TypePtr, Vec<TypePtr>),
     ImplicitSelf,
     Never,
@@ -174,7 +174,10 @@ type_define!(
     never: ResolvedTyKind::Never,
     unit: ResolvedTyKind::Tup(vec![]),
     any: ResolvedTyKind::Any(AnyTyKind::Any),
-    implicit_self: ResolvedTyKind::ImplicitSelf
+    implicit_self: ResolvedTyKind::ImplicitSelf,
+
+    any_int: ResolvedTyKind::Any(AnyTyKind::AnyInt),
+    any_signed_int: ResolvedTyKind::Any(AnyTyKind::AnySignedInt)
 );
 
 impl SemanticAnalyzer {
@@ -185,7 +188,7 @@ impl SemanticAnalyzer {
         })))
     }
 
-    pub fn array_type(ty: TypePtr, len: u32) -> TypePtr {
+    pub fn array_type(ty: TypePtr, len: Option<u32>) -> TypePtr {
         TypePtr(Rc::new(RefCell::new(ResolvedTy {
             name: None,
             kind: ResolvedTyKind::Array(ty, len),
@@ -212,11 +215,12 @@ impl SemanticAnalyzer {
             }
 
             Array(ArrayTy(inner, len_expr)) => {
-                let len_value = self.const_eval(&len_expr.value, Self::usize_type())?;
+                let len_value =
+                    self.const_eval(&len_expr.value, &mut Self::usize_type(), current_scope)?;
                 let len = *len_value.as_constant_int().unwrap();
                 Ok(Self::array_type(
                     self.resolve_type(&inner, current_scope)?,
-                    len,
+                    Some(len),
                 ))
             }
             Ref(RefTy(MutTy { ty, mutbl })) => Ok(Self::ref_type(

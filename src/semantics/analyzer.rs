@@ -272,7 +272,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         mutbl: Mutability::Not,
                         kind: ValueKind::Constant(const_value),
                     },
-                )?;
+                )
+                .map_err(|e| e.set_span(&span))?;
             }
             AnalyzeStage::Impl => {}
             AnalyzeStage::Body => {
@@ -280,7 +281,15 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let constant = value.kind.as_constant_mut().unwrap();
 
                 if let ConstantValue::UnEval(u) = constant {
-                    todo!()
+                    let u = u.clone();
+                    let ty = value.ty.clone();
+                    let v = self.eval_unevaling(&u, ty)?;
+                    *self
+                        .get_value_mut(father, &ident.symbol)
+                        .unwrap()
+                        .kind
+                        .as_constant_mut()
+                        .unwrap() = v;
                 }
             }
         }

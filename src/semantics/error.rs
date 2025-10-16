@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use crate::ast::Span;
+use crate::{ast::Span, semantics::type_solver::TypeSolveError};
 
 #[derive(Debug)]
 pub struct SemanticError {
@@ -30,6 +30,11 @@ pub enum SemanticErrorKind {
     UnknownType,
     MultipleDefinedField,
     UnknownSelfType,
+    ConstEvalNoImplementation,
+    TypeError(TypeSolveError),
+    UnknownSuffix,
+    Overflow,
+    IndexOutOfBound,
 }
 
 #[macro_export]
@@ -43,6 +48,13 @@ macro_rules! make_semantic_error {
             #[cfg(debug_assertions)]
             line: line!(),
         }
+    };
+}
+
+#[macro_export]
+macro_rules! to_semantic_error {
+    ($e:expr) => {
+        $e.map_err(|e| make_semantic_error!(TypeError(e)))
     };
 }
 

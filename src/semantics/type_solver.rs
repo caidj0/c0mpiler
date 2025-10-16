@@ -54,8 +54,15 @@ impl TypeSolver {
             (Trait, Trait) => Leader::Left,
             (Array(t1, l1), Array(t2, l2)) => {
                 TypeSolver::eq(t1, t2)?;
-                if l1 != l2 {
-                    return Err(TypeSolveError::ArrayLengthMismatch);
+                match (&l1, &l2) {
+                    (None, None) => {}
+                    (None, Some(len)) => *l1 = Some(*len),
+                    (Some(len), None) => *l2 = Some(*len),
+                    (Some(len1), Some(len2)) => {
+                        if len1 != len2 {
+                            return Err(TypeSolveError::ArrayLengthMismatch);
+                        }
+                    }
                 }
                 Leader::Left
             }

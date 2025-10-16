@@ -26,12 +26,13 @@ pub enum ConstantValue {
     ConstantInt(u32),
     ConstantString(String),
     ConstantArray(Vec<ConstantValue>),
+    Unit,
 
     UnEval(UnEvalConstant),
     Placeholder, // Only for Trait
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct UnEvalConstant(NodeId, *const Expr);
 
 impl UnEvalConstant {
