@@ -25,6 +25,15 @@ pub struct Span {
     pub end: TokenPosition,
 }
 
+impl Default for Span {
+    fn default() -> Self {
+        Self {
+            begin: TokenPosition { line: 0, col: 0 },
+            end: TokenPosition { line: 0, col: 0 },
+        }
+    }
+}
+
 pub trait Eatable: Sized {
     fn eat(iter: &mut TokenIter) -> ASTResult<Self> {
         let mut using_iter = iter.clone();

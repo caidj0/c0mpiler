@@ -6,3 +6,10 @@ pub mod lexer;
 pub mod semantics;
 pub mod tokens;
 pub mod utils;
+
+#[macro_export]
+macro_rules! impossible {
+    () => {
+        panic!("Impossible!")
+    };
+}

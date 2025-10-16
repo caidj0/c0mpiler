@@ -17,11 +17,14 @@ impl Path {
         }
     }
 
+    // 当 path 只有一段时使用
     pub fn get_symbol(&self) -> &Symbol {
-        &self.segments.last().unwrap().ident.symbol
+        &self.get_ident().symbol
     }
 
+    // 当 path 只有一段时使用
     pub fn get_ident(&self) -> &Ident {
+        debug_assert!(self.segments.len() == 1);
         &self.segments.last().unwrap().ident
     }
 }

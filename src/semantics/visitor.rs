@@ -19,7 +19,7 @@ use crate::ast::{
 macro_rules! func_sig {
     ($cat:ident, $res:ident, $($name:ident)?) => {
         paste::paste!{
-            fn [<visit_ $($name:snake _)? $cat:snake>]<'tmp>(&mut self, [<$cat:snake>] : &'ast [<$($name:camel)? $cat:camel>], extra: Self::[<$cat:camel Extra>]<'tmp>) -> Self::[<$res:camel Res>];
+            fn [<visit_ $($name:snake _)? $cat:snake>]<'tmp>(&mut self, [<$cat:snake>] : &'ast [<$($name:camel)? $cat:camel>], extra: Self::[<$cat:camel Extra>]<'tmp>) -> Self::[<$res:camel Res>]<'_>;
         }
     };
 }
@@ -34,10 +34,18 @@ macro_rules! add_func {
 }
 
 pub trait Visitor<'ast> {
-    type DefaultRes;
-    type ExprRes;
-    type PatRes;
-    type StmtRes;
+    type DefaultRes<'res>
+    where
+        Self: 'res;
+    type ExprRes<'res>
+    where
+        Self: 'res;
+    type PatRes<'res>
+    where
+        Self: 'res;
+    type StmtRes<'res>
+    where
+        Self: 'res;
 
     type CrateExtra<'tmp>;
     type ItemExtra<'tmp>;
@@ -45,7 +53,11 @@ pub trait Visitor<'ast> {
     type ExprExtra<'tmp>;
     type PatExtra<'tmp>;
 
-    fn visit_crate<'tmp>(&mut self, krate: &'ast Crate, extra: Self::CrateExtra<'tmp>) -> Self::DefaultRes;
+    fn visit_crate<'tmp>(
+        &mut self,
+        krate: &'ast Crate,
+        extra: Self::CrateExtra<'tmp>,
+    ) -> Self::DefaultRes<'_>;
 
     add_func! {
         Item, Default,
@@ -58,7 +70,7 @@ pub trait Visitor<'ast> {
         &mut self,
         item: &'ast Item<AssocItemKind>,
         extra: Self::ItemExtra<'tmp>,
-    ) -> Self::DefaultRes;
+    ) -> Self::DefaultRes<'_>;
 
     add_func! {
         Stmt, Stmt,

@@ -46,7 +46,7 @@ impl TypeSolver {
                 TypeSolver::mutability_eq(m1, m2)?;
                 Leader::Left
             }
-            (Struct(s1), Struct(s2)) => {
+            (Tup(s1), Tup(s2)) => {
                 TypeSolver::one_to_one_eq(s1, s2)?;
                 Leader::Left
             }

@@ -14,6 +14,7 @@ pub struct Scope {
     pub kind: ScopeKind,
     pub types: HashMap<Symbol, TypePtr>,
     pub values: HashMap<Symbol, Value>,
+    pub bindings: HashMap<Symbol, NodeId>,
     pub children: HashSet<NodeId>,
     pub father: NodeId,
 }
@@ -25,7 +26,8 @@ pub enum ScopeKind {
     Crate,
     Trait(TypePtr),
     Impl(TypePtr),
-    Enum,
+    Struct(TypePtr, Vec<Symbol>),
+    Enum(TypePtr, Vec<Symbol>),
     Fn {
         ret_ty: TypePtr,
         main_fn: MainFunctionState,

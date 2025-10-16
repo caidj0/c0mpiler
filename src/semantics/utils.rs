@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::HashSet, fmt::Display};
 
 use crate::ast::Symbol;
 
@@ -44,3 +44,13 @@ pub const STAGES: [AnalyzeStage; 4] = [
     AnalyzeStage::Impl,
     AnalyzeStage::Body,
 ];
+
+pub(crate) fn is_all_different<T: Eq + std::hash::Hash>(vec: &[T]) -> bool {
+    let mut set = HashSet::new();
+    for x in vec {
+        if !set.insert(x) {
+            return false;
+        }
+    }
+    true
+}

@@ -1,5 +1,7 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
-    ast::{Mutability, NodeId, Symbol},
+    ast::{Mutability, NodeId, Symbol, expr::Expr},
     semantics::resolved_ty::TypePtr,
 };
 
@@ -10,20 +12,36 @@ pub struct Value {
     pub kind: ValueKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum ValueKind {
     Anon,
     Constant(ConstantValue),
     Struct(Vec<ValueIndex>),
     Array(Vec<ValueIndex>),
-
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum ConstantValue {
     Fn,
     ConstantInt(u32),
     ConstantString(String),
+    ConstantArray(Vec<ConstantValue>),
+
+    UnEval(UnEvalConstant),
+    Placeholder, // Only for Trait
+}
+
+#[derive(Debug)]
+pub struct UnEvalConstant(NodeId, *const Expr);
+
+impl UnEvalConstant {
+    pub fn new(scope: NodeId, expr: &Expr) -> Self {
+        Self(scope, &raw const *expr)
+    }
+
+    pub fn to_ref(&self) -> (NodeId, &Expr) {
+        unsafe { (self.0, &*self.1) }
+    }
 }
 
 #[derive(Debug, Clone)]

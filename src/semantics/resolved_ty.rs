@@ -2,7 +2,14 @@ use std::{cell::RefCell, hash::Hash, rc::Rc};
 
 use enum_as_inner::EnumAsInner;
 
-use crate::semantics::utils::FullName;
+use crate::{
+    ast::{
+        Ident, Mutability, NodeId,
+        ty::{PathTy, Ty},
+    },
+    impossible, make_semantic_error,
+    semantics::{analyzer::SemanticAnalyzer, error::SemanticError, utils::FullName},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypePtr(pub(crate) Rc<RefCell<ResolvedTy>>);
@@ -41,14 +48,15 @@ impl ResolvedTy {
     pub fn deep_clone(&self) -> Self {
         let name = self.name.clone();
         let kind = match &self.kind {
+            ResolvedTyKind::Placeholder => impossible!(),
             ResolvedTyKind::BuiltIn(built_in_ty_kind) => {
                 ResolvedTyKind::BuiltIn(built_in_ty_kind.clone())
             }
             ResolvedTyKind::Ref(type_ptr, ref_mutability) => {
                 ResolvedTyKind::Ref(type_ptr.deep_clone(), ref_mutability.clone())
             }
-            ResolvedTyKind::Struct(type_ptrs) => {
-                ResolvedTyKind::Struct(type_ptrs.iter().map(|x| x.deep_clone()).collect())
+            ResolvedTyKind::Tup(type_ptrs) => {
+                ResolvedTyKind::Tup(type_ptrs.iter().map(|x| x.deep_clone()).collect())
             }
             ResolvedTyKind::Enum => ResolvedTyKind::Enum,
             ResolvedTyKind::Array(type_ptr, len) => {
@@ -70,9 +78,11 @@ impl ResolvedTy {
 
 #[derive(Debug, Clone, EnumAsInner, PartialEq, Eq, Hash)]
 pub enum ResolvedTyKind {
+    Placeholder,
+
     BuiltIn(BuiltInTyKind),
     Ref(TypePtr, RefMutability),
-    Struct(Vec<TypePtr>),
+    Tup(Vec<TypePtr>),
     Enum,
     Trait,
     Array(TypePtr, u32),
@@ -100,6 +110,15 @@ pub enum RefMutability {
     WeakMut,
 }
 
+impl From<Mutability> for RefMutability {
+    fn from(value: Mutability) -> Self {
+        match value {
+            Mutability::Not => RefMutability::Not,
+            Mutability::Mut => RefMutability::Mut,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AnyTyKind {
     Any,
@@ -123,5 +142,154 @@ impl AnyTyKind {
             ) => true,
             _ => false,
         }
+    }
+}
+
+macro_rules! type_define {
+    ($($name:ident: $e:expr),*) => {
+        impl SemanticAnalyzer {
+            $(
+                paste::paste!{
+                    pub fn [<$name _type>]() -> TypePtr {
+                        TypePtr(Rc::new(RefCell::new(ResolvedTy {
+                            name: None,
+                            kind: $e,
+                        })))
+                    }
+                }
+            )*
+        }
+    };
+}
+
+type_define!(
+    bool: ResolvedTyKind::BuiltIn(BuiltInTyKind::Bool),
+    char: ResolvedTyKind::BuiltIn(BuiltInTyKind::Char),
+    i32: ResolvedTyKind::BuiltIn(BuiltInTyKind::I32),
+    isize: ResolvedTyKind::BuiltIn(BuiltInTyKind::ISize),
+    u32: ResolvedTyKind::BuiltIn(BuiltInTyKind::U32),
+    usize: ResolvedTyKind::BuiltIn(BuiltInTyKind::USize),
+    str: ResolvedTyKind::BuiltIn(BuiltInTyKind::Str),
+    ref_str: ResolvedTyKind::Ref(Self::str_type(), RefMutability::Not),
+    never: ResolvedTyKind::Never,
+    unit: ResolvedTyKind::Tup(vec![]),
+    any: ResolvedTyKind::Any(AnyTyKind::Any),
+    implicit_self: ResolvedTyKind::ImplicitSelf
+);
+
+impl SemanticAnalyzer {
+    pub fn ref_type(ty: TypePtr, mutbl: RefMutability) -> TypePtr {
+        TypePtr(Rc::new(RefCell::new(ResolvedTy {
+            name: None,
+            kind: ResolvedTyKind::Ref(ty, mutbl),
+        })))
+    }
+
+    pub fn array_type(ty: TypePtr, len: u32) -> TypePtr {
+        TypePtr(Rc::new(RefCell::new(ResolvedTy {
+            name: None,
+            kind: ResolvedTyKind::Array(ty, len),
+        })))
+    }
+
+    pub fn fn_type(ret_ty: TypePtr, args: Vec<TypePtr>) -> TypePtr {
+        TypePtr(Rc::new(RefCell::new(ResolvedTy {
+            name: None,
+            kind: ResolvedTyKind::Fn(ret_ty, args),
+        })))
+    }
+
+    pub fn resolve_type(
+        &mut self,
+        Ty { kind, id: _, span }: &Ty,
+        current_scope: Option<NodeId>,
+    ) -> Result<TypePtr, SemanticError> {
+        use crate::ast::ty::TyKind::*;
+        use crate::ast::ty::*;
+        match kind {
+            Slice(_) | TraitObject(_) | ImplTrait(_) => {
+                return Err(make_semantic_error!(NoImplementation).set_span(span));
+            }
+
+            Array(ArrayTy(inner, len_expr)) => {
+                let len_value = self.const_eval(&len_expr.value, Self::usize_type())?;
+                let len = *len_value.as_constant_int().unwrap();
+                Ok(Self::array_type(
+                    self.resolve_type(&inner, current_scope)?,
+                    len,
+                ))
+            }
+            Ref(RefTy(MutTy { ty, mutbl })) => Ok(Self::ref_type(
+                self.resolve_type(ty, current_scope)?,
+                (*mutbl).into(),
+            )),
+            Tup(TupTy(tys)) => match &tys[..] {
+                [] => Ok(Self::unit_type()),
+                [t1] => self.resolve_type(t1, current_scope),
+                _ => Err(make_semantic_error!(NoImplementation).set_span(span)),
+            },
+            Path(path_ty) => self.resolve_path_type(path_ty, current_scope),
+            Infer(_) => Ok(Self::any_type()),
+            ImplicitSelf => Ok(Self::implicit_self_type()),
+        }
+    }
+
+    pub fn resolve_path_type(
+        &mut self,
+        PathTy(_, path): &PathTy,
+        mut current_scope: Option<NodeId>,
+    ) -> Result<TypePtr, SemanticError> {
+        let origin_scope = current_scope;
+
+        let Ident { symbol, span } = path.get_ident();
+        while let Some(id) = current_scope {
+            if let Some(ty) = self.get_type(id, symbol) {
+                return Ok(ty);
+            }
+            current_scope = self.get_parent_scope(id);
+        }
+
+        Ok(match symbol.0.as_str() {
+            "bool" => Self::bool_type(),
+            "char" => Self::char_type(),
+            "i32" => Self::i32_type(),
+            "isize" => Self::isize_type(),
+            "u32" => Self::u32_type(),
+            "usize" => Self::usize_type(),
+            "str" => Self::str_type(),
+            "Self" => {
+                return self
+                    .get_self_type(origin_scope)
+                    .ok_or(make_semantic_error!(UnknownSelfType).set_span(span));
+            }
+            _ => return Err(make_semantic_error!(UnknownType).set_span(span)),
+        })
+    }
+
+    pub fn get_self_type(&self, mut scope_id: Option<NodeId>) -> Option<TypePtr> {
+        let mut out_of_function = false;
+
+        while let Some(id) = scope_id {
+            let scope = self.get_scope(id);
+
+            use super::scope::ScopeKind::*;
+            match &scope.kind {
+                Trait(type_ptr) | Impl(type_ptr) => return Some(type_ptr.clone()),
+                Struct(_, _) | Enum(_, _) => impossible!(),
+                Fn {
+                    ret_ty: _,
+                    main_fn: _,
+                } => {
+                    if out_of_function {
+                        return None;
+                    }
+                    out_of_function = true;
+                }
+                _ => {}
+            }
+            scope_id = self.get_parent_scope(id);
+        }
+
+        None
     }
 }
