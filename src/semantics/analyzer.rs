@@ -25,13 +25,13 @@ use crate::{
 
 #[derive(Debug)]
 pub struct SemanticAnalyzer {
-    scopes: HashMap<NodeId, Scope>,
-    impls: HashMap<TypePtr, Impls>,
-    expr_results: HashMap<NodeId, ExprResult>,
-    expr_value: HashMap<NodeId, Value>,
-    pat_value: HashMap<NodeId, Value>,
+    pub(crate) scopes: HashMap<NodeId, Scope>,
+    pub(crate) impls: HashMap<TypePtr, Impls>,
+    pub(crate) expr_results: HashMap<NodeId, ExprResult>,
+    pub(crate) expr_value: HashMap<NodeId, Value>,
+    pub(crate) binding_value: HashMap<NodeId, Value>,
 
-    stage: AnalyzeStage,
+    pub(crate) stage: AnalyzeStage,
 }
 
 impl SemanticAnalyzer {
@@ -55,7 +55,7 @@ impl SemanticAnalyzer {
             impls: HashMap::default(),
             expr_results: HashMap::default(),
             expr_value: HashMap::default(),
-            pat_value: HashMap::default(),
+            binding_value: HashMap::default(),
             stage: AnalyzeStage::SymbolCollect,
         }
     }
@@ -160,6 +160,10 @@ impl SemanticAnalyzer {
 
     pub fn get_value_mut(&mut self, scope: NodeId, name: &Symbol) -> Option<&mut Value> {
         self.get_scope_mut(scope).values.get_mut(name)
+    }
+
+    pub fn get_binding_index(&self, scope: NodeId, name: &Symbol) -> Option<NodeId> {
+        self.get_scope(scope).bindings.get(name).cloned()
     }
 }
 
@@ -282,14 +286,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 if let ConstantValue::UnEval(u) = constant {
                     let u = u.clone();
-                    let ty = value.ty.clone();
-                    let v = self.eval_unevaling(&u, ty)?;
-                    *self
-                        .get_value_mut(father, &ident.symbol)
-                        .unwrap()
-                        .kind
-                        .as_constant_mut()
-                        .unwrap() = v;
+                    let mut ty = value.ty.clone();
+                    let v = self.eval_unevaling(&u, &mut ty)?;
+                    let value_mut = self.get_value_mut(father, &ident.symbol).unwrap();
+                    value_mut.ty = ty;
+                    *value_mut.kind.as_constant_mut().unwrap() = v;
                 }
             }
         }

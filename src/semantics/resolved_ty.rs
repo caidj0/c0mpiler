@@ -74,6 +74,26 @@ impl ResolvedTy {
 
         Self { name, kind }
     }
+
+    pub fn is_integer(&self) -> bool {
+        matches!(
+            self.kind,
+            ResolvedTyKind::BuiltIn(
+                BuiltInTyKind::I32
+                    | BuiltInTyKind::ISize
+                    | BuiltInTyKind::U32
+                    | BuiltInTyKind::USize
+            ) | ResolvedTyKind::Any(AnyTyKind::AnyInt | AnyTyKind::AnySignedInt)
+        )
+    }
+
+    pub fn is_signed_integer(&self) -> bool {
+        matches!(
+            self.kind,
+            ResolvedTyKind::BuiltIn(BuiltInTyKind::I32 | BuiltInTyKind::ISize)
+                | ResolvedTyKind::Any(AnyTyKind::AnySignedInt)
+        )
+    }
 }
 
 #[derive(Debug, Clone, EnumAsInner, PartialEq, Eq, Hash)]
@@ -159,6 +179,16 @@ macro_rules! type_define {
                 }
             )*
         }
+
+        impl ResolvedTy {
+            $(
+                paste::paste!{
+                    pub fn [<is_ $name _type>](&self) -> bool {
+                        self.kind == $e
+                    }
+                }
+            )*
+        }
     };
 }
 
@@ -170,7 +200,7 @@ type_define!(
     u32: ResolvedTyKind::BuiltIn(BuiltInTyKind::U32),
     usize: ResolvedTyKind::BuiltIn(BuiltInTyKind::USize),
     str: ResolvedTyKind::BuiltIn(BuiltInTyKind::Str),
-    ref_str: ResolvedTyKind::Ref(Self::str_type(), RefMutability::Not),
+    ref_str: ResolvedTyKind::Ref(SemanticAnalyzer::str_type(), RefMutability::Not),
     never: ResolvedTyKind::Never,
     unit: ResolvedTyKind::Tup(vec![]),
     any: ResolvedTyKind::Any(AnyTyKind::Any),

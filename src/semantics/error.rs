@@ -35,6 +35,10 @@ pub enum SemanticErrorKind {
     UnknownSuffix,
     Overflow,
     IndexOutOfBound,
+    ValueFromPathNotFound,
+    ScopeFromPathNotFound,
+    NotConstantValue,
+    NoBinaryOperation,
 }
 
 #[macro_export]

@@ -4,10 +4,10 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{NodeId, Symbol},
-    semantics::{resolved_ty::TypePtr, value::Value},
+    semantics::{analyzer::SemanticAnalyzer, resolved_ty::TypePtr, value::Value},
 };
 
-// Enum 可以认为是一个 Scope，Trait 也认为是一个 Scope
+// TODO: Associated Item 如何处理？Impl 和 Trait 有 scope，但是它们的 item 不保存 scope 里
 #[derive(Debug)]
 pub struct Scope {
     pub id: NodeId,
@@ -43,4 +43,34 @@ pub enum MainFunctionState {
     Not,
     UnExited,
     Exited,
+}
+
+pub struct ScopeSearchResult {
+    pub(crate) father: NodeId,
+    pub(crate) kind: ScopeSearchResultKind,
+}
+
+pub enum ScopeSearchResultKind {
+    Type(TypePtr),
+}
+
+impl SemanticAnalyzer {
+    pub fn search_scope_or_type(
+        &self,
+        symbol: &Symbol,
+        start_scope: NodeId,
+    ) -> Option<ScopeSearchResult> {
+        let mut scope_id = Some(start_scope);
+
+        while let Some(id) = scope_id {
+            if let Some(ty) = self.get_type(id, symbol) {
+                return Some(ScopeSearchResult {
+                    father: id,
+                    kind: ScopeSearchResultKind::Type(ty),
+                });
+            }
+            scope_id = self.get_parent_scope(id);
+        }
+        None
+    }
 }

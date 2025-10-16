@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{NodeId, Symbol}, semantics::value::Value,
+    ast::{NodeId, Symbol}, semantics::{resolved_ty::TypePtr, value::Value},
 };
 
 #[derive(Debug)]
 pub struct Impls {
-    inherent: ImplInfo,
-    traits: HashMap<NodeId, ImplInfo>,
+    pub(crate) inherent: ImplInfo,
+    pub(crate) traits: HashMap<TypePtr, ImplInfo>,
 }
 
+// Constant 和 Function 共享一个命名空间
 #[derive(Debug)]
 pub struct ImplInfo {
-    pub methods: HashMap<Symbol, Value>,
-    pub constants: HashMap<Symbol, Value>,
+    pub(crate) values: HashMap<Symbol, Value>,
 }
