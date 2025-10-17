@@ -4,14 +4,17 @@ use crate::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
         resolved_ty::TypePtr,
-        value::{Value, ValueIndex, ValueKind},
+        value::{Value, ValueKind},
     },
 };
 
 #[derive(Debug)]
 pub struct PatResult {
-    pub bindings: Vec<(Symbol, Value, NodeId)>,
+    pub bindings: Vec<Binding>,
 }
+
+#[derive(Debug)]
+pub struct Binding(pub(crate) Symbol, pub(crate) Value, pub(crate) NodeId);
 
 #[derive(Debug)]
 pub struct PatExtra<'tmp> {
@@ -38,7 +41,7 @@ impl SemanticAnalyzer {
             kind: ValueKind::Binding(mode.0),
         };
 
-        let bindings = vec![(ident.symbol.clone(), value, extra.id)];
+        let bindings = vec![Binding(ident.symbol.clone(), value, extra.id)];
 
         Ok(PatResult { bindings })
     }

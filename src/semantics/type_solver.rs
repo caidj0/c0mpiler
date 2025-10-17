@@ -1,4 +1,12 @@
-use crate::{semantics::{analyzer::SemanticAnalyzer, error::SemanticError, resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypePtr}}, to_semantic_error};
+use crate::make_semantic_error;
+use crate::{
+    semantics::{
+        analyzer::SemanticAnalyzer,
+        error::SemanticError,
+        resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypePtr},
+    },
+    to_semantic_error,
+};
 
 pub struct TypeSolver;
 

@@ -1,12 +1,16 @@
+use std::collections::HashSet;
+
 use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        expr::Expr, path::{Path, QSelf}, BindingMode, ByRef, Mutability, NodeId, Symbol
+        ByRef, Mutability, NodeId, Symbol,
+        expr::Expr,
+        path::{Path, QSelf},
     },
     impossible, make_semantic_error,
     semantics::{
-        analyzer::SemanticAnalyzer, error::SemanticError, resolved_ty::TypePtr, utils::FullName,
+        analyzer::SemanticAnalyzer, error::SemanticError, pat::Binding, resolved_ty::TypePtr,
     },
 };
 
@@ -23,16 +27,16 @@ pub enum ValueKind {
     Constant(ConstantValue),
     Struct(Vec<ValueIndex>),
     Array(Vec<ValueIndex>),
+    Fn {
+        is_method: bool,
+        is_placeholder: bool,
+    },
 
     Binding(ByRef),
 }
 
 #[derive(Debug, EnumAsInner, Clone)]
 pub enum ConstantValue {
-    Fn {
-        is_method: bool,
-        is_placeholder: bool,
-    },
     ConstantInt(u32),
     ConstantString(String),
     ConstantArray(Vec<ConstantValue>),
@@ -153,19 +157,44 @@ impl SemanticAnalyzer {
         let mut scope_id = Some(start_scope);
 
         while let Some(id) = scope_id {
-            if let Some(index) = self.get_binding_index(id, symbol) {
-                return Some(ValueIndex {
-                    kind: ValueIndexKind::Bindings { binding_id: index },
-                    name: symbol.clone(),
-                });
-            } else if let Some(_) = self.get_scope_value(id, symbol) {
+            if let Some(_) = self.get_scope_value(id, symbol) {
                 return Some(ValueIndex {
                     kind: ValueIndexKind::Global { scope_id: id },
+                    name: symbol.clone(),
+                });
+            } else if let Some(index) = self.get_binding_index(id, symbol) {
+                return Some(ValueIndex {
+                    kind: ValueIndexKind::Bindings { binding_id: index },
                     name: symbol.clone(),
                 });
             }
             scope_id = self.get_parent_scope(id);
         }
         None
+    }
+
+    pub fn add_bindings(
+        &mut self,
+        bindings: Vec<Binding>,
+        scope_id: NodeId,
+    ) -> Result<(), SemanticError> {
+        let mut set = HashSet::new();
+
+        for Binding(symbol, value, pat_id) in bindings {
+            if !set.insert(symbol.clone()) {
+                return Err(make_semantic_error!(BindingNameConflict));
+            }
+            if self
+                .search_value(&symbol, scope_id)
+                .map_or(false, |x| self.get_value_by_index(&x).kind.is_constant())
+            {
+                return Err(make_semantic_error!(BindingConflictWithConstant));
+            }
+
+            self.get_scope_mut(scope_id).bindings.insert(symbol, pat_id);
+            self.binding_value.insert(pat_id, value);
+        }
+
+        Ok(())
     }
 }

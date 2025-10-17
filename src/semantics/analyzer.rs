@@ -12,7 +12,7 @@ use crate::{
     impossible, make_semantic_error,
     semantics::{
         error::SemanticError,
-        expr::{ExprExtra, ExprResult},
+        expr::{ControlFlowInterruptKind, ExprExtra, ExprResult},
         impls::Impls,
         item::{AssociatedInfo, ItemExtra},
         pat::{PatExtra, PatResult},
@@ -379,10 +379,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let value = Value {
                     ty: func_ty,
                     mutbl: Mutability::Not,
-                    kind: ValueKind::Constant(ConstantValue::Fn {
+                    kind: ValueKind::Fn {
                         is_method,
                         is_placeholder: body.is_none(),
-                    }),
+                    },
                 };
 
                 if let Some(asso) = associated_info {
@@ -618,13 +618,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     for name in names {
                         let v = trait_info.values.get(name).unwrap();
                         match &v.kind {
-                            ValueKind::Constant(
-                                ConstantValue::Fn {
-                                    is_method: _,
-                                    is_placeholder: true,
-                                }
-                                | ConstantValue::Placeholder,
-                            ) => {
+                            ValueKind::Fn {
+                                is_method: _,
+                                is_placeholder: true,
+                            }
+                            | ValueKind::Constant(ConstantValue::Placeholder) => {
                                 return Err(make_semantic_error!(NotCompleteImpl));
                             }
                             _ => impossible!(),
@@ -681,7 +679,15 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if !kind.is_expr()
             && let Some(traget) = &mut extra.target_ty
         {
-            Self::type_eq(traget, &mut Self::unit_type())?;
+            Self::type_eq(traget, &mut Self::unit_type()).map_err(|e| e.set_span(span))?;
+        }
+
+        macro_rules! set_result {
+            ($analyzer:expr, $id:expr, $e:expr) => {
+                if $analyzer.stage.is_body() {
+                    $analyzer.set_stmt_result($e, $id);
+                }
+            };
         }
 
         match kind {
@@ -704,14 +710,35 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         associated_info: None,
                     },
                 )?;
+                set_result!(
+                    self,
+                    *id,
+                    StmtResult::Else {
+                        interrupt: ControlFlowInterruptKind::Not,
+                    }
+                );
             }
             StmtKind::Expr(expr) => {
                 self.visit_expr(expr, extra)?;
+                set_result!(self, *id, StmtResult::Expr(expr.id));
             }
             StmtKind::Semi(expr) => {
                 self.visit_expr(expr, extra)?;
+                set_result!(
+                    self,
+                    *id,
+                    StmtResult::Else {
+                        interrupt: self.expr_results.get(&expr.id).unwrap().interrupt,
+                    }
+                );
             }
-            StmtKind::Empty(_) => {}
+            StmtKind::Empty(_) => set_result!(
+                self,
+                *id,
+                StmtResult::Else {
+                    interrupt: ControlFlowInterruptKind::Not,
+                }
+            ),
         };
 
         Ok(())
@@ -723,7 +750,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             pat,
             ty,
             kind,
-            id,
+            id: _,
             span,
         }: &'ast LocalStmt,
         extra: Self::StmtExtra<'tmp>,
@@ -751,7 +778,24 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             )?,
         }
 
-        todo!()
+        if self.stage.is_body() {
+            let PatResult { bindings } = self.visit_pat(
+                pat,
+                PatExtra {
+                    id: 0,
+                    ty: target_type.as_mut().unwrap(),
+                },
+            )?;
+            self.add_bindings(bindings, extra.scope_id)?;
+
+            let interrupt = match kind {
+                LocalKind::Decl => ControlFlowInterruptKind::Not,
+                LocalKind::Init(expr) => self.expr_results.get(&expr.id).unwrap().interrupt,
+            };
+            self.set_stmt_result(StmtResult::Else { interrupt }, extra.self_id);
+        }
+
+        Ok(())
     }
 
     fn visit_expr<'tmp>(

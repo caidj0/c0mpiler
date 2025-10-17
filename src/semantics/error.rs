@@ -45,6 +45,8 @@ pub enum SemanticErrorKind {
     NotCompleteImpl,
     UnknownAssociateItem,
     AssociateItemMismatch,
+    BindingNameConflict,
+    BindingConflictWithConstant,
 }
 
 #[macro_export]
