@@ -6,14 +6,16 @@ use std::{
 };
 
 use crate::{
-    ast::{Crate, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*, stmt::*},
+    ast::{
+        BindingMode, Crate, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*, stmt::*,
+    },
     impossible, make_semantic_error,
     semantics::{
         error::SemanticError,
-        expr::ExprResult,
+        expr::{ExprExtra, ExprResult},
         impls::Impls,
         item::{AssociatedInfo, ItemExtra},
-        pat::PatResult,
+        pat::{PatExtra, PatResult},
         resolved_ty::{ResolvedTy, ResolvedTyKind, TypePtr},
         scope::{MainFunctionState, Scope, ScopeKind},
         stmt::StmtResult,
@@ -29,6 +31,7 @@ pub struct SemanticAnalyzer {
     pub(crate) impls: HashMap<TypePtr, Impls>,
     pub(crate) expr_results: HashMap<NodeId, ExprResult>,
     pub(crate) expr_value: HashMap<NodeId, Value>,
+    pub(crate) stmt_results: HashMap<NodeId, StmtResult>,
     pub(crate) binding_value: HashMap<NodeId, Value>,
 
     pub(crate) stage: AnalyzeStage,
@@ -55,6 +58,7 @@ impl SemanticAnalyzer {
             impls: HashMap::default(),
             expr_results: HashMap::default(),
             expr_value: HashMap::default(),
+            stmt_results: HashMap::default(),
             binding_value: HashMap::default(),
             stage: AnalyzeStage::SymbolCollect,
         }
@@ -174,7 +178,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Self: 'res;
 
     type ExprRes<'res>
-        = Result<Option<&'res ExprResult>, SemanticError>
+        = Result<(), SemanticError>
+    // 去 expr_result 获取 result
     where
         Self: 'res;
 
@@ -184,7 +189,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Self: 'res;
 
     type StmtRes<'res>
-        = Result<StmtResult, SemanticError>
+        = Result<(), SemanticError>
     where
         Self: 'res;
 
@@ -192,11 +197,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     type ItemExtra<'tmp> = ItemExtra;
 
-    type StmtExtra<'tmp> = ();
+    type StmtExtra<'tmp> = ExprExtra<'tmp>;
 
-    type ExprExtra<'tmp> = ();
+    type ExprExtra<'tmp> = ExprExtra<'tmp>;
 
-    type PatExtra<'tmp> = ();
+    type PatExtra<'tmp> = PatExtra<'tmp>;
 
     fn visit_crate<'tmp>(
         &mut self,
@@ -670,17 +675,82 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_stmt<'tmp>(
         &mut self,
-        stmt: &'ast Stmt,
-        extra: Self::StmtExtra<'tmp>,
+        Stmt { kind, id, span }: &'ast Stmt,
+        mut extra: Self::StmtExtra<'tmp>,
     ) -> Self::StmtRes<'_> {
-        todo!()
+        if !kind.is_expr()
+            && let Some(traget) = &mut extra.target_ty
+        {
+            Self::type_eq(traget, &mut Self::unit_type())?;
+        }
+
+        match kind {
+            StmtKind::Let(local_stmt) => {
+                self.visit_local_stmt(
+                    local_stmt,
+                    ExprExtra {
+                        self_id: *id,
+                        ..extra
+                    },
+                )?;
+            }
+            StmtKind::Item(item) => {
+                self.visit_item(
+                    item,
+                    ItemExtra {
+                        father: extra.scope_id,
+                        self_id: 0,
+                        span: Span::default(),
+                        associated_info: None,
+                    },
+                )?;
+            }
+            StmtKind::Expr(expr) => {
+                self.visit_expr(expr, extra)?;
+            }
+            StmtKind::Semi(expr) => {
+                self.visit_expr(expr, extra)?;
+            }
+            StmtKind::Empty(_) => {}
+        };
+
+        Ok(())
     }
 
     fn visit_local_stmt<'tmp>(
         &mut self,
-        stmt: &'ast LocalStmt,
+        LocalStmt {
+            pat,
+            ty,
+            kind,
+            id,
+            span,
+        }: &'ast LocalStmt,
         extra: Self::StmtExtra<'tmp>,
     ) -> Self::StmtRes<'_> {
+        let mut target_type = if self.stage.is_body() {
+            Some(
+                self.resolve_type(
+                    ty.as_ref()
+                        .ok_or(make_semantic_error!(NoImplementation).set_span(span))?,
+                    Some(extra.scope_id),
+                )?,
+            )
+        } else {
+            None
+        };
+
+        match kind {
+            LocalKind::Decl => return Err(make_semantic_error!(NoImplementation).set_span(span)),
+            LocalKind::Init(expr) => self.visit_expr(
+                expr,
+                ExprExtra {
+                    target_ty: target_type.as_mut(),
+                    ..extra
+                },
+            )?,
+        }
+
         todo!()
     }
 
@@ -814,7 +884,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_block_expr<'tmp>(
         &mut self,
-        expr: &'ast BlockExpr,
+        BlockExpr { stmts, id, span }: &'ast BlockExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         todo!()
@@ -924,95 +994,126 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         todo!()
     }
 
-    fn visit_pat<'tmp>(&mut self, pat: &'ast Pat, extra: Self::PatExtra<'tmp>) -> Self::PatRes<'_> {
-        todo!()
+    fn visit_pat<'tmp>(
+        &mut self,
+        Pat { kind, id, span }: &'ast Pat,
+        extra: Self::PatExtra<'tmp>,
+    ) -> Self::PatRes<'_> {
+        let new_extra = PatExtra { id: *id, ..extra };
+        match kind {
+            PatKind::Wild(pat) => self.visit_wild_pat(pat, new_extra),
+            PatKind::Ident(pat) => self.visit_ident_pat(pat, new_extra),
+            PatKind::Struct(pat) => self.visit_struct_pat(pat, new_extra),
+            PatKind::Or(pat) => self.visit_or_pat(pat, new_extra),
+            PatKind::Path(pat) => self.visit_path_pat(pat, new_extra),
+            PatKind::Tuple(pat) => self.visit_tuple_pat(pat, new_extra),
+            PatKind::Ref(pat) => self.visit_ref_pat(pat, new_extra),
+            PatKind::Lit(pat) => self.visit_lit_pat(pat, new_extra),
+            PatKind::Range(pat) => self.visit_range_pat(pat, new_extra),
+            PatKind::Slice(pat) => self.visit_slice_pat(pat, new_extra),
+            PatKind::Rest(pat) => self.visit_rest_pat(pat, new_extra),
+        }
+        .map_err(|e| e.set_span(span))
     }
 
     fn visit_wild_pat<'tmp>(
         &mut self,
-        pat: &'ast WildPat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast WildPat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_ident_pat<'tmp>(
         &mut self,
-        pat: &'ast IdentPat,
+        IdentPat(mode, ident, _restriction): &'ast IdentPat,
         extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Self::visit_ident_pat_impl(mode, ident, extra)
     }
 
     fn visit_struct_pat<'tmp>(
         &mut self,
-        pat: &'ast StructPat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast StructPat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_or_pat<'tmp>(
         &mut self,
-        pat: &'ast OrPat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast OrPat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_path_pat<'tmp>(
         &mut self,
-        pat: &'ast PathPat,
+        PathPat(_, path): &'ast PathPat,
         extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        let ident = path.get_ident();
+        let mode = BindingMode(crate::ast::ByRef::No, Mutability::Not);
+        Self::visit_ident_pat_impl(&mode, ident, extra)
     }
 
     fn visit_tuple_pat<'tmp>(
         &mut self,
-        pat: &'ast TuplePat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast TuplePat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_ref_pat<'tmp>(
         &mut self,
-        pat: &'ast RefPat,
+        RefPat(pat, mutbl): &'ast RefPat,
         extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Self::type_eq(
+            extra.ty,
+            &mut Self::ref_type(Self::any_type(), (*mutbl).into()),
+        )?;
+
+        self.visit_pat(
+            pat,
+            PatExtra {
+                ty: extra.ty.borrow_mut().kind.as_ref_mut().unwrap().0,
+                id: 0,
+            },
+        )
     }
 
     fn visit_lit_pat<'tmp>(
         &mut self,
-        pat: &'ast LitPat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast LitPat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_range_pat<'tmp>(
         &mut self,
-        pat: &'ast RangePat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast RangePat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_slice_pat<'tmp>(
         &mut self,
-        pat: &'ast SlicePat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast SlicePat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_rest_pat<'tmp>(
         &mut self,
-        pat: &'ast RestPat,
-        extra: Self::PatExtra<'tmp>,
+        _pat: &'ast RestPat,
+        _extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 }

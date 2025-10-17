@@ -1,5 +1,7 @@
 use std::{collections::HashSet, fmt::Display};
 
+use enum_as_inner::EnumAsInner;
+
 use crate::ast::Symbol;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -30,7 +32,7 @@ fn full_name_test() {
     println!("{name}");
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum AnalyzeStage {
     SymbolCollect,
     Definition,

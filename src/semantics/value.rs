@@ -2,9 +2,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        Mutability, NodeId, Symbol,
-        expr::Expr,
-        path::{Path, QSelf},
+        expr::Expr, path::{Path, QSelf}, BindingMode, ByRef, Mutability, NodeId, Symbol
     },
     impossible, make_semantic_error,
     semantics::{
@@ -25,11 +23,16 @@ pub enum ValueKind {
     Constant(ConstantValue),
     Struct(Vec<ValueIndex>),
     Array(Vec<ValueIndex>),
+
+    Binding(ByRef),
 }
 
 #[derive(Debug, EnumAsInner, Clone)]
 pub enum ConstantValue {
-    Fn { is_method: bool, is_placeholder: bool },
+    Fn {
+        is_method: bool,
+        is_placeholder: bool,
+    },
     ConstantInt(u32),
     ConstantString(String),
     ConstantArray(Vec<ConstantValue>),

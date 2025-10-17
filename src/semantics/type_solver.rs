@@ -1,4 +1,4 @@
-use crate::semantics::resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypePtr};
+use crate::{semantics::{analyzer::SemanticAnalyzer, error::SemanticError, resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypePtr}}, to_semantic_error};
 
 pub struct TypeSolver;
 
@@ -143,4 +143,10 @@ pub enum TypeSolveError {
     ArrayLengthMismatch,
     AnyTypeMismatch,
     GeneralTypeMismatch,
+}
+
+impl SemanticAnalyzer {
+    pub fn type_eq(left: &mut TypePtr, right: &mut TypePtr) -> Result<(), SemanticError> {
+        to_semantic_error!(TypeSolver::eq(left, right))
+    }
 }
