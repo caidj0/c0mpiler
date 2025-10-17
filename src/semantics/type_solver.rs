@@ -71,7 +71,6 @@ impl TypeSolver {
                 TypeSolver::one_to_one_eq(a1, a2)?;
                 Leader::Left
             }
-            (ImplicitSelf, ImplicitSelf) => Leader::Left,
             (l, Any(kind)) => {
                 if kind.can_cast_to(l) {
                     Leader::Left

@@ -5,6 +5,7 @@ use enum_as_inner::EnumAsInner;
 use crate::{
     ast::{
         Ident, Mutability, NodeId,
+        path::{Path, QSelf},
         ty::{PathTy, Ty},
     },
     impossible, make_semantic_error,
@@ -29,6 +30,16 @@ impl TypePtr {
 
     pub fn borrow(&self) -> std::cell::Ref<'_, ResolvedTy> {
         self.0.borrow()
+    }
+
+    pub fn replace(&mut self, name: &FullName, target: &TypePtr) {
+        let mut r = self.0.borrow_mut();
+        if r.name.as_ref().map_or(false, |x| x == name) {
+            drop(r);
+            *self = target.clone()
+        } else {
+            r.replace(name, target);
+        }
     }
 }
 
@@ -66,13 +77,34 @@ impl ResolvedTy {
                 type_ptr.deep_clone(),
                 type_ptrs.iter().map(|x| x.deep_clone()).collect(),
             ),
-            ResolvedTyKind::ImplicitSelf => ResolvedTyKind::ImplicitSelf,
             ResolvedTyKind::Never => ResolvedTyKind::Never,
             ResolvedTyKind::Trait => ResolvedTyKind::Trait,
             ResolvedTyKind::Any(any_ty_kind) => ResolvedTyKind::Any(any_ty_kind.clone()),
         };
 
         Self { name, kind }
+    }
+
+    pub fn replace(&mut self, name: &FullName, target: &TypePtr) {
+        match &mut self.kind {
+            ResolvedTyKind::Placeholder => {}
+            ResolvedTyKind::BuiltIn(_) => {}
+            ResolvedTyKind::Ref(type_ptr, _) => {
+                type_ptr.replace(name, target);
+            }
+            ResolvedTyKind::Tup(type_ptrs) => {
+                type_ptrs.iter_mut().for_each(|x| x.replace(name, target))
+            }
+            ResolvedTyKind::Enum => {}
+            ResolvedTyKind::Trait => {}
+            ResolvedTyKind::Array(type_ptr, _) => type_ptr.replace(name, target),
+            ResolvedTyKind::Fn(type_ptr, type_ptrs) => {
+                type_ptr.replace(name, target);
+                type_ptrs.iter_mut().for_each(|x| x.replace(name, target));
+            }
+            ResolvedTyKind::Never => {}
+            ResolvedTyKind::Any(_) => {}
+        }
     }
 
     pub fn is_integer(&self) -> bool {
@@ -107,7 +139,6 @@ pub enum ResolvedTyKind {
     Trait,
     Array(TypePtr, Option<u32>),
     Fn(TypePtr, Vec<TypePtr>),
-    ImplicitSelf,
     Never,
     Any(AnyTyKind),
 }
@@ -204,7 +235,6 @@ type_define!(
     never: ResolvedTyKind::Never,
     unit: ResolvedTyKind::Tup(vec![]),
     any: ResolvedTyKind::Any(AnyTyKind::Any),
-    implicit_self: ResolvedTyKind::ImplicitSelf,
 
     any_int: ResolvedTyKind::Any(AnyTyKind::AnyInt),
     any_signed_int: ResolvedTyKind::Any(AnyTyKind::AnySignedInt)
@@ -262,15 +292,18 @@ impl SemanticAnalyzer {
                 [t1] => self.resolve_type(t1, current_scope),
                 _ => Err(make_semantic_error!(NoImplementation).set_span(span)),
             },
-            Path(path_ty) => self.resolve_path_type(path_ty, current_scope),
+            Path(path_ty) => self.resolve_path_type(&path_ty.0, &path_ty.1, current_scope),
             Infer(_) => Ok(Self::any_type()),
-            ImplicitSelf => Ok(Self::implicit_self_type()),
+            ImplicitSelf => self
+                .get_self_type(current_scope)
+                .ok_or(make_semantic_error!(UnknownSelfType).set_span(span)),
         }
     }
 
     pub fn resolve_path_type(
         &mut self,
-        PathTy(_, path): &PathTy,
+        _: &Option<Box<QSelf>>,
+        path: &Path,
         mut current_scope: Option<NodeId>,
     ) -> Result<TypePtr, SemanticError> {
         let origin_scope = current_scope;
@@ -308,7 +341,7 @@ impl SemanticAnalyzer {
 
             use super::scope::ScopeKind::*;
             match &scope.kind {
-                Trait(type_ptr) | Impl(type_ptr) => return Some(type_ptr.clone()),
+                Trait(type_ptr) | Impl { ty: type_ptr, .. } => return Some(type_ptr.clone()),
                 Struct(_, _) | Enum(_, _) => impossible!(),
                 Fn {
                     ret_ty: _,

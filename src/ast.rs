@@ -239,7 +239,7 @@ macro_rules! kind_check {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct BindingMode(pub ByRef, pub Mutability);
 
 impl Eatable for BindingMode {
@@ -254,7 +254,7 @@ impl Eatable for BindingMode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ByRef {
     Yes(Mutability),
     No,

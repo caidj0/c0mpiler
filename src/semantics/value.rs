@@ -29,7 +29,7 @@ pub enum ValueKind {
 
 #[derive(Debug, EnumAsInner, Clone)]
 pub enum ConstantValue {
-    Fn,
+    Fn { is_method: bool, is_placeholder: bool },
     ConstantInt(u32),
     ConstantString(String),
     ConstantArray(Vec<ConstantValue>),
@@ -52,19 +52,23 @@ impl UnEvalConstant {
     }
 }
 
+#[derive(Debug)]
+pub struct ValueIndex {
+    name: Symbol,
+    kind: ValueIndexKind,
+}
+
 #[derive(Debug, Clone)]
-pub enum ValueIndex {
+pub enum ValueIndexKind {
     Bindings {
         binding_id: NodeId,
     },
     Global {
         scope_id: NodeId,
-        name: Symbol,
     },
     Impl {
         ty: TypePtr,
         for_trait: Option<TypePtr>,
-        name: Symbol,
     },
 }
 
@@ -100,18 +104,22 @@ impl SemanticAnalyzer {
     pub fn search_value_in_impl(&self, ty: &TypePtr, symbol: &Symbol) -> Option<ValueIndex> {
         let impls = self.impls.get(ty).unwrap();
         if impls.inherent.values.contains_key(symbol) {
-            return Some(ValueIndex::Impl {
-                ty: ty.clone(),
-                for_trait: None,
+            return Some(ValueIndex {
+                kind: ValueIndexKind::Impl {
+                    ty: ty.clone(),
+                    for_trait: None,
+                },
                 name: symbol.clone(),
             });
         }
 
         for (t, trait_impls) in &impls.traits {
             if trait_impls.values.contains_key(symbol) {
-                return Some(ValueIndex::Impl {
-                    ty: ty.clone(),
-                    for_trait: Some(t.clone()),
+                return Some(ValueIndex {
+                    kind: ValueIndexKind::Impl {
+                        ty: ty.clone(),
+                        for_trait: Some(t.clone()),
+                    },
                     name: symbol.clone(),
                 });
             }
@@ -121,23 +129,19 @@ impl SemanticAnalyzer {
     }
 
     pub fn get_value_by_index(&self, index: &ValueIndex) -> &Value {
-        match index {
-            ValueIndex::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),
-            ValueIndex::Global { scope_id, name } => {
-                self.get_scope(*scope_id).values.get(name).unwrap()
+        match &index.kind {
+            ValueIndexKind::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),
+            ValueIndexKind::Global { scope_id } => {
+                self.get_scope(*scope_id).values.get(&index.name).unwrap()
             }
-            ValueIndex::Impl {
-                ty,
-                for_trait,
-                name,
-            } => {
+            ValueIndexKind::Impl { ty, for_trait } => {
                 let impls = self.impls.get(ty).unwrap();
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get(i).unwrap()
                 } else {
                     &impls.inherent
                 };
-                impl_info.values.get(name).unwrap()
+                impl_info.values.get(&index.name).unwrap()
             }
         }
     }
@@ -147,10 +151,13 @@ impl SemanticAnalyzer {
 
         while let Some(id) = scope_id {
             if let Some(index) = self.get_binding_index(id, symbol) {
-                return Some(ValueIndex::Bindings { binding_id: index });
-            } else if let Some(_) = self.get_value(id, symbol) {
-                return Some(ValueIndex::Global {
-                    scope_id: id,
+                return Some(ValueIndex {
+                    kind: ValueIndexKind::Bindings { binding_id: index },
+                    name: symbol.clone(),
+                });
+            } else if let Some(_) = self.get_scope_value(id, symbol) {
+                return Some(ValueIndex {
+                    kind: ValueIndexKind::Global { scope_id: id },
                     name: symbol.clone(),
                 });
             }

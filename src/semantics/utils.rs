@@ -34,14 +34,12 @@ fn full_name_test() {
 pub enum AnalyzeStage {
     SymbolCollect,
     Definition,
-    Impl,
     Body,
 }
 
-pub const STAGES: [AnalyzeStage; 4] = [
+pub const STAGES: [AnalyzeStage; 3] = [
     AnalyzeStage::SymbolCollect,
     AnalyzeStage::Definition,
-    AnalyzeStage::Impl,
     AnalyzeStage::Body,
 ];
 

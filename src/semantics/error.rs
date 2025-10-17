@@ -39,6 +39,12 @@ pub enum SemanticErrorKind {
     ScopeFromPathNotFound,
     NotConstantValue,
     NoBinaryOperation,
+    ConstantWithoutBody,
+    FunctionWithoutBody,
+    SelfInNotAssociateItem,
+    NotCompleteImpl,
+    UnknownAssociateItem,
+    AssociateItemMismatch,
 }
 
 #[macro_export]

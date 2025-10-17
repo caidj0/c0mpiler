@@ -25,7 +25,10 @@ pub enum ScopeKind {
     Root,
     Crate,
     Trait(TypePtr),
-    Impl(TypePtr),
+    Impl {
+        ty: TypePtr,
+        for_trait: Option<TypePtr>,
+    },
     Struct(TypePtr, Vec<Symbol>),
     Enum(TypePtr, Vec<Symbol>),
     Fn {
