@@ -1,5 +1,5 @@
 use crate::{
-    ast::{NodeId, Symbol},
+    ast::{BindingMode, Mutability, NodeId, Symbol},
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
@@ -14,7 +14,12 @@ pub struct PatResult {
 }
 
 #[derive(Debug)]
-pub struct Binding(pub(crate) Symbol, pub(crate) Value, pub(crate) NodeId);
+pub struct Binding(
+    pub(crate) Symbol,
+    pub(crate) Value,
+    pub(crate) Mutability,
+    pub(crate) NodeId,
+);
 
 #[derive(Debug)]
 pub struct PatExtra<'tmp> {
@@ -24,11 +29,11 @@ pub struct PatExtra<'tmp> {
 
 impl SemanticAnalyzer {
     pub(crate) fn visit_ident_pat_impl(
-        mode: &crate::ast::BindingMode,
+        BindingMode(by_ref, mutbl): &crate::ast::BindingMode,
         ident: &crate::ast::Ident,
         extra: PatExtra<'_>,
     ) -> Result<PatResult, SemanticError> {
-        let ty = match mode.0 {
+        let ty = match *by_ref {
             crate::ast::ByRef::Yes(mutability) => {
                 Self::ref_type(extra.ty.clone(), mutability.into())
             }
@@ -37,11 +42,10 @@ impl SemanticAnalyzer {
 
         let value = Value {
             ty,
-            mutbl: mode.1,
-            kind: ValueKind::Binding(mode.0),
+            kind: ValueKind::Binding(*by_ref),
         };
 
-        let bindings = vec![Binding(ident.symbol.clone(), value, extra.id)];
+        let bindings = vec![Binding(ident.symbol.clone(), value, *mutbl, extra.id)];
 
         Ok(PatResult { bindings })
     }

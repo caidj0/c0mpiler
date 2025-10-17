@@ -4,8 +4,11 @@ use crate::{
     ast::{NodeId, Symbol},
     make_semantic_error,
     semantics::{
-        analyzer::SemanticAnalyzer, error::SemanticError, item::AssociatedInfo,
-        resolved_ty::TypePtr, value::Value,
+        analyzer::SemanticAnalyzer,
+        error::SemanticError,
+        item::AssociatedInfo,
+        resolved_ty::TypePtr,
+        value::{PlaceValue, Value},
     },
 };
 
@@ -18,7 +21,7 @@ pub struct Impls {
 // Constant 和 Function 共享一个命名空间
 #[derive(Debug)]
 pub struct ImplInfo {
-    pub(crate) values: HashMap<Symbol, Value>,
+    pub(crate) values: HashMap<Symbol, PlaceValue>,
 }
 
 impl SemanticAnalyzer {
@@ -26,8 +29,8 @@ impl SemanticAnalyzer {
         &mut self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
-        value: Value,
-    ) -> Result<&mut Value, SemanticError> {
+        value: PlaceValue,
+    ) -> Result<&mut PlaceValue, SemanticError> {
         let impls = self.impls.get_mut(ty).unwrap();
         let info = if let Some(t) = for_trait {
             impls.traits.get_mut(t).unwrap()
@@ -46,7 +49,7 @@ impl SemanticAnalyzer {
         &mut self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
-    ) -> Option<&mut Value> {
+    ) -> Option<&mut PlaceValue> {
         let impls = self.impls.get_mut(ty).unwrap();
         let info = if let Some(t) = for_trait {
             impls.traits.get_mut(t).unwrap()

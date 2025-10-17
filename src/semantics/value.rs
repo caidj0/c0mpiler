@@ -14,10 +14,11 @@ use crate::{
     },
 };
 
+// 如何区分 Value, Place, Assignee 表达式
+// Value 里不需要表明可变性
 #[derive(Debug)]
 pub struct Value {
     pub ty: TypePtr,
-    pub mutbl: Mutability,
     pub kind: ValueKind,
 }
 
@@ -25,8 +26,6 @@ pub struct Value {
 pub enum ValueKind {
     Anon,
     Constant(ConstantValue),
-    Struct(Vec<ValueIndex>),
-    Array(Vec<ValueIndex>),
     Fn {
         is_method: bool,
         is_placeholder: bool,
@@ -60,7 +59,13 @@ impl UnEvalConstant {
 }
 
 #[derive(Debug)]
-pub struct ValueIndex {
+pub enum ValueIndex {
+    Place(PlaceValueIndex),
+    Expr(NodeId),
+}
+
+#[derive(Debug)]
+pub struct PlaceValueIndex {
     name: Symbol,
     kind: ValueIndexKind,
 }
@@ -79,6 +84,12 @@ pub enum ValueIndexKind {
     },
 }
 
+#[derive(Debug)]
+pub struct PlaceValue {
+    pub(crate) value: Value,
+    pub(crate) mutbl: Mutability,
+}
+
 impl SemanticAnalyzer {
     // Search 范围包括局部变量，常量，函数.
     // PathSegment 可以是 Scope 或者是 Type，实际上 Type::xxx 应该是 <Type>::xxx 的语法糖.
@@ -88,7 +99,7 @@ impl SemanticAnalyzer {
         scope_id: NodeId,
         _qself: &Option<Box<QSelf>>,
         Path { segments, span }: &Path,
-    ) -> Result<ValueIndex, SemanticError> {
+    ) -> Result<PlaceValueIndex, SemanticError> {
         match &segments[..] {
             [] => impossible!(),
             [segment] => self
@@ -108,10 +119,10 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn search_value_in_impl(&self, ty: &TypePtr, symbol: &Symbol) -> Option<ValueIndex> {
+    pub fn search_value_in_impl(&self, ty: &TypePtr, symbol: &Symbol) -> Option<PlaceValueIndex> {
         let impls = self.impls.get(ty).unwrap();
         if impls.inherent.values.contains_key(symbol) {
-            return Some(ValueIndex {
+            return Some(PlaceValueIndex {
                 kind: ValueIndexKind::Impl {
                     ty: ty.clone(),
                     for_trait: None,
@@ -122,7 +133,7 @@ impl SemanticAnalyzer {
 
         for (t, trait_impls) in &impls.traits {
             if trait_impls.values.contains_key(symbol) {
-                return Some(ValueIndex {
+                return Some(PlaceValueIndex {
                     kind: ValueIndexKind::Impl {
                         ty: ty.clone(),
                         for_trait: Some(t.clone()),
@@ -135,7 +146,7 @@ impl SemanticAnalyzer {
         None
     }
 
-    pub fn get_value_by_index(&self, index: &ValueIndex) -> &Value {
+    pub fn get_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),
             ValueIndexKind::Global { scope_id } => {
@@ -153,17 +164,17 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn search_value(&self, symbol: &Symbol, start_scope: NodeId) -> Option<ValueIndex> {
+    pub fn search_value(&self, symbol: &Symbol, start_scope: NodeId) -> Option<PlaceValueIndex> {
         let mut scope_id = Some(start_scope);
 
         while let Some(id) = scope_id {
             if let Some(_) = self.get_scope_value(id, symbol) {
-                return Some(ValueIndex {
+                return Some(PlaceValueIndex {
                     kind: ValueIndexKind::Global { scope_id: id },
                     name: symbol.clone(),
                 });
             } else if let Some(index) = self.get_binding_index(id, symbol) {
-                return Some(ValueIndex {
+                return Some(PlaceValueIndex {
                     kind: ValueIndexKind::Bindings { binding_id: index },
                     name: symbol.clone(),
                 });
@@ -180,21 +191,35 @@ impl SemanticAnalyzer {
     ) -> Result<(), SemanticError> {
         let mut set = HashSet::new();
 
-        for Binding(symbol, value, pat_id) in bindings {
+        for Binding(symbol, value, mutbl, pat_id) in bindings {
             if !set.insert(symbol.clone()) {
                 return Err(make_semantic_error!(BindingNameConflict));
             }
-            if self
-                .search_value(&symbol, scope_id)
-                .map_or(false, |x| self.get_value_by_index(&x).kind.is_constant())
-            {
+            if self.search_value(&symbol, scope_id).map_or(false, |x| {
+                self.get_value_by_index(&x).value.kind.is_constant()
+            }) {
                 return Err(make_semantic_error!(BindingConflictWithConstant));
             }
 
             self.get_scope_mut(scope_id).bindings.insert(symbol, pat_id);
-            self.binding_value.insert(pat_id, value);
+            self.binding_value
+                .insert(pat_id, PlaceValue { value, mutbl });
         }
 
         Ok(())
+    }
+
+    pub fn unit_value() -> Value {
+        Value {
+            ty: Self::unit_type(),
+            kind: ValueKind::Anon,
+        }
+    }
+
+    pub fn never_value() -> Value {
+        Value {
+            ty: Self::never_type(),
+            kind: ValueKind::Anon,
+        }
     }
 }

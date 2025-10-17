@@ -4,7 +4,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{NodeId, Symbol},
-    semantics::{analyzer::SemanticAnalyzer, resolved_ty::TypePtr, value::Value},
+    semantics::{analyzer::SemanticAnalyzer, resolved_ty::TypePtr, value::{PlaceValue, Value}},
 };
 
 // TODO: Associated Item 如何处理？Impl 和 Trait 有 scope，但是它们的 item 不保存 scope 里
@@ -13,7 +13,7 @@ pub struct Scope {
     pub id: NodeId,
     pub kind: ScopeKind,
     pub types: HashMap<Symbol, TypePtr>,
-    pub values: HashMap<Symbol, Value>,
+    pub values: HashMap<Symbol, PlaceValue>,
     pub bindings: HashMap<Symbol, NodeId>,
     pub children: HashSet<NodeId>,
     pub father: NodeId,

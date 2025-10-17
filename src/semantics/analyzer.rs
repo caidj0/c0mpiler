@@ -12,7 +12,7 @@ use crate::{
     impossible, make_semantic_error,
     semantics::{
         error::SemanticError,
-        expr::{ControlFlowInterruptKind, ExprExtra, ExprResult},
+        expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult},
         impls::Impls,
         item::{AssociatedInfo, ItemExtra},
         pat::{PatExtra, PatResult},
@@ -20,7 +20,7 @@ use crate::{
         scope::{MainFunctionState, Scope, ScopeKind},
         stmt::StmtResult,
         utils::{AnalyzeStage, FullName, STAGES, is_all_different},
-        value::{ConstantValue, UnEvalConstant, Value, ValueKind},
+        value::{ConstantValue, PlaceValue, UnEvalConstant, Value, ValueIndex, ValueKind},
         visitor::Visitor,
     },
 };
@@ -32,7 +32,7 @@ pub struct SemanticAnalyzer {
     pub(crate) expr_results: HashMap<NodeId, ExprResult>,
     pub(crate) expr_value: HashMap<NodeId, Value>,
     pub(crate) stmt_results: HashMap<NodeId, StmtResult>,
-    pub(crate) binding_value: HashMap<NodeId, Value>,
+    pub(crate) binding_value: HashMap<NodeId, PlaceValue>,
 
     pub(crate) stage: AnalyzeStage,
 }
@@ -146,8 +146,8 @@ impl SemanticAnalyzer {
         &mut self,
         scope: NodeId,
         name: &Symbol,
-        value: Value,
-    ) -> Result<&mut Value, SemanticError> {
+        value: PlaceValue,
+    ) -> Result<&mut PlaceValue, SemanticError> {
         let scope = self.get_scope_mut(scope);
         let replace = scope.values.insert(name.clone(), value);
 
@@ -158,11 +158,11 @@ impl SemanticAnalyzer {
         Ok(scope.values.get_mut(name).unwrap())
     }
 
-    pub fn get_scope_value(&self, scope: NodeId, name: &Symbol) -> Option<&Value> {
+    pub fn get_scope_value(&self, scope: NodeId, name: &Symbol) -> Option<&PlaceValue> {
         self.get_scope(scope).values.get(name)
     }
 
-    pub fn get_scope_value_mut(&mut self, scope: NodeId, name: &Symbol) -> Option<&mut Value> {
+    pub fn get_scope_value_mut(&mut self, scope: NodeId, name: &Symbol) -> Option<&mut PlaceValue> {
         self.get_scope_mut(scope).values.get_mut(name)
     }
 
@@ -279,10 +279,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     }
                 };
 
-                let value = Value {
-                    ty: t,
+                let value = PlaceValue {
+                    value: Value {
+                        ty: t,
+                        kind: ValueKind::Constant(const_value),
+                    },
                     mutbl: Mutability::Not,
-                    kind: ValueKind::Constant(const_value),
                 };
 
                 if let Some(asso) = associated_info {
@@ -293,20 +295,20 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .map_err(|e| e.set_span(&span))?;
             }
             AnalyzeStage::Body => {
-                let value = if let Some(asso) = associated_info {
+                let place = if let Some(asso) = associated_info {
                     self.get_impl_value_mut(&asso, &ident.symbol).unwrap()
                 } else {
                     self.get_scope_value_mut(father, &ident.symbol).unwrap()
                 };
-                let constant = value.kind.as_constant_mut().unwrap();
+                let constant = place.value.kind.as_constant_mut().unwrap();
 
                 if let ConstantValue::UnEval(u) = constant {
                     let u = u.clone();
-                    let mut ty = value.ty.clone();
+                    let mut ty = place.value.ty.clone();
                     let v = self.eval_unevaling(&u, &mut ty)?;
-                    let value_mut = self.get_scope_value_mut(father, &ident.symbol).unwrap();
-                    value_mut.ty = ty;
-                    *value_mut.kind.as_constant_mut().unwrap() = v;
+                    let place_mut = self.get_scope_value_mut(father, &ident.symbol).unwrap();
+                    place_mut.value.ty = ty;
+                    *place_mut.value.kind.as_constant_mut().unwrap() = v;
                 }
             }
         }
@@ -376,13 +378,15 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 *self.get_scope_mut(self_id).kind.as_fn_mut().unwrap().0 = ret_ty;
 
-                let value = Value {
-                    ty: func_ty,
-                    mutbl: Mutability::Not,
-                    kind: ValueKind::Fn {
-                        is_method,
-                        is_placeholder: body.is_none(),
+                let value = PlaceValue {
+                    value: Value {
+                        ty: func_ty,
+                        kind: ValueKind::Fn {
+                            is_method,
+                            is_placeholder: body.is_none(),
+                        },
                     },
+                    mutbl: Mutability::Not,
                 };
 
                 if let Some(asso) = associated_info {
@@ -394,13 +398,28 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }
             AnalyzeStage::Body => {
                 // TODO: Add binding
+                self.add_bindings(bindings, scope_id);
+                todo!()
             }
         }
 
         if let Some(body) = body {
-            todo!()
+            let mut target_ty = if self.stage.is_body() {
+                Some(self.get_scope(self_id).kind.as_fn().unwrap().0.clone())
+            } else {
+                None
+            };
+
+            self.visit_block_expr(
+                body,
+                ExprExtra {
+                    target_ty: target_ty.as_mut(),
+                    scope_id: self_id,
+                    self_id: body.id,
+                    span,
+                },
+            )?;
         }
-        // TODO: 返回类型校验
 
         Ok(())
     }
@@ -423,7 +442,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         EnumItem(ident, _, variants): &'ast EnumItem,
         ItemExtra {
             father,
-            self_id,
+            self_id: _,
             span: _,
             associated_info: _,
         }: Self::ItemExtra<'tmp>,
@@ -433,17 +452,20 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let ptr = self.add_type_placeholder(father, ident.symbol.clone())?;
                 ptr.borrow_mut().kind = ResolvedTyKind::Enum;
 
-                let enums = variants.iter().map(|x| x.ident.symbol.clone()).collect();
-                self.add_scope(self_id, father, ScopeKind::Enum(ptr.clone(), enums));
-
                 variants.iter().enumerate().try_for_each(|(i, x)| {
-                    self.add_scope_value(
-                        self_id,
-                        &x.ident.symbol,
-                        Value {
+                    self.add_impl_value(
+                        &AssociatedInfo {
+                            is_trait: false,
                             ty: ptr.clone(),
+                            for_trait: None,
+                        },
+                        &x.ident.symbol,
+                        PlaceValue {
+                            value: Value {
+                                ty: ptr.clone(),
+                                kind: ValueKind::Constant(ConstantValue::ConstantInt(i as u32)),
+                            },
                             mutbl: Mutability::Not,
-                            kind: ValueKind::Constant(ConstantValue::ConstantInt(i as u32)),
                         },
                     )
                     .map(|_| ())
@@ -606,10 +628,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             .values
                             .get(s)
                             .ok_or(make_semantic_error!(UnknownAssociateItem).set_span(&span))?
+                            .value
                             .ty
                             .deep_clone();
                         trait_v.replace(trait_ty.borrow().name.as_ref().unwrap(), ty);
-                        if trait_v != v.ty {
+                        if trait_v != v.value.ty {
                             return Err(make_semantic_error!(AssociateItemMismatch));
                         }
                         names.remove(s);
@@ -617,7 +640,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                     for name in names {
                         let v = trait_info.values.get(name).unwrap();
-                        match &v.kind {
+                        match &v.value.kind {
                             ValueKind::Fn {
                                 is_method: _,
                                 is_placeholder: true,
@@ -931,7 +954,97 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         BlockExpr { stmts, id, span }: &'ast BlockExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        match self.stage {
+            AnalyzeStage::SymbolCollect => {
+                self.add_scope(*id, extra.scope_id, ScopeKind::Lambda);
+            }
+            AnalyzeStage::Definition => {}
+            AnalyzeStage::Body => {}
+        }
+
+        let is_body = self.stage.is_body();
+
+        let last_expr_pos = if is_body {
+            match stmts.iter().rev().position(|x| x.kind.is_expr()) {
+                Some(inv_pos) => Some(stmts.len() - 1 - inv_pos),
+                None => None,
+            }
+        } else {
+            None
+        };
+
+        let mut target = Some(extra.target_ty);
+
+        for (i, stmt) in stmts.iter().enumerate() {
+            if last_expr_pos.is_some_and(|x| i == x) {
+                self.visit_stmt(
+                    stmt,
+                    ExprExtra {
+                        scope_id: *id,
+                        self_id: 0,
+                        span: *span,
+                        target_ty: target.take().unwrap(),
+                    },
+                )?;
+            } else {
+                let mut unit_ty = Self::unit_type();
+                self.visit_stmt(
+                    stmt,
+                    ExprExtra {
+                        target_ty: if is_body { Some(&mut unit_ty) } else { None },
+                        scope_id: *id,
+                        self_id: 0,
+                        span: *span,
+                    },
+                )?;
+            }
+        }
+
+        if is_body {
+            let mut interrupt = ControlFlowInterruptKind::Not;
+            for stmt in stmts {
+                interrupt = interrupt + self.get_stmt_interrupt(&stmt.id);
+            }
+
+            match last_expr_pos {
+                Some(pos) => {
+                    let stmt_id = stmts.get(pos).unwrap().id;
+                    let value_index =
+                        ValueIndex::Expr(*self.get_stmt_result(&stmt_id).as_expr().unwrap());
+                    self.set_expr_result(
+                        extra.self_id,
+                        ExprResult {
+                            value_index: value_index,
+                            assignee: AssigneeKind::Not,
+                            interrupt,
+                        },
+                    );
+                }
+                None => {
+                    Self::type_eq(
+                        target.unwrap().unwrap(),
+                        &mut if interrupt.is_not() {
+                            Self::unit_type()
+                        } else {
+                            Self::never_type()
+                        },
+                    );
+
+                    self.set_expr_value_and_result(
+                        extra.self_id,
+                        if interrupt.is_not() {
+                            Self::unit_value()
+                        } else {
+                            Self::never_value()
+                        },
+                        AssigneeKind::Not,
+                        interrupt,
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn visit_assign_expr<'tmp>(
