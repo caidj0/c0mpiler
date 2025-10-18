@@ -156,4 +156,34 @@ impl SemanticAnalyzer {
 
         Ok((interrupt, assignee))
     }
+
+    pub(crate) fn merge_expr_interrupt<'a, I, E>(&self, iter: I) -> ControlFlowInterruptKind
+    where
+        I: Iterator<Item = &'a E>,
+        E: Deref<Target = Expr> + 'a,
+    {
+        let mut interrupt = ControlFlowInterruptKind::Not;
+
+        for e in iter {
+            let result = self.get_expr_result(&e.id);
+            interrupt = interrupt + result.interrupt;
+        }
+
+        interrupt
+    }
+
+    pub(crate) fn no_assignee<'a, I, E>(&self, iter: I) -> Result<(), SemanticError>
+    where
+        I: Iterator<Item = &'a E>,
+        E: Deref<Target = Expr> + 'a,
+    {
+        for e in iter {
+            let result = self.get_expr_result(&e.id);
+            if matches!(result.assignee, AssigneeKind::Only) {
+                return Err(make_semantic_error!(AssigneeExprNotAllowed).set_span(&e.span));
+            }
+        }
+
+        Ok(())
+    }
 }

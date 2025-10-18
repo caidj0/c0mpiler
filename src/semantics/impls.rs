@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{NodeId, Symbol},
+    ast::{Mutability, NodeId, Symbol},
     make_semantic_error,
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
+        expr::AssigneeKind,
         item::AssociatedInfo,
         resolved_ty::TypePtr,
         value::{PlaceValue, Value},
@@ -57,5 +58,41 @@ impl SemanticAnalyzer {
             &mut impls.inherent
         };
         info.values.get_mut(name)
+    }
+}
+
+#[derive(Debug, Default)]
+pub enum DerefLevel {
+    #[default]
+    Not,
+    Deref(Box<DerefLevel>, Mutability),
+}
+
+// 解引用时变量的 AssigneeKind：
+impl DerefLevel {
+    pub fn wrap(&mut self, mutbl: Mutability) {
+        *self = DerefLevel::Deref(Box::new(std::mem::take(self)), mutbl)
+    }
+
+    pub fn chain_mutbl(&self, raw_kind: Mutability) -> Mutability {
+        match self {
+            DerefLevel::Not => raw_kind,
+            DerefLevel::Deref(deref_level, mutability) => {
+                let mut mutbl = *mutability;
+                let mut inner = Some(deref_level);
+                while let Some(i) = inner {
+                    match i.as_ref() {
+                        DerefLevel::Not => {
+                            inner = None;
+                        }
+                        DerefLevel::Deref(deref_level, mutability) => {
+                            mutbl = mutbl & *mutability;
+                            inner = Some(deref_level);
+                        }
+                    }
+                }
+                mutbl
+            }
+        }
     }
 }

@@ -178,6 +178,15 @@ impl From<Mutability> for RefMutability {
     }
 }
 
+impl From<RefMutability> for Mutability {
+    fn from(value: RefMutability) -> Self {
+        match value {
+            RefMutability::Not => Mutability::Not,
+            RefMutability::Mut | RefMutability::WeakMut => Mutability::Mut,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum AnyTyKind {
     Any,
@@ -260,6 +269,13 @@ impl SemanticAnalyzer {
         TypePtr(Rc::new(RefCell::new(ResolvedTy {
             name: None,
             kind: ResolvedTyKind::Array(ty, len),
+        })))
+    }
+
+    pub fn tup_type(tys: Vec<TypePtr>) -> TypePtr {
+        TypePtr(Rc::new(RefCell::new(ResolvedTy {
+            name: None,
+            kind: ResolvedTyKind::Tup(tys),
         })))
     }
 

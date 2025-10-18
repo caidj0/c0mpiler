@@ -1,7 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
-    iter::{Once, once},
+    iter::{Once, once, repeat_with},
     rc::Rc,
     vec,
 };
@@ -14,7 +14,7 @@ use crate::{
     semantics::{
         error::SemanticError,
         expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult},
-        impls::Impls,
+        impls::{DerefLevel, Impls},
         item::{AssociatedInfo, ItemExtra},
         pat::{Binding, PatExtra, PatResult},
         resolved_ty::{ResolvedTy, ResolvedTyKind, TypePtr},
@@ -972,7 +972,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         }
 
         if self.stage.is_body() {
-            let (interrupt, assignee) = self.merge_result_info(once(func_expr).chain(arg_exprs))?;
+            let iter = once(func_expr).chain(arg_exprs);
+            let interrupt = self.merge_expr_interrupt(iter.clone());
+            self.no_assignee(iter)?;
 
             self.set_expr_value_and_result(
                 extra.self_id,
@@ -980,7 +982,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ty: extra.target_ty.unwrap().clone(),
                     kind: ValueKind::Anon,
                 },
-                assignee,
+                AssigneeKind::Value,
                 interrupt,
             );
         }
@@ -994,9 +996,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             seg,
             receiver,
             args,
-            span,
+            span: _,
         }: &'ast MethodCallExpr,
-        extra: Self::ExprExtra<'tmp>,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         let mut receiver_type = if self.is_body_stage() {
             Some(Self::any_type())
@@ -1011,21 +1013,135 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             },
         )?;
         let symbol = &seg.ident.symbol;
-        let method = if let Some(receiver_type) = &receiver_type {
-            Some(self.search_value_in_impl(receiver_type, symbol).ok_or(make_semantic_error!(UnkonwnMethod))?)
+        let (level, index, mut method) = if let Some(receiver_type) = &receiver_type {
+            let (level, index) = self
+                .search_value_in_impl_recursively(receiver_type, symbol)?
+                .ok_or(make_semantic_error!(UnkonwnMethod))?;
+
+            let value = self.get_value_by_index(&index);
+            let method_ty = value.value.ty.clone();
+            if method_ty.borrow().kind.as_fn().unwrap().1.len() != args.len() + 1 {
+                return Err(make_semantic_error!(ArgumentNumberMismatch));
+            }
+
+            (Some(level), Some(index), Some(method_ty))
         } else {
-            None
+            (None, None, None)
         };
 
-        todo!()
+        let mut method_ref = method.as_mut().map(|x| x.borrow_mut());
+        let mut ret_ty = method_ref.as_mut().map(|x| x.kind.as_fn_mut().unwrap().0);
+
+        if let Some(ret_ty) = ret_ty.as_mut() {
+            Self::type_eq(ret_ty, extra.target_ty.as_mut().unwrap())?;
+        }
+
+        for (i, arg) in args.iter().enumerate() {
+            self.visit_expr(
+                &arg,
+                ExprExtra {
+                    target_ty: method_ref
+                        .as_mut()
+                        .map(|x| x.kind.as_fn_mut().unwrap().1.get_mut(i + 1).unwrap()),
+                    ..extra
+                },
+            )?;
+        }
+
+        if self.is_body_stage() {
+            let iter = once(receiver).chain(args);
+            let interrupt = self.merge_expr_interrupt(iter.clone());
+            self.no_assignee(iter)?;
+
+            let self_ty = method_ref
+                .as_mut()
+                .unwrap()
+                .kind
+                .as_fn()
+                .unwrap()
+                .1
+                .get(0)
+                .unwrap();
+
+            let receiver_mutbl = self.get_expr_result(&receiver.id).assignee.into();
+
+            let level = level.unwrap();
+
+            match &self_ty.borrow().kind {
+                ResolvedTyKind::Ref(_, ref_mutability) => {
+                    let target_mutbl: Mutability = (*ref_mutability).into();
+                    let self_mutbl = level.chain_mutbl(receiver_mutbl);
+                    if self_mutbl < target_mutbl {
+                        return Err(make_semantic_error!(Immutable));
+                    }
+                }
+                _ => {
+                    if matches!(level, DerefLevel::Deref(_, _)) {
+                        return Err(make_semantic_error!(CannotMoveOutOfReference));
+                    }
+                }
+            }
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: extra.target_ty.unwrap().clone(),
+                    kind: ValueKind::MethodCall {
+                        level,
+                        index: index.unwrap(),
+                    },
+                },
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_tup_expr<'tmp>(
         &mut self,
-        expr: &'ast TupExpr,
-        extra: Self::ExprExtra<'tmp>,
+        TupExpr(exprs): &'ast TupExpr,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let self_ty = if let Some(ty) = &mut extra.target_ty {
+            let mut t =
+                Self::tup_type(repeat_with(|| Self::any_type()).take(exprs.len()).collect());
+            Self::type_eq(ty, &mut t)?;
+            Some(t)
+        } else {
+            None
+        };
+
+        let mut target_ty_ref = extra.target_ty.as_mut().map(|x| x.borrow_mut());
+
+        for (i, expr) in exprs.iter().enumerate() {
+            self.visit_expr(
+                expr,
+                ExprExtra {
+                    target_ty: target_ty_ref
+                        .as_mut()
+                        .map(|x| x.kind.as_tup_mut().unwrap().get_mut(i).unwrap()),
+                    ..extra
+                },
+            )?;
+        }
+
+        if self.is_body_stage() {
+            let (interrupt, assignee) = self.merge_result_info(exprs.iter())?;
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: self_ty.unwrap(),
+                    kind: ValueKind::Anon,
+                },
+                assignee,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_binary_expr<'tmp>(
@@ -1062,10 +1178,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_let_expr<'tmp>(
         &mut self,
-        expr: &'ast LetExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast LetExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_if_expr<'tmp>(
@@ -1187,7 +1303,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         } else {
                             Self::never_type()
                         },
-                    );
+                    )?;
 
                     self.set_expr_value_and_result(
                         extra.self_id,
@@ -1240,10 +1356,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_range_expr<'tmp>(
         &mut self,
-        expr: &'ast RangeExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast RangeExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_underscore_expr<'tmp>(

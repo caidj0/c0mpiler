@@ -51,6 +51,10 @@ pub enum SemanticErrorKind {
     AssigneeKindMismatch,
     ArgumentNumberMismatch,
     UnkonwnMethod,
+    MultipleCandidates,
+    TypeUndetermined,
+    AssigneeExprNotAllowed,
+    CannotMoveOutOfReference,
 }
 
 #[macro_export]

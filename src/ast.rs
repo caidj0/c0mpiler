@@ -15,7 +15,9 @@ use crate::{
         item::Item,
         path::{Path, PathSegment},
     },
+    impossible,
     lexer::{Token, TokenIter, TokenPosition},
+    semantics::expr::AssigneeKind,
     tokens::TokenType,
 };
 
@@ -273,7 +275,7 @@ impl Eatable for ByRef {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, PartialOrd, Ord)]
 pub enum Mutability {
     Not,
     Mut,
@@ -290,6 +292,16 @@ impl BitAnd for Mutability {
     }
 }
 
+impl From<AssigneeKind> for Mutability {
+    fn from(value: AssigneeKind) -> Self {
+        match value {
+            AssigneeKind::Place(mutability) => mutability,
+            AssigneeKind::Value => Mutability::Mut,
+            AssigneeKind::Only => impossible!(),
+        }
+    }
+}
+
 impl Eatable for Mutability {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         if iter.peek()?.token_type == TokenType::Mut {
@@ -298,12 +310,6 @@ impl Eatable for Mutability {
         } else {
             Ok(Mutability::Not)
         }
-    }
-}
-
-impl Mutability {
-    pub fn can_trans_to(&self, other: &Self) -> bool {
-        !matches!((self, other), (Mutability::Not, Mutability::Mut))
     }
 }
 
