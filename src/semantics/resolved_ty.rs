@@ -4,7 +4,7 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        Ident, Mutability, NodeId,
+        Ident, Mutability, NodeId, Symbol,
         path::{Path, QSelf},
         ty::{PathTy, Ty},
     },
@@ -52,13 +52,13 @@ impl Hash for TypePtr {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResolvedTy {
-    pub name: Option<FullName>,
+    pub names: Option<(FullName, Option<Vec<Symbol>>)>,
     pub kind: ResolvedTyKind,
 }
 
 impl ResolvedTy {
     pub fn deep_clone(&self) -> Self {
-        let name = self.name.clone();
+        let name = self.names.clone();
         let kind = match &self.kind {
             ResolvedTyKind::Placeholder => impossible!(),
             ResolvedTyKind::BuiltIn(built_in_ty_kind) => {
@@ -86,7 +86,7 @@ impl ResolvedTy {
             }
         };
 
-        Self { name, kind }
+        Self { names: name, kind }
     }
 
     pub fn remove_implicit_self(&mut self, target: Option<&TypePtr>) {
@@ -220,7 +220,7 @@ macro_rules! type_define {
                 paste::paste!{
                     pub fn [<$name _type>]() -> TypePtr {
                         TypePtr(Rc::new(RefCell::new(ResolvedTy {
-                            name: None,
+                            names: None,
                             kind: $e,
                         })))
                     }
@@ -260,28 +260,28 @@ type_define!(
 impl SemanticAnalyzer {
     pub fn ref_type(ty: TypePtr, mutbl: RefMutability) -> TypePtr {
         TypePtr(Rc::new(RefCell::new(ResolvedTy {
-            name: None,
+            names: None,
             kind: ResolvedTyKind::Ref(ty, mutbl),
         })))
     }
 
     pub fn array_type(ty: TypePtr, len: Option<u32>) -> TypePtr {
         TypePtr(Rc::new(RefCell::new(ResolvedTy {
-            name: None,
+            names: None,
             kind: ResolvedTyKind::Array(ty, len),
         })))
     }
 
     pub fn tup_type(tys: Vec<TypePtr>) -> TypePtr {
         TypePtr(Rc::new(RefCell::new(ResolvedTy {
-            name: None,
+            names: None,
             kind: ResolvedTyKind::Tup(tys),
         })))
     }
 
     pub fn fn_type(ret_ty: TypePtr, args: Vec<TypePtr>) -> TypePtr {
         TypePtr(Rc::new(RefCell::new(ResolvedTy {
-            name: None,
+            names: None,
             kind: ResolvedTyKind::Fn(ret_ty, args),
         })))
     }
@@ -368,7 +368,7 @@ impl SemanticAnalyzer {
                 Trait(type_ptr) => {
                     return if implicit {
                         Some(TypePtr(Rc::new(RefCell::new(ResolvedTy {
-                            name: None,
+                            names: None,
                             kind: ResolvedTyKind::ImplicitSelf(type_ptr.clone()),
                         }))))
                     } else {
@@ -376,7 +376,7 @@ impl SemanticAnalyzer {
                     };
                 }
                 Impl { ty: type_ptr, .. } => return Some(type_ptr.clone()),
-                Struct(_, _) | Enum(_, _) => impossible!(),
+                Struct(..) | Enum(..) => impossible!(),
                 Fn {
                     ret_ty: _,
                     main_fn: _,

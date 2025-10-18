@@ -73,6 +73,17 @@ pub enum ControlFlowInterruptKind {
     Return,
 }
 
+impl ControlFlowInterruptKind {
+    pub fn out_of_cycle(&self) -> Self {
+        match self {
+            ControlFlowInterruptKind::Loop | ControlFlowInterruptKind::Not => {
+                ControlFlowInterruptKind::Not
+            }
+            ControlFlowInterruptKind::Return => ControlFlowInterruptKind::Return,
+        }
+    }
+}
+
 impl Add for ControlFlowInterruptKind {
     type Output = Self;
 
@@ -172,7 +183,7 @@ impl SemanticAnalyzer {
         interrupt
     }
 
-    pub(crate) fn no_assignee<'a, I, E>(&self, iter: I) -> Result<(), SemanticError>
+    pub(crate) fn batch_no_assignee<'a, I, E>(&self, iter: I) -> Result<(), SemanticError>
     where
         I: Iterator<Item = &'a E>,
         E: Deref<Target = Expr> + 'a,
@@ -185,5 +196,13 @@ impl SemanticAnalyzer {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn no_assignee(&self, id: NodeId) -> Result<(), SemanticError> {
+        if matches!(self.get_expr_result(&id).assignee, AssigneeKind::Only) {
+            Err(make_semantic_error!(AssigneeExprNotAllowed))
+        } else {
+            Ok(())
+        }
     }
 }

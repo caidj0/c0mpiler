@@ -40,6 +40,9 @@ pub enum ValueKind {
         level: DerefLevel,
         index: PlaceValueIndex,
     },
+    ExtractElement {
+        index: usize,
+    },
 }
 
 #[derive(Debug, EnumAsInner, Clone)]
@@ -70,6 +73,18 @@ impl UnEvalConstant {
 pub enum ValueIndex {
     Place(PlaceValueIndex),
     Expr(NodeId),
+}
+
+impl From<PlaceValueIndex> for ValueIndex {
+    fn from(value: PlaceValueIndex) -> Self {
+        Self::Place(value)
+    }
+}
+
+impl From<NodeId> for ValueIndex {
+    fn from(value: NodeId) -> Self {
+        Self::Expr(value)
+    }
 }
 
 #[derive(Debug)]
@@ -197,7 +212,7 @@ impl SemanticAnalyzer {
         Ok(None)
     }
 
-    pub fn get_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {
+    pub fn get_place_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),
             ValueIndexKind::Global { scope_id } => {
@@ -212,6 +227,37 @@ impl SemanticAnalyzer {
                 };
                 impl_info.values.get(&index.name).unwrap()
             }
+        }
+    }
+
+    pub fn get_place_value_by_index_mut(&mut self, index: &PlaceValueIndex) -> &mut PlaceValue {
+        match &index.kind {
+            ValueIndexKind::Bindings { binding_id } => {
+                self.binding_value.get_mut(binding_id).unwrap()
+            }
+            ValueIndexKind::Global { scope_id } => self
+                .get_scope_mut(*scope_id)
+                .values
+                .get_mut(&index.name)
+                .unwrap(),
+            ValueIndexKind::Impl { ty, for_trait } => {
+                let impls = self.impls.get_mut(ty).unwrap();
+                let impl_info = if let Some(i) = for_trait {
+                    impls.traits.get_mut(i).unwrap()
+                } else {
+                    &mut impls.inherent
+                };
+                impl_info.values.get_mut(&index.name).unwrap()
+            }
+        }
+    }
+
+    pub fn get_value_by_index(&self, index: &ValueIndex) -> &Value {
+        match index {
+            ValueIndex::Place(place_value_index) => {
+                &self.get_place_value_by_index(place_value_index).value
+            }
+            ValueIndex::Expr(id) => self.expr_value.get(id).unwrap(),
         }
     }
 
@@ -247,7 +293,7 @@ impl SemanticAnalyzer {
                 return Err(make_semantic_error!(BindingNameConflict));
             }
             if self.search_value(&symbol, scope_id).map_or(false, |x| {
-                self.get_value_by_index(&x).value.kind.is_constant()
+                self.get_place_value_by_index(&x).value.kind.is_constant()
             }) {
                 return Err(make_semantic_error!(BindingConflictWithConstant));
             }

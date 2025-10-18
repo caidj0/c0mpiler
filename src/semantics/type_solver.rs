@@ -20,7 +20,7 @@ impl TypeSolver {
         let mut right_ptr = right.borrow_mut();
 
         // 名字相同即认为类型相同，这一点需要主动保证
-        match (&left_ptr.name, &right_ptr.name) {
+        match (&left_ptr.names, &right_ptr.names) {
             (None, None) => {}
             (None, Some(_)) | (Some(_), None) => return Err(TypeSolveError::NameMismatch),
             (Some(s1), Some(s2)) => {

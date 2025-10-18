@@ -1,10 +1,19 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{NodeId, Symbol},
-    semantics::{analyzer::SemanticAnalyzer, resolved_ty::TypePtr, value::{PlaceValue, Value}},
+    make_semantic_error,
+    semantics::{
+        analyzer::SemanticAnalyzer,
+        error::SemanticError,
+        resolved_ty::TypePtr,
+        value::{PlaceValue, Value},
+    },
 };
 
 // TODO: Associated Item 如何处理？Impl 和 Trait 有 scope，但是它们的 item 不保存 scope 里
@@ -29,8 +38,8 @@ pub enum ScopeKind {
         ty: TypePtr,
         for_trait: Option<TypePtr>,
     },
-    Struct(TypePtr, Vec<Symbol>),
-    Enum(TypePtr, Vec<Symbol>),
+    Struct(TypePtr),
+    Enum(TypePtr),
     Fn {
         ret_ty: TypePtr,
         main_fn: MainFunctionState,
@@ -75,5 +84,40 @@ impl SemanticAnalyzer {
             scope_id = self.get_parent_scope(id);
         }
         None
+    }
+
+    pub fn search_cycle_scope(&self, mut current_scope: NodeId) -> Result<NodeId, SemanticError> {
+        loop {
+            let scope = self.get_scope(current_scope);
+            match &scope.kind {
+                ScopeKind::Lambda => {}
+                ScopeKind::Root
+                | ScopeKind::Trait(_)
+                | ScopeKind::Crate
+                | ScopeKind::Impl { .. }
+                | ScopeKind::Struct(_)
+                | ScopeKind::Enum(_)
+                | ScopeKind::Fn { .. } => return Err(make_semantic_error!(NotInCycleScope)),
+                ScopeKind::Loop { .. } | ScopeKind::CycleExceptLoop => return Ok(current_scope),
+            }
+            current_scope = self.get_parent_scope(current_scope).unwrap();
+        }
+    }
+
+    pub fn search_fn_scope(&self, mut current_scope: NodeId) -> Result<NodeId, SemanticError> {
+        loop {
+            let scope = self.get_scope(current_scope);
+            match &scope.kind {
+                ScopeKind::Lambda | ScopeKind::Loop { .. } | ScopeKind::CycleExceptLoop => {}
+                ScopeKind::Root
+                | ScopeKind::Crate
+                | ScopeKind::Trait(..)
+                | ScopeKind::Impl { .. }
+                | ScopeKind::Struct(..)
+                | ScopeKind::Enum(..) => return Err(make_semantic_error!(NotInFnScope)),
+                ScopeKind::Fn { .. } => return Ok(current_scope),
+            }
+            current_scope = self.get_parent_scope(current_scope).unwrap();
+        }
     }
 }

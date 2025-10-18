@@ -55,6 +55,15 @@ pub enum SemanticErrorKind {
     TypeUndetermined,
     AssigneeExprNotAllowed,
     CannotMoveOutOfReference,
+    IllegalLeftExpression,
+    NotStructType,
+    UnknownField,
+    NotInCycleScope,
+    NotInLoopScope,
+    NotInFnScope,
+    MissingField,
+
+    GeneralError,
 }
 
 #[macro_export]

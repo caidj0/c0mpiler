@@ -17,7 +17,7 @@ use crate::{
         impls::{DerefLevel, Impls},
         item::{AssociatedInfo, ItemExtra},
         pat::{Binding, PatExtra, PatResult},
-        resolved_ty::{ResolvedTy, ResolvedTyKind, TypePtr},
+        resolved_ty::{RefMutability, ResolvedTy, ResolvedTyKind, TypePtr},
         scope::{MainFunctionState, Scope, ScopeKind},
         stmt::StmtResult,
         utils::{AnalyzeStage, FullName, STAGES, is_all_different},
@@ -121,12 +121,13 @@ impl SemanticAnalyzer {
         &mut self,
         scope: NodeId,
         name: Symbol,
+        subnames: Option<Vec<Symbol>>,
     ) -> Result<TypePtr, SemanticError> {
         let fullname = Self::get_full_name(scope, name.clone());
         let scope = self.get_scope_mut(scope);
 
         let ptr = TypePtr(Rc::new(RefCell::new(ResolvedTy {
-            name: Some(fullname),
+            names: Some((fullname, subnames)),
             kind: super::resolved_ty::ResolvedTyKind::Placeholder,
         })));
 
@@ -170,6 +171,16 @@ impl SemanticAnalyzer {
     pub fn get_binding_index(&self, scope: NodeId, name: &Symbol) -> Option<NodeId> {
         self.get_scope(scope).bindings.get(name).cloned()
     }
+}
+
+macro_rules! option_ty {
+    ($analyzer:expr, $e:expr) => {
+        if $analyzer.is_body_stage() {
+            Some($e)
+        } else{
+            None
+        }
+    };
 }
 
 impl<'ast> Visitor<'ast> for SemanticAnalyzer {
@@ -462,7 +473,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::DefaultRes<'_> {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                let ptr = self.add_type_placeholder(father, ident.symbol.clone())?;
+                let subnames = variants.iter().map(|x| x.ident.symbol.clone()).collect();
+
+                let ptr =
+                    self.add_type_placeholder(father, ident.symbol.clone(), Some(subnames))?;
                 ptr.borrow_mut().kind = ResolvedTyKind::Enum;
 
                 variants.iter().enumerate().try_for_each(|(i, x)| {
@@ -504,9 +518,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::DefaultRes<'_> {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                let ptr = self.add_type_placeholder(father, ident.symbol.clone())?;
-
-                let names = match variants {
+                let subnames = match variants {
                     VariantData::Struct { fields } => fields
                         .iter()
                         .map(|x| x.ident.as_ref().unwrap().symbol.clone())
@@ -517,11 +529,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     VariantData::Unit => vec![],
                 };
 
-                if !is_all_different(&names) {
+                if !is_all_different(&subnames) {
                     return Err(make_semantic_error!(MultipleDefinedField).set_span(&span));
                 }
 
-                self.add_scope(self_id, father, ScopeKind::Struct(ptr, names));
+                let ptr =
+                    self.add_type_placeholder(father, ident.symbol.clone(), Some(subnames))?;
+
+                self.add_scope(self_id, father, ScopeKind::Struct(ptr));
             }
             AnalyzeStage::Definition => {
                 let ptr = self.get_scope(self_id).kind.as_struct().unwrap().0.clone();
@@ -562,7 +577,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::DefaultRes<'_> {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                let ptr = self.add_type_placeholder(father, ident.symbol.clone())?;
+                let ptr = self.add_type_placeholder(father, ident.symbol.clone(), None)?;
                 ptr.borrow_mut().kind = ResolvedTyKind::Trait;
 
                 self.add_scope(self_id, father, ScopeKind::Trait(ptr));
@@ -756,17 +771,19 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }
             StmtKind::Expr(expr) => {
                 self.visit_expr(expr, extra)?;
-                set_result!(self, *id, StmtResult::Expr(expr.id));
+                set_result!(self, *id, {
+                    self.no_assignee(expr.id)?;
+                    StmtResult::Expr(expr.id)
+                });
             }
             StmtKind::Semi(expr) => {
                 self.visit_expr(expr, extra)?;
-                set_result!(
-                    self,
-                    *id,
+                set_result!(self, *id, {
+                    self.no_assignee(expr.id)?;
                     StmtResult::Else {
                         interrupt: self.expr_results.get(&expr.id).unwrap().interrupt,
                     }
-                );
+                });
             }
             StmtKind::Empty(_) => set_result!(
                 self,
@@ -815,6 +832,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         }
 
         if self.stage.is_body() {
+            self.no_assignee(kind.as_init().unwrap().id)?;
+
             let PatResult { bindings } = self.visit_pat(
                 pat,
                 PatExtra {
@@ -974,7 +993,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.stage.is_body() {
             let iter = once(func_expr).chain(arg_exprs);
             let interrupt = self.merge_expr_interrupt(iter.clone());
-            self.no_assignee(iter)?;
+            self.batch_no_assignee(iter)?;
 
             self.set_expr_value_and_result(
                 extra.self_id,
@@ -1018,7 +1037,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .search_value_in_impl_recursively(receiver_type, symbol)?
                 .ok_or(make_semantic_error!(UnkonwnMethod))?;
 
-            let value = self.get_value_by_index(&index);
+            let value = self.get_place_value_by_index(&index);
             let method_ty = value.value.ty.clone();
             if method_ty.borrow().kind.as_fn().unwrap().1.len() != args.len() + 1 {
                 return Err(make_semantic_error!(ArgumentNumberMismatch));
@@ -1051,7 +1070,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let iter = once(receiver).chain(args);
             let interrupt = self.merge_expr_interrupt(iter.clone());
-            self.no_assignee(iter)?;
+            self.batch_no_assignee(iter)?;
 
             let self_ty = method_ref
                 .as_mut()
@@ -1146,7 +1165,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_binary_expr<'tmp>(
         &mut self,
-        expr: &'ast BinaryExpr,
+        BinaryExpr(bin_op, expr1, expr2): &'ast BinaryExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         todo!()
@@ -1154,7 +1173,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_unary_expr<'tmp>(
         &mut self,
-        expr: &'ast UnaryExpr,
+        UnaryExpr(un_op, expr): &'ast UnaryExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         todo!()
@@ -1186,42 +1205,205 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_if_expr<'tmp>(
         &mut self,
-        expr: &'ast IfExpr,
+        IfExpr(cond_expr, body_expr, else_expr): &'ast IfExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let mut cond_ty = if self.is_body_stage() {
+            Some(Self::bool_type())
+        } else {
+            None
+        };
+        self.visit_expr(
+            &cond_expr,
+            ExprExtra {
+                target_ty: cond_ty.as_mut(),
+                ..extra
+            },
+        )?;
+
+        let mut ty = extra.target_ty.as_ref().map(|x| (*x).clone());
+
+        self.visit_block_expr(
+            &body_expr,
+            ExprExtra {
+                target_ty: ty.as_mut(),
+                scope_id: extra.scope_id,
+                self_id: body_expr.id,
+                span: body_expr.span,
+            },
+        )?;
+        if let Some(else_expr) = else_expr {
+            self.visit_expr(
+                else_expr,
+                ExprExtra {
+                    target_ty: ty.as_mut(),
+                    ..extra
+                },
+            )?;
+        } else {
+            if let Some(ty) = ty.as_mut() {
+                Self::type_eq(ty, &mut Self::unit_type())?;
+            }
+        }
+
+        if self.is_body_stage() {
+            let ty = ty.unwrap();
+            *extra.target_ty.unwrap() = ty.clone();
+
+            self.no_assignee(cond_expr.id)
+                .map_err(|e| e.set_span(&cond_expr.span))?;
+            self.no_assignee(body_expr.id)
+                .map_err(|e| e.set_span(&body_expr.span))?;
+            if let Some(else_expr) = else_expr {
+                self.no_assignee(else_expr.id)
+                    .map_err(|e| e.set_span(&else_expr.span))?;
+            }
+            let interrupt = self.get_expr_result(&cond_expr.id).interrupt
+                + (self.get_expr_result(&body_expr.id).interrupt
+                    | if let Some(else_expr) = else_expr {
+                        self.get_expr_result(&else_expr.id).interrupt
+                    } else {
+                        ControlFlowInterruptKind::Not
+                    });
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: ty,
+                    kind: ValueKind::Anon,
+                },
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_while_expr<'tmp>(
         &mut self,
-        expr: &'ast WhileExpr,
+        WhileExpr(cond_expr, body_expr): &'ast WhileExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.stage.is_symbol_collect() {
+            self.add_scope(extra.self_id, extra.scope_id, ScopeKind::CycleExceptLoop);
+        }
+        let mut cond_ty = if self.is_body_stage() {
+            Some(Self::bool_type())
+        } else {
+            None
+        };
+        self.visit_expr(
+            &cond_expr,
+            ExprExtra {
+                target_ty: cond_ty.as_mut(),
+                ..extra
+            },
+        )?;
+
+        if let Some(ty) = extra.target_ty {
+            Self::type_eq(ty, &mut Self::unit_type())?;
+        }
+
+        let mut unit = if self.is_body_stage() {
+            Some(Self::unit_type())
+        } else {
+            None
+        };
+        self.visit_block_expr(
+            &body_expr,
+            ExprExtra {
+                target_ty: unit.as_mut(),
+                scope_id: extra.self_id,
+                self_id: body_expr.id,
+                span: body_expr.span,
+            },
+        )?;
+
+        if self.is_body_stage() {
+            let interrupt = self.get_expr_result(&cond_expr.id).interrupt
+                + self.get_expr_result(&body_expr.id).interrupt.out_of_cycle();
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Self::unit_value(),
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_for_loop_expr<'tmp>(
         &mut self,
-        expr: &'ast ForLoopExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast ForLoopExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_loop_expr<'tmp>(
         &mut self,
-        expr: &'ast LoopExpr,
-        extra: Self::ExprExtra<'tmp>,
+        LoopExpr(body_expr): &'ast LoopExpr,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.stage.is_symbol_collect() {
+            self.add_scope(
+                extra.self_id,
+                extra.scope_id,
+                ScopeKind::Loop {
+                    ret_ty: Self::any_type(),
+                },
+            );
+        }
+        if let Some(ty) = extra.target_ty.as_mut() {
+            Self::type_eq(
+                ty,
+                self.get_scope_mut(extra.self_id)
+                    .kind
+                    .as_loop_mut()
+                    .unwrap(),
+            )?;
+        }
+        self.visit_block_expr(
+            &body_expr,
+            ExprExtra {
+                target_ty: extra.target_ty,
+                scope_id: extra.self_id,
+                self_id: body_expr.id,
+                span: body_expr.span,
+            },
+        )?;
+
+        if self.is_body_stage() {
+            let interrupt = self.get_expr_result(&body_expr.id).interrupt.out_of_cycle();
+            self.no_assignee(body_expr.id)?;
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: self
+                        .get_scope(extra.self_id)
+                        .kind
+                        .as_loop()
+                        .unwrap()
+                        .clone(),
+                    kind: ValueKind::Anon,
+                },
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+        Ok(())
     }
 
     fn visit_match_expr<'tmp>(
         &mut self,
-        expr: &'ast MatchExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast MatchExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_block_expr<'tmp>(
@@ -1324,10 +1506,52 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_assign_expr<'tmp>(
         &mut self,
-        expr: &'ast AssignExpr,
-        extra: Self::ExprExtra<'tmp>,
+        AssignExpr(left, right): &'ast AssignExpr,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if let Some(t) = &mut extra.target_ty {
+            Self::type_eq(t, &mut Self::unit_type())?;
+        }
+
+        let mut ty = option_ty!(self, Self::any_type());
+        self.visit_expr(
+            &left,
+            ExprExtra {
+                target_ty: ty.as_mut(),
+                ..extra
+            },
+        )?;
+        self.visit_expr(
+            &right,
+            ExprExtra {
+                target_ty: ty.as_mut(),
+                ..extra
+            },
+        )?;
+
+        if self.is_body_stage() {
+            let interrupt = self.merge_expr_interrupt(once(left).chain(once(right)));
+            self.no_assignee(right.id)?;
+            match self.get_expr_result(&left.id).assignee {
+                AssigneeKind::Place(Mutability::Mut) => {}
+                AssigneeKind::Place(Mutability::Not) => {
+                    return Err(make_semantic_error!(Immutable).set_span(&left.span));
+                }
+                AssigneeKind::Value => {
+                    return Err(make_semantic_error!(IllegalLeftExpression).set_span(&left.span));
+                }
+                AssigneeKind::Only => {}
+            }
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Self::unit_value(),
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_assign_op_expr<'tmp>(
@@ -1340,18 +1564,123 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_field_expr<'tmp>(
         &mut self,
-        expr: &'ast FieldExpr,
+        FieldExpr(receiver_expr, ident): &'ast FieldExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let mut ty = option_ty!(self, Self::any_type());
+        self.visit_expr(
+            &receiver_expr,
+            ExprExtra {
+                target_ty: ty.as_mut(),
+                ..extra
+            },
+        )?;
+
+        if self.is_body_stage() {
+            self.no_assignee(receiver_expr.id)?;
+
+            let result = self.get_expr_result(&receiver_expr.id);
+            let value = self.get_value_by_index(&result.value_index);
+            let receiver_ty = value.ty.borrow();
+            if !receiver_ty.kind.is_tup() {
+                return Err(make_semantic_error!(NotStructType).set_span(&receiver_expr.span));
+            }
+            let index = if let Some((_, Some(names))) = &receiver_ty.names {
+                names
+                    .iter()
+                    .position(|x| *x == ident.symbol)
+                    .ok_or(make_semantic_error!(UnknownField).set_span(&ident.span))?
+            } else {
+                let i = ident
+                    .symbol
+                    .0
+                    .parse()
+                    .map_err(|_| make_semantic_error!(GeneralError))?;
+
+                if i >= receiver_ty.kind.as_tup().unwrap().len() {
+                    return Err(make_semantic_error!(IndexOutOfBound).set_span(&ident.span));
+                }
+
+                i
+            };
+            let mut field_ty = receiver_ty
+                .kind
+                .as_tup()
+                .unwrap()
+                .get(index)
+                .unwrap()
+                .clone();
+            Self::type_eq(&mut field_ty, extra.target_ty.unwrap())?;
+
+            let interrupt = result.interrupt;
+            let mutbl = result.assignee.into();
+
+            drop(receiver_ty);
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: field_ty,
+                    kind: ValueKind::ExtractElement { index },
+                },
+                AssigneeKind::Place(mutbl),
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_index_expr<'tmp>(
         &mut self,
-        expr: &'ast IndexExpr,
+        IndexExpr(array_expr, index_expr): &'ast IndexExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let mut array_ty = option_ty!(
+            self,
+            Self::array_type((*extra.target_ty.as_ref().unwrap()).clone(), None)
+        );
+        self.visit_expr(
+            &array_expr,
+            ExprExtra {
+                target_ty: array_ty.as_mut(),
+                ..extra
+            },
+        )?;
+        let mut usize_ty = option_ty!(self, Self::usize_type());
+        self.visit_expr(
+            &index_expr,
+            ExprExtra {
+                target_ty: usize_ty.as_mut(),
+                ..extra
+            },
+        )?;
+
+        if self.is_body_stage() {
+            self.no_assignee(array_expr.id)?;
+            self.no_assignee(index_expr.id)?;
+
+            let array_ty = array_ty.unwrap();
+            let array_ty_ref = array_ty.borrow();
+            let (inner_ty, len) = array_ty_ref.kind.as_array().unwrap();
+            *extra.target_ty.unwrap() = inner_ty.clone();
+            debug_assert!(len.is_some());
+
+            let interrupt = self.merge_expr_interrupt(once(array_expr).chain(once(index_expr)));
+            let mutbl = self.get_expr_result(&array_expr.id).assignee.into();
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: inner_ty.clone(),
+                    kind: ValueKind::Anon,
+                },
+                AssigneeKind::Place(mutbl),
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_range_expr<'tmp>(
@@ -1364,66 +1693,369 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_underscore_expr<'tmp>(
         &mut self,
-        expr: &'ast UnderscoreExpr,
+        UnderscoreExpr: &'ast UnderscoreExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if let Some(t) = extra.target_ty {
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: t.clone(),
+                    kind: ValueKind::Anon,
+                },
+                AssigneeKind::Only,
+                ControlFlowInterruptKind::Not,
+            );
+        }
+        Ok(())
     }
 
     fn visit_path_expr<'tmp>(
         &mut self,
-        expr: &'ast PathExpr,
+        PathExpr(qself, path): &'ast PathExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.is_body_stage() {
+            let value_index = self.search_value_by_path(extra.scope_id, qself, path)?;
+            let value = self.get_place_value_by_index_mut(&value_index);
+            Self::type_eq(&mut value.value.ty, extra.target_ty.unwrap())?;
+
+            let mutbl = value.mutbl;
+
+            self.set_expr_result(
+                extra.self_id,
+                ExprResult {
+                    value_index: value_index.into(),
+                    assignee: AssigneeKind::Place(mutbl),
+                    interrupt: ControlFlowInterruptKind::Not,
+                },
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_addr_of_expr<'tmp>(
         &mut self,
-        expr: &'ast AddrOfExpr,
-        extra: Self::ExprExtra<'tmp>,
+        AddrOfExpr(mutbl, expr): &'ast AddrOfExpr,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let mut ty = option_ty!(
+            self,
+            Self::ref_type(
+                Self::any_type(),
+                match mutbl {
+                    Mutability::Not => RefMutability::Not,
+                    Mutability::Mut => RefMutability::WeakMut,
+                }
+            )
+        );
+
+        // TODO: 如何实现 let a:&i32 = &&&&&1;？
+        if let Some(t) = &mut extra.target_ty {
+            Self::type_eq(t, ty.as_mut().unwrap())?;
+        }
+
+        let mut ty_ref = ty.as_mut().map(|x| x.borrow_mut());
+
+        self.visit_expr(
+            &expr,
+            ExprExtra {
+                target_ty: ty_ref.as_mut().map(|x| x.kind.as_ref_mut().unwrap().0),
+                ..extra
+            },
+        )?;
+
+        drop(ty_ref);
+
+        if self.is_body_stage() {
+            let ty = ty.unwrap();
+            *extra.target_ty.unwrap() = ty.clone();
+
+            self.no_assignee(expr.id)?;
+            let (interrupt, assignee) = self.merge_result_info(once(expr))?;
+            let inner_mutbl: Mutability = assignee.into();
+
+            if inner_mutbl < *mutbl {
+                return Err(make_semantic_error!(Immutable));
+            }
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty,
+                    kind: ValueKind::Anon,
+                },
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_break_expr<'tmp>(
         &mut self,
-        expr: &'ast BreakExpr,
+        BreakExpr(expr): &'ast BreakExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let is_body = self.is_body_stage();
+
+        if let Some(ty) = extra.target_ty {
+            Self::type_eq(ty, &mut Self::never_type())?;
+        };
+
+        let scope_id = self.search_cycle_scope(extra.scope_id)?;
+        let scope = self.get_scope(scope_id);
+        let mut ty = if is_body {
+            match &scope.kind {
+                ScopeKind::Loop { ret_ty } => Some(ret_ty.clone()),
+                ScopeKind::CycleExceptLoop => {
+                    if expr.is_some() {
+                        return Err(make_semantic_error!(NotInLoopScope));
+                    }
+                    None
+                }
+                _ => impossible!(),
+            }
+        } else {
+            None
+        };
+
+        if let Some(e) = expr {
+            self.visit_expr(
+                e,
+                ExprExtra {
+                    target_ty: ty.as_mut(),
+                    ..extra
+                },
+            )?;
+        } else if let Some(t) = &mut ty {
+            Self::type_eq(t, &mut Self::unit_type())?;
+        }
+
+        if let Some(t) = ty {
+            *self.get_scope_mut(scope_id).kind.as_loop_mut().unwrap() = t;
+        }
+
+        if is_body {
+            let mut interrupt = ControlFlowInterruptKind::Loop;
+            if let Some(e) = expr {
+                self.no_assignee(e.id)?;
+                interrupt = self.get_expr_result(&e.id).interrupt + interrupt;
+            }
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Self::never_value(),
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_continue_expr<'tmp>(
         &mut self,
-        expr: &'ast ContinueExpr,
+        ContinueExpr: &'ast ContinueExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.is_body_stage() {
+            Self::type_eq(extra.target_ty.unwrap(), &mut Self::never_type())?;
+
+            self.search_cycle_scope(extra.scope_id)?;
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Self::never_value(),
+                AssigneeKind::Value,
+                ControlFlowInterruptKind::Loop,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_ret_expr<'tmp>(
         &mut self,
-        expr: &'ast RetExpr,
+        RetExpr(expr): &'ast RetExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if let Some(ty) = extra.target_ty {
+            Self::type_eq(ty, &mut Self::never_type())?;
+        }
+
+        let scope_id = self.search_fn_scope(extra.scope_id)?;
+        let mut ty = if self.is_body_stage() {
+            Some(self.get_scope(scope_id).kind.as_fn().unwrap().0.clone())
+        } else {
+            None
+        };
+
+        if let Some(e) = expr {
+            self.visit_expr(
+                e,
+                ExprExtra {
+                    target_ty: ty.as_mut(),
+                    ..extra
+                },
+            )?;
+        } else if let Some(t) = &mut ty {
+            Self::type_eq(t, &mut Self::unit_type())?;
+        }
+
+        if self.is_body_stage() {
+            let mut interrupt = ControlFlowInterruptKind::Return;
+            if let Some(e) = expr {
+                self.no_assignee(e.id)?;
+                interrupt = self.get_expr_result(&e.id).interrupt + interrupt;
+            }
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Self::never_value(),
+                AssigneeKind::Value,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_struct_expr<'tmp>(
         &mut self,
-        expr: &'ast StructExpr,
+        StructExpr {
+            qself,
+            path,
+            fields,
+            rest: _,
+        }: &'ast StructExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.is_body_stage() {
+            let mut struct_type = self.resolve_path_type(qself, path, Some(extra.scope_id))?;
+            Self::type_eq(extra.target_ty.unwrap(), &mut struct_type)?;
+
+            let type_ref = struct_type.borrow();
+            let field_names = type_ref.names.as_ref().unwrap().1.as_ref().unwrap().clone();
+            let field_tys = type_ref
+                .kind
+                .as_tup()
+                .ok_or(make_semantic_error!(NotStructType).set_span(&path.span))?
+                .clone();
+            let mut map: HashMap<Symbol, TypePtr> =
+                HashMap::from_iter(field_names.into_iter().zip(field_tys.into_iter()));
+
+            for ExprField {
+                ident,
+                expr,
+                is_shorthand: _,
+                id: _,
+                span,
+            } in fields
+            {
+                let mut target = map
+                    .remove(&ident.symbol)
+                    .ok_or(make_semantic_error!(UnknownField).set_span(span))?;
+                self.visit_expr(
+                    expr,
+                    ExprExtra {
+                        target_ty: Some(&mut target),
+                        ..extra
+                    },
+                )?;
+            }
+
+            if !map.is_empty() {
+                return Err(make_semantic_error!(MissingField));
+            }
+
+            let (interrupt, assignee) = self.merge_result_info(fields.iter().map(|x| &x.expr))?;
+
+            drop(type_ref);
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: struct_type,
+                    kind: ValueKind::Anon,
+                },
+                assignee,
+                interrupt,
+            );
+        } else {
+            for ExprField {
+                ident: _,
+                expr,
+                is_shorthand: _,
+                id: _,
+                span: _,
+            } in fields
+            {
+                self.visit_expr(
+                    &expr,
+                    ExprExtra {
+                        target_ty: None,
+                        ..extra
+                    },
+                )?;
+            }
+        };
+
+        Ok(())
     }
 
     fn visit_repeat_expr<'tmp>(
         &mut self,
-        expr: &'ast RepeatExpr,
+        RepeatExpr(elm_expr, len_expr): &'ast RepeatExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.is_body_stage() {
+            let len = self
+                .const_eval(&len_expr.value, &mut Self::u32_type(), Some(extra.scope_id))?
+                .into_constant_int()
+                .unwrap();
+
+            let mut ty = Self::array_type(Self::any_type(), Some(len));
+            Self::type_eq(extra.target_ty.unwrap(), &mut ty)?;
+
+            let mut ty_ref = ty.borrow_mut();
+            let inner_type = ty_ref.kind.as_array_mut().unwrap().0;
+
+            self.visit_expr(
+                &elm_expr,
+                ExprExtra {
+                    target_ty: Some(inner_type),
+                    ..extra
+                },
+            )?;
+
+            self.no_assignee(elm_expr.id)?;
+            let interrupt = self.get_expr_result(&elm_expr.id).interrupt;
+
+            drop(ty_ref);
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: ty,
+                    kind: ValueKind::Anon,
+                },
+                AssigneeKind::Value,
+                interrupt,
+            );
+        } else {
+            self.visit_expr(
+                &elm_expr,
+                ExprExtra {
+                    target_ty: None,
+                    ..extra
+                },
+            )?;
+        }
+
+        Ok(())
     }
 
     fn visit_pat<'tmp>(
