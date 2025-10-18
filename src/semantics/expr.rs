@@ -18,6 +18,7 @@ pub struct ExprExtra<'tmp> {
     pub(crate) target_ty: Option<&'tmp mut TypePtr>,
     pub(crate) scope_id: NodeId,
     pub(crate) self_id: NodeId,
+    pub(crate) allow_i32_max: bool,
 
     pub(crate) span: Span,
 }

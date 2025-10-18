@@ -441,6 +441,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     scope_id: self_id,
                     self_id: body.id,
                     span,
+                    allow_i32_max: false,
                 },
             )?;
         }
@@ -861,6 +862,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         let new_extra = ExprExtra {
             self_id: *id,
             span: *span,
+            allow_i32_max: if matches!(
+                kind,
+                ExprKind::Unary(..) | ExprKind::Lit(..) | ExprKind::Block(..)
+            ) {
+                extra.allow_i32_max
+            } else {
+                false
+            },
             ..extra
         };
         match kind {
@@ -914,9 +923,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 e,
                 ExprExtra {
                     target_ty: ref_mut.as_mut().map(|x| x.kind.as_array_mut().unwrap().0),
-                    scope_id: extra.scope_id,
-                    self_id: 0,
-                    span: Span::default(),
+                    ..extra
                 },
             )?;
         }
@@ -962,9 +969,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             &func_expr,
             ExprExtra {
                 target_ty: func_type.as_mut(),
-                scope_id: extra.scope_id,
-                self_id: 0,
-                span: Span::default(),
+                ..extra
             },
         )?;
 
@@ -983,9 +988,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 &arg,
                 ExprExtra {
                     target_ty: ty.as_mut().map(|x| x.1.get_mut(i).unwrap()),
-                    scope_id: extra.scope_id,
-                    self_id: 0,
-                    span: Span::default(),
+                    ..extra
                 },
             )?;
         }
@@ -1181,18 +1184,126 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_lit_expr<'tmp>(
         &mut self,
-        expr: &'ast LitExpr,
+        LitExpr {
+            kind,
+            symbol,
+            suffix,
+        }: &'ast LitExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.is_body_stage() {
+            let target_ty = extra.target_ty.unwrap();
+
+            let constant = match kind {
+                LitKind::Bool => {
+                    Self::type_eq(target_ty, &mut Self::bool_type())?;
+                    ConstantValue::ConstantInt(if symbol == "true" { 1 } else { 0 })
+                }
+                LitKind::Char => {
+                    Self::type_eq(target_ty, &mut Self::char_type())?;
+                    ConstantValue::ConstantInt(symbol.chars().next().unwrap() as u32)
+                }
+                LitKind::Integer => {
+                    if let Some(mut restrict_ty) = match suffix.as_ref().map(|x| x.as_str()) {
+                        Some("i32") => Some(Self::i32_type()),
+                        Some("u32") => Some(Self::u32_type()),
+                        Some("isize") => Some(Self::isize_type()),
+                        Some("usize") => Some(Self::usize_type()),
+                        Some(_) => return Err(make_semantic_error!(UnknownSuffix)),
+                        None => None,
+                    } {
+                        Self::type_eq(target_ty, &mut restrict_ty)?;
+                    }
+
+                    let value: u32 = symbol.parse().map_err(|_| make_semantic_error!(Overflow))?;
+
+                    let target_ref = target_ty.borrow();
+
+                    use crate::semantics::resolved_ty::BuiltInTyKind::*;
+                    use crate::semantics::resolved_ty::ResolvedTyKind::*;
+                    if matches!(target_ref.kind, BuiltIn(I32 | ISize))
+                        && (value > 2147483648 || (value == 2147483648 && !extra.allow_i32_max))
+                    {
+                        return Err(make_semantic_error!(Overflow));
+                    }
+
+                    drop(target_ref);
+
+                    ConstantValue::ConstantInt(value)
+                }
+                LitKind::Str | LitKind::StrRaw(_) => {
+                    Self::type_eq(target_ty, &mut Self::ref_str_type())?;
+                    ConstantValue::ConstantString(symbol.clone())
+                }
+                _ => return Err(make_semantic_error!(NoImplementation)),
+            };
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: target_ty.clone(),
+                    kind: ValueKind::Constant(constant),
+                },
+                AssigneeKind::Value,
+                ControlFlowInterruptKind::Not,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_cast_expr<'tmp>(
         &mut self,
-        expr: &'ast CastExpr,
+        CastExpr(expr, to_type): &'ast CastExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        if self.is_body_stage() {
+            let mut to_type = self.resolve_type(&to_type, Some(extra.scope_id))?;
+            Self::type_eq(extra.target_ty.unwrap(), &mut to_type)?;
+
+            let mut any_type = Self::any_type();
+            self.visit_expr(
+                expr,
+                ExprExtra {
+                    target_ty: Some(&mut any_type),
+                    ..extra
+                },
+            )?;
+
+            let any_ref = any_type.borrow();
+            let to_ref = to_type.borrow();
+
+            if !((any_ref.is_any_int_type() || any_ref.is_bool_type() || any_ref.is_char_type())
+                && to_ref.is_any_int_type())
+            {
+                return Err(make_semantic_error!(NotSupportCast));
+            }
+
+            self.no_assignee(expr.id)?;
+            let interrupt = self.get_expr_result(&expr.id).interrupt;
+
+            drop((any_ref, to_ref));
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: to_type,
+                    kind: ValueKind::Anon,
+                },
+                AssigneeKind::Value,
+                interrupt,
+            );
+        } else {
+            self.visit_expr(
+                expr,
+                ExprExtra {
+                    target_ty: None,
+                    ..extra
+                },
+            )?;
+        }
+
+        Ok(())
     }
 
     fn visit_let_expr<'tmp>(
@@ -1230,6 +1341,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 scope_id: extra.scope_id,
                 self_id: body_expr.id,
                 span: body_expr.span,
+                allow_i32_max: false,
             },
         )?;
         if let Some(else_expr) = else_expr {
@@ -1317,6 +1429,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 scope_id: extra.self_id,
                 self_id: body_expr.id,
                 span: body_expr.span,
+                allow_i32_max: false,
             },
         )?;
 
@@ -1373,6 +1486,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 scope_id: extra.self_id,
                 self_id: body_expr.id,
                 span: body_expr.span,
+                allow_i32_max: false,
             },
         )?;
 
@@ -1441,6 +1555,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         self_id: 0,
                         span: *span,
                         target_ty: target.take().unwrap(),
+                        ..extra
                     },
                 )?;
             } else {
@@ -1452,6 +1567,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         scope_id: *id,
                         self_id: 0,
                         span: *span,
+                        ..extra
                     },
                 )?;
             }

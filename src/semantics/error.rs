@@ -62,6 +62,7 @@ pub enum SemanticErrorKind {
     NotInLoopScope,
     NotInFnScope,
     MissingField,
+    NotSupportCast,
 
     GeneralError,
 }
