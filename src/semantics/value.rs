@@ -146,6 +146,10 @@ impl SemanticAnalyzer {
         None
     }
 
+    pub fn search_value_in_impl_recursively(&self, ty: &TypePtr, symbol: &Symbol) -> Option<(DerefLevel, PlaceValueIndex)> {
+        todo!()
+    }
+
     pub fn get_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),

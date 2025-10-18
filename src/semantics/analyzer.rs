@@ -1,6 +1,7 @@
 use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
+    iter::{Once, once},
     rc::Rc,
     vec,
 };
@@ -835,41 +836,187 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_expr<'tmp>(
         &mut self,
-        expr: &'ast Expr,
+        Expr { kind, span, id }: &'ast Expr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let new_extra = ExprExtra {
+            self_id: *id,
+            span: *span,
+            ..extra
+        };
+        match kind {
+            ExprKind::Array(expr) => self.visit_array_expr(expr, new_extra),
+            ExprKind::ConstBlock(expr) => self.visit_const_block_expr(expr, new_extra),
+            ExprKind::Call(expr) => self.visit_call_expr(expr, new_extra),
+            ExprKind::MethodCall(expr) => self.visit_method_call_expr(expr, new_extra),
+            ExprKind::Tup(expr) => self.visit_tup_expr(expr, new_extra),
+            ExprKind::Binary(expr) => self.visit_binary_expr(expr, new_extra),
+            ExprKind::Unary(expr) => self.visit_unary_expr(expr, new_extra),
+            ExprKind::Lit(expr) => self.visit_lit_expr(expr, new_extra),
+            ExprKind::Cast(expr) => self.visit_cast_expr(expr, new_extra),
+            ExprKind::Let(expr) => self.visit_let_expr(expr, new_extra),
+            ExprKind::If(expr) => self.visit_if_expr(expr, new_extra),
+            ExprKind::While(expr) => self.visit_while_expr(expr, new_extra),
+            ExprKind::ForLoop(expr) => self.visit_for_loop_expr(expr, new_extra),
+            ExprKind::Loop(expr) => self.visit_loop_expr(expr, new_extra),
+            ExprKind::Match(expr) => self.visit_match_expr(expr, new_extra),
+            ExprKind::Block(expr) => self.visit_block_expr(expr, new_extra),
+            ExprKind::Assign(expr) => self.visit_assign_expr(expr, new_extra),
+            ExprKind::AssignOp(expr) => self.visit_assign_op_expr(expr, new_extra),
+            ExprKind::Field(expr) => self.visit_field_expr(expr, new_extra),
+            ExprKind::Index(expr) => self.visit_index_expr(expr, new_extra),
+            ExprKind::Range(expr) => self.visit_range_expr(expr, new_extra),
+            ExprKind::Underscore(expr) => self.visit_underscore_expr(expr, new_extra),
+            ExprKind::Path(expr) => self.visit_path_expr(expr, new_extra),
+            ExprKind::AddrOf(expr) => self.visit_addr_of_expr(expr, new_extra),
+            ExprKind::Break(expr) => self.visit_break_expr(expr, new_extra),
+            ExprKind::Continue(expr) => self.visit_continue_expr(expr, new_extra),
+            ExprKind::Ret(expr) => self.visit_ret_expr(expr, new_extra),
+            ExprKind::Struct(expr) => self.visit_struct_expr(expr, new_extra),
+            ExprKind::Repeat(expr) => self.visit_repeat_expr(expr, new_extra),
+        }
+        .map_err(|e| e.set_span(span))
     }
 
     fn visit_array_expr<'tmp>(
         &mut self,
-        expr: &'ast ArrayExpr,
-        extra: Self::ExprExtra<'tmp>,
+        ArrayExpr(exprs): &'ast ArrayExpr,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let len = exprs.len();
+        if let Some(t) = &mut extra.target_ty {
+            Self::type_eq(t, &mut Self::array_type(Self::any_type(), Some(len as u32)))?;
+        }
+
+        let mut ref_mut = extra.target_ty.as_mut().map(|x| x.borrow_mut());
+
+        for e in exprs {
+            self.visit_expr(
+                e,
+                ExprExtra {
+                    target_ty: ref_mut.as_mut().map(|x| x.kind.as_array_mut().unwrap().0),
+                    scope_id: extra.scope_id,
+                    self_id: 0,
+                    span: Span::default(),
+                },
+            )?;
+        }
+
+        drop(ref_mut);
+
+        if self.stage.is_body() {
+            let (interrupt, assignee) = self.merge_result_info(exprs.iter())?;
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: extra.target_ty.unwrap().clone(),
+                    kind: ValueKind::Anon,
+                },
+                assignee,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_const_block_expr<'tmp>(
         &mut self,
-        expr: &'ast ConstBlockExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast ConstBlockExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        Err(make_semantic_error!(NoImplementation))
     }
 
     fn visit_call_expr<'tmp>(
         &mut self,
-        expr: &'ast CallExpr,
-        extra: Self::ExprExtra<'tmp>,
+        CallExpr(func_expr, arg_exprs): &'ast CallExpr,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let mut func_type = if self.stage.is_body() {
+            Some(Self::any_type())
+        } else {
+            None
+        };
+        self.visit_expr(
+            &func_expr,
+            ExprExtra {
+                target_ty: func_type.as_mut(),
+                scope_id: extra.scope_id,
+                self_id: 0,
+                span: Span::default(),
+            },
+        )?;
+
+        let mut func_type_ref = func_type.as_mut().map(|x| x.borrow_mut());
+        let mut ty = func_type_ref.as_mut().map(|x| x.kind.as_fn_mut().unwrap());
+
+        if let Some(t) = &mut extra.target_ty {
+            Self::type_eq(ty.as_mut().unwrap().0, t)?;
+            if ty.as_ref().unwrap().1.len() != arg_exprs.len() {
+                return Err(make_semantic_error!(ArgumentNumberMismatch));
+            }
+        }
+
+        for (i, arg) in arg_exprs.iter().enumerate() {
+            self.visit_expr(
+                &arg,
+                ExprExtra {
+                    target_ty: ty.as_mut().map(|x| x.1.get_mut(i).unwrap()),
+                    scope_id: extra.scope_id,
+                    self_id: 0,
+                    span: Span::default(),
+                },
+            )?;
+        }
+
+        if self.stage.is_body() {
+            let (interrupt, assignee) = self.merge_result_info(once(func_expr).chain(arg_exprs))?;
+
+            self.set_expr_value_and_result(
+                extra.self_id,
+                Value {
+                    ty: extra.target_ty.unwrap().clone(),
+                    kind: ValueKind::Anon,
+                },
+                assignee,
+                interrupt,
+            );
+        }
+
+        Ok(())
     }
 
     fn visit_method_call_expr<'tmp>(
         &mut self,
-        expr: &'ast MethodCallExpr,
+        MethodCallExpr {
+            seg,
+            receiver,
+            args,
+            span,
+        }: &'ast MethodCallExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
+        let mut receiver_type = if self.is_body_stage() {
+            Some(Self::any_type())
+        } else {
+            None
+        };
+        self.visit_expr(
+            receiver,
+            ExprExtra {
+                target_ty: receiver_type.as_mut(),
+                ..extra
+            },
+        )?;
+        let symbol = &seg.ident.symbol;
+        let method = if let Some(receiver_type) = &receiver_type {
+            Some(self.search_value_in_impl(receiver_type, symbol).ok_or(make_semantic_error!(UnkonwnMethod))?)
+        } else {
+            None
+        };
+
         todo!()
     }
 
@@ -1027,7 +1174,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         extra.self_id,
                         ExprResult {
                             value_index: value_index,
-                            assignee: AssigneeKind::Not,
+                            assignee: AssigneeKind::Value,
                             interrupt,
                         },
                     );
@@ -1049,7 +1196,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         } else {
                             Self::never_value()
                         },
-                        AssigneeKind::Not,
+                        AssigneeKind::Value,
                         interrupt,
                     );
                 }

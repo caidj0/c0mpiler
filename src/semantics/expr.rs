@@ -1,11 +1,13 @@
-use std::ops::{Add, BitOr};
+use std::ops::{Add, BitAnd, BitOr, Deref};
 
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    ast::{Mutability, NodeId, Span},
+    ast::{Mutability, NodeId, Span, expr::Expr},
+    make_semantic_error,
     semantics::{
         analyzer::SemanticAnalyzer,
+        error::SemanticError,
         resolved_ty::TypePtr,
         value::{Value, ValueIndex},
     },
@@ -27,11 +29,41 @@ pub struct ExprResult {
     pub interrupt: ControlFlowInterruptKind,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum AssigneeKind {
     Place(Mutability),
-    Not,
+    Value,
     Only,
+}
+
+impl AssigneeKind {
+    pub fn merge(self, rhs: Self) -> Result<Self, SemanticError> {
+        match (self, rhs) {
+            (AssigneeKind::Place(mutability1), AssigneeKind::Place(mutability2)) => {
+                Ok(AssigneeKind::Place(mutability1 & mutability2))
+            }
+
+            (AssigneeKind::Value, AssigneeKind::Place(Mutability::Mut))
+            | (AssigneeKind::Place(Mutability::Mut), AssigneeKind::Value)
+            | (AssigneeKind::Value, AssigneeKind::Place(Mutability::Not))
+            | (AssigneeKind::Place(Mutability::Not), AssigneeKind::Value)
+            | (AssigneeKind::Value, AssigneeKind::Value) => Ok(AssigneeKind::Value),
+
+            (AssigneeKind::Only, AssigneeKind::Place(Mutability::Mut))
+            | (AssigneeKind::Place(Mutability::Mut), AssigneeKind::Only)
+            | (AssigneeKind::Only, AssigneeKind::Only) => Ok(AssigneeKind::Only),
+
+            (AssigneeKind::Only, AssigneeKind::Place(Mutability::Not))
+            | (AssigneeKind::Place(Mutability::Not), AssigneeKind::Only) => {
+                Err(make_semantic_error!(Immutable))
+            }
+
+            (AssigneeKind::Only, AssigneeKind::Value)
+            | (AssigneeKind::Value, AssigneeKind::Only) => {
+                Err(make_semantic_error!(AssigneeKindMismatch))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, EnumAsInner)]
@@ -103,5 +135,25 @@ impl SemanticAnalyzer {
 
     pub(crate) fn get_expr_result(&self, expr_id: &NodeId) -> &ExprResult {
         self.expr_results.get(expr_id).unwrap()
+    }
+
+    pub(crate) fn merge_result_info<'a, I, E>(
+        &self,
+        iter: I,
+    ) -> Result<(ControlFlowInterruptKind, AssigneeKind), SemanticError>
+    where
+        I: Iterator<Item = &'a E>,
+        E: Deref<Target = Expr> + 'a,
+    {
+        let mut interrupt = ControlFlowInterruptKind::Not;
+        let mut assignee = AssigneeKind::Place(Mutability::Mut);
+
+        for e in iter {
+            let result = self.get_expr_result(&e.id);
+            interrupt = interrupt + result.interrupt;
+            assignee = assignee.merge(result.assignee)?;
+        }
+
+        Ok((interrupt, assignee))
     }
 }

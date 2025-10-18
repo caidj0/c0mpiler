@@ -6,6 +6,8 @@ pub mod path;
 pub mod stmt;
 pub mod ty;
 
+use std::ops::BitAnd;
+
 use enum_as_inner::EnumAsInner;
 
 use crate::{
@@ -277,6 +279,17 @@ pub enum Mutability {
     Mut,
 }
 
+impl BitAnd for Mutability {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Mutability::Mut, Mutability::Mut) => Mutability::Mut,
+            _ => Mutability::Not,
+        }
+    }
+}
+
 impl Eatable for Mutability {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         if iter.peek()?.token_type == TokenType::Mut {
@@ -289,13 +302,6 @@ impl Eatable for Mutability {
 }
 
 impl Mutability {
-    pub fn merge(self, other: Self) -> Self {
-        match (self, other) {
-            (Mutability::Mut, Mutability::Mut) => Mutability::Mut,
-            _ => Mutability::Not,
-        }
-    }
-
     pub fn can_trans_to(&self, other: &Self) -> bool {
         !matches!((self, other), (Mutability::Not, Mutability::Mut))
     }

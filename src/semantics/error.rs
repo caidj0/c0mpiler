@@ -47,6 +47,10 @@ pub enum SemanticErrorKind {
     AssociateItemMismatch,
     BindingNameConflict,
     BindingConflictWithConstant,
+    Immutable,
+    AssigneeKindMismatch,
+    ArgumentNumberMismatch,
+    UnkonwnMethod,
 }
 
 #[macro_export]

@@ -661,9 +661,10 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
                 .search_value_by_path(self.scope_id.unwrap(), qself, path)?;
 
         let value = self.analyzer.get_value_by_index(&value_index);
-        let mut ty = value.ty.clone();
+        let mut ty = value.value.ty.clone();
         to_semantic_error!(TypeSolver::eq(&mut ty, extra.ty))?;
         let const_value = value
+            .value
             .kind
             .as_constant()
             .cloned()

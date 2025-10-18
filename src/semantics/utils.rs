@@ -2,7 +2,7 @@ use std::{collections::HashSet, fmt::Display};
 
 use enum_as_inner::EnumAsInner;
 
-use crate::ast::Symbol;
+use crate::{ast::Symbol, semantics::analyzer::SemanticAnalyzer};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FullName(pub Vec<Symbol>);
@@ -53,4 +53,10 @@ pub(crate) fn is_all_different<T: Eq + std::hash::Hash>(vec: &[T]) -> bool {
         }
     }
     true
+}
+
+impl SemanticAnalyzer {
+    pub fn is_body_stage(&self) -> bool {
+        self.stage.is_body()
+    }
 }
