@@ -15,7 +15,7 @@ use crate::{
         expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult},
         impls::Impls,
         item::{AssociatedInfo, ItemExtra},
-        pat::{PatExtra, PatResult},
+        pat::{Binding, PatExtra, PatResult},
         resolved_ty::{ResolvedTy, ResolvedTyKind, TypePtr},
         scope::{MainFunctionState, Scope, ScopeKind},
         stmt::StmtResult,
@@ -397,9 +397,21 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .map_err(|e| e.set_span(&span))?;
             }
             AnalyzeStage::Body => {
-                // TODO: Add binding
-                self.add_bindings(bindings, scope_id);
-                todo!()
+                let bindings = sig
+                    .decl
+                    .inputs
+                    .iter()
+                    .map(|x| -> Result<_, SemanticError> {
+                        let mut ty = self.resolve_type(&x.ty, Some(father))?;
+                        let bindings = self.visit_pat(&x.pat, PatExtra { id: 0, ty: &mut ty })?;
+                        Ok(bindings.bindings.into_iter())
+                    })
+                    .collect::<Result<Vec<_>, SemanticError>>()?
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>();
+
+                self.add_bindings(bindings, self_id)?;
             }
         }
 
@@ -559,7 +571,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         }
 
         for item in items {
-            let ty = self.get_self_type(Some(self_id)).unwrap();
+            let ty = self.get_self_type(Some(self_id), false).unwrap();
             self.visit_associate_item(
                 item,
                 ItemExtra {
@@ -631,7 +643,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                             .value
                             .ty
                             .deep_clone();
-                        trait_v.replace(trait_ty.borrow().name.as_ref().unwrap(), ty);
+                        trait_v.remove_implicit_self(Some(ty));
                         if trait_v != v.value.ty {
                             return Err(make_semantic_error!(AssociateItemMismatch));
                         }

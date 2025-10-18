@@ -32,13 +32,14 @@ impl TypePtr {
         self.0.borrow()
     }
 
-    pub fn replace(&mut self, name: &FullName, target: &TypePtr) {
+    pub fn remove_implicit_self(&mut self, target: Option<&TypePtr>) {
         let mut r = self.0.borrow_mut();
-        if r.name.as_ref().map_or(false, |x| x == name) {
+        if let Some(t) = r.kind.as_implicit_self() {
+            let ty = target.unwrap_or(t).clone();
             drop(r);
-            *self = target.clone()
+            *self = ty;
         } else {
-            r.replace(name, target);
+            r.remove_implicit_self(target);
         }
     }
 }
@@ -80,30 +81,36 @@ impl ResolvedTy {
             ResolvedTyKind::Never => ResolvedTyKind::Never,
             ResolvedTyKind::Trait => ResolvedTyKind::Trait,
             ResolvedTyKind::Any(any_ty_kind) => ResolvedTyKind::Any(any_ty_kind.clone()),
+            ResolvedTyKind::ImplicitSelf(type_ptr) => {
+                ResolvedTyKind::ImplicitSelf(type_ptr.clone())
+            }
         };
 
         Self { name, kind }
     }
 
-    pub fn replace(&mut self, name: &FullName, target: &TypePtr) {
+    pub fn remove_implicit_self(&mut self, target: Option<&TypePtr>) {
         match &mut self.kind {
             ResolvedTyKind::Placeholder => {}
             ResolvedTyKind::BuiltIn(_) => {}
             ResolvedTyKind::Ref(type_ptr, _) => {
-                type_ptr.replace(name, target);
+                type_ptr.remove_implicit_self(target);
             }
-            ResolvedTyKind::Tup(type_ptrs) => {
-                type_ptrs.iter_mut().for_each(|x| x.replace(name, target))
-            }
+            ResolvedTyKind::Tup(type_ptrs) => type_ptrs
+                .iter_mut()
+                .for_each(|x| x.remove_implicit_self(target)),
             ResolvedTyKind::Enum => {}
             ResolvedTyKind::Trait => {}
-            ResolvedTyKind::Array(type_ptr, _) => type_ptr.replace(name, target),
+            ResolvedTyKind::Array(type_ptr, _) => type_ptr.remove_implicit_self(target),
             ResolvedTyKind::Fn(type_ptr, type_ptrs) => {
-                type_ptr.replace(name, target);
-                type_ptrs.iter_mut().for_each(|x| x.replace(name, target));
+                type_ptr.remove_implicit_self(target);
+                type_ptrs
+                    .iter_mut()
+                    .for_each(|x| x.remove_implicit_self(target));
             }
             ResolvedTyKind::Never => {}
             ResolvedTyKind::Any(_) => {}
+            ResolvedTyKind::ImplicitSelf(_) => impossible!(),
         }
     }
 
@@ -141,6 +148,7 @@ pub enum ResolvedTyKind {
     Fn(TypePtr, Vec<TypePtr>),
     Never,
     Any(AnyTyKind),
+    ImplicitSelf(TypePtr), // 为了 Trait
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -295,7 +303,7 @@ impl SemanticAnalyzer {
             Path(path_ty) => self.resolve_path_type(&path_ty.0, &path_ty.1, current_scope),
             Infer(_) => Ok(Self::any_type()),
             ImplicitSelf => self
-                .get_self_type(current_scope)
+                .get_self_type(current_scope, true)
                 .ok_or(make_semantic_error!(UnknownSelfType).set_span(span)),
         }
     }
@@ -326,14 +334,14 @@ impl SemanticAnalyzer {
             "str" => Self::str_type(),
             "Self" => {
                 return self
-                    .get_self_type(origin_scope)
+                    .get_self_type(origin_scope, false)
                     .ok_or(make_semantic_error!(UnknownSelfType).set_span(span));
             }
             _ => return Err(make_semantic_error!(UnknownType).set_span(span)),
         })
     }
 
-    pub fn get_self_type(&self, mut scope_id: Option<NodeId>) -> Option<TypePtr> {
+    pub fn get_self_type(&self, mut scope_id: Option<NodeId>, implicit: bool) -> Option<TypePtr> {
         let mut out_of_function = false;
 
         while let Some(id) = scope_id {
@@ -341,7 +349,17 @@ impl SemanticAnalyzer {
 
             use super::scope::ScopeKind::*;
             match &scope.kind {
-                Trait(type_ptr) | Impl { ty: type_ptr, .. } => return Some(type_ptr.clone()),
+                Trait(type_ptr) => {
+                    return if implicit {
+                        Some(TypePtr(Rc::new(RefCell::new(ResolvedTy {
+                            name: None,
+                            kind: ResolvedTyKind::ImplicitSelf(type_ptr.clone()),
+                        }))))
+                    } else {
+                        Some(type_ptr.clone())
+                    };
+                }
+                Impl { ty: type_ptr, .. } => return Some(type_ptr.clone()),
                 Struct(_, _) | Enum(_, _) => impossible!(),
                 Fn {
                     ret_ty: _,
