@@ -60,12 +60,23 @@ define_preludes!(
     usize: ResolvedTy::usize_type(),
     str: ResolvedTy::str_type(),
     unit: ResolvedTy::str_type(),
-    any: ResolvedTy::any_type(),
-    any_int: ResolvedTy::any_int_type(),
-    any_signed_int: ResolvedTy::any_signed_int_type(),
 
     ref_str: ResolvedTy{
         names: None,
         kind: ResolvedTyKind::Ref(TypeIntern::Other(str), RefMutability::Not)
     }
 );
+
+impl SemanticAnalyzer {
+    pub fn new_any_type(&mut self) -> TypeIntern {
+        self.intern_type(ResolvedTy::any_type())
+    }
+
+    pub fn new_any_int_type(&mut self) -> TypeIntern {
+        self.intern_type(ResolvedTy::any_int_type())
+    }
+
+    pub fn new_any_signed_int_type(&mut self) -> TypeIntern {
+        self.intern_type(ResolvedTy::any_signed_int_type())
+    }
+}

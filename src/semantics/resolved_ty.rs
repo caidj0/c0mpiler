@@ -1,4 +1,4 @@
-use std::{fmt::Debug, hash::Hash, ops::Deref};
+use std::{fmt::Debug, hash::Hash};
 
 use ena::unify::UnifyKey;
 use enum_as_inner::EnumAsInner;
@@ -358,7 +358,7 @@ impl SemanticAnalyzer {
                 ),
                 ResolvedTyKind::Any(any_ty_kind) => ResolvedTyKind::Any(any_ty_kind),
                 ResolvedTyKind::ImplicitSelf(inner) => {
-                    ResolvedTyKind::ImplicitSelf(Box::new(self.probe_type_instance(intern)?))
+                    ResolvedTyKind::ImplicitSelf(Box::new(self.probe_type_instance(inner)?))
                 }
             },
         })
@@ -393,7 +393,7 @@ impl SemanticAnalyzer {
                 _ => Err(make_semantic_error!(NoImplementation).set_span(span)),
             },
             Path(path_ty) => self.resolve_path_type(&path_ty.0, &path_ty.1, current_scope),
-            Infer(_) => Ok(self.any_type()),
+            Infer(_) => Ok(self.new_any_type()),
             ImplicitSelf => self
                 .get_self_type(current_scope, true)
                 .ok_or(make_semantic_error!(UnknownSelfType).set_span(span)),

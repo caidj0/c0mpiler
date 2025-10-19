@@ -20,13 +20,13 @@ use crate::{
 
 // 如何区分 Value, Place, Assignee 表达式
 // Value 里不需要表明可变性
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Value {
     pub ty: TypeIntern,
     pub kind: ValueKind,
 }
 
-#[derive(Debug, EnumAsInner)]
+#[derive(Debug, EnumAsInner, Clone)]
 pub enum ValueKind {
     Anon,
     Constant(ConstantValue),
@@ -87,7 +87,7 @@ impl From<NodeId> for ValueIndex {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PlaceValueIndex {
     name: Symbol,
     kind: ValueIndexKind,
@@ -107,7 +107,7 @@ pub enum ValueIndexKind {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PlaceValue {
     pub(crate) value: Value,
     pub(crate) mutbl: Mutability,

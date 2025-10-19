@@ -25,6 +25,6 @@ impl SemanticAnalyzer {
         match self.stmt_results.get(id).unwrap() {
             StmtResult::Expr(expr_id) => self.get_expr_result(expr_id).interrupt,
             StmtResult::Else { interrupt } => *interrupt,
-        } 
+        }
     }
 }

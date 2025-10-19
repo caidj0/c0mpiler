@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{HashMap, HashSet},
-};
+use std::collections::{HashMap, HashSet};
 
 use enum_as_inner::EnumAsInner;
 
@@ -9,10 +6,7 @@ use crate::{
     ast::{NodeId, Symbol},
     make_semantic_error,
     semantics::{
-        analyzer::SemanticAnalyzer,
-        error::SemanticError,
-        resolved_ty::TypeKey,
-        value::{PlaceValue, Value},
+        analyzer::SemanticAnalyzer, error::SemanticError, resolved_ty::TypeKey, value::PlaceValue,
     },
 };
 

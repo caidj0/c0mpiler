@@ -1,4 +1,4 @@
-use std::ops::{Add, BitAnd, BitOr, Deref};
+use std::ops::{Add, BitOr, Deref};
 
 use enum_as_inner::EnumAsInner;
 

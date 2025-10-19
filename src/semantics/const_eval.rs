@@ -1,15 +1,13 @@
 use crate::{
-    ast::{expr::*, item::*, pat::*, stmt::*, NodeId},
+    ast::{NodeId, expr::*, item::*, pat::*, stmt::*},
     impossible, make_semantic_error,
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::{TypeIntern, TypeKey},
-        type_solver::{TypeSolveError, TypeSolver},
+        resolved_ty::{ResolvedTy, TypeIntern, TypeKey},
         value::{ConstantValue, UnEvalConstant},
         visitor::Visitor,
     },
-    to_semantic_error,
 };
 
 impl SemanticAnalyzer {
@@ -20,10 +18,10 @@ impl SemanticAnalyzer {
         scope: Option<NodeId>,
     ) -> Result<ConstantValue, SemanticError> {
         let mut evaler = ConstEvaler {
-            analyzer: &self,
+            analyzer: self,
             scope_id: scope,
         };
-        evaler.visit_expr(expr, target_type.into())
+        evaler.visit_expr(expr, (*target_type.as_ref()).into())
     }
 
     pub fn eval_unevaling(
@@ -32,17 +30,17 @@ impl SemanticAnalyzer {
         target_type: TypeKey,
     ) -> Result<ConstantValue, SemanticError> {
         let (scope, e) = uneval.to_ref();
-        self.const_eval(e, target_type, Some(scope))
+        self.const_eval(e, target_type.into(), Some(scope))
     }
 }
 
-struct Extra<'tmp> {
-    ty: &'tmp mut TypeKey,
+struct Extra {
+    ty: TypeKey,
     allow_i32_max: bool,
 }
 
-impl<'tmp> From<&'tmp mut TypeKey> for Extra<'tmp> {
-    fn from(value: &'tmp mut TypeKey) -> Self {
+impl From<TypeKey> for Extra {
+    fn from(value: TypeKey) -> Self {
         Self {
             ty: value,
             allow_i32_max: false,
@@ -51,7 +49,7 @@ impl<'tmp> From<&'tmp mut TypeKey> for Extra<'tmp> {
 }
 
 struct ConstEvaler<'analyzer> {
-    analyzer: &'analyzer SemanticAnalyzer,
+    analyzer: &'analyzer mut SemanticAnalyzer,
     scope_id: Option<NodeId>,
 }
 
@@ -82,7 +80,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
     type StmtExtra<'tmp> = ();
 
-    type ExprExtra<'tmp> = Extra<'tmp>;
+    type ExprExtra<'tmp> = Extra;
 
     type PatExtra<'tmp> = ();
 
@@ -185,8 +183,12 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
     fn visit_expr<'tmp>(
         &mut self,
         Expr { kind, span, id: _ }: &'ast Expr,
-        extra: Self::ExprExtra<'tmp>,
+        mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
+        if !matches!(kind, ExprKind::Unary(_) | ExprKind::Lit(_)) {
+            extra.allow_i32_max = false;
+        }
+
         match kind {
             ExprKind::Array(e) => self.visit_array_expr(e, extra),
             ExprKind::ConstBlock(e) => self.visit_const_block_expr(e, extra),
@@ -226,25 +228,15 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         ArrayExpr(exprs): &'ast ArrayExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let mut ty = extra.ty.borrow_mut();
-        let Some((inner, len)) = ty.kind.as_array_mut() else {
-            return Err(make_semantic_error!(TypeError(
-                TypeSolveError::GeneralTypeMismatch
-            )));
-        };
-        if let Some(len) = len {
-            if exprs.len() != *len as usize {
-                return Err(make_semantic_error!(TypeError(
-                    TypeSolveError::ArrayLengthMismatch
-                )));
-            }
-        } else {
-            *len = Some(exprs.len() as u32);
-        }
+        let right_ty =
+            ResolvedTy::array_type(self.analyzer.new_any_type(), Some(exprs.len() as u32));
+        self.analyzer.type_eq(extra.ty.into(), right_ty)?;
+        let ty = self.analyzer.probe_type(extra.ty.into()).unwrap();
+        let (inner, _) = ty.kind.into_array().unwrap();
 
         let values = exprs
             .iter()
-            .map(|x| self.visit_expr(x, inner.into()))
+            .map(|x| self.visit_expr(x, (*inner.as_ref()).into()))
             .collect::<Result<Vec<_>, SemanticError>>()?;
 
         Ok(ConstantValue::ConstantArray(values))
@@ -281,7 +273,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
     ) -> Self::ExprRes<'_> {
         match &exprs[..] {
             [] => {
-                to_semantic_error!(TypeSolver::eq(&mut SemanticAnalyzer::unit_type(), extra.ty))?;
+                self.analyzer
+                    .ty_intern_eq(extra.ty.into(), self.analyzer.unit_type())?;
                 Ok(ConstantValue::Unit)
             }
             [e] => self.visit_expr(e, extra),
@@ -294,7 +287,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         BinaryExpr(bin_op, expr1, expr2): &'ast BinaryExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let ty = extra.ty;
+        let intern = extra.ty;
+        let ty = self.analyzer.probe_type(intern.into()).unwrap();
 
         let v = match bin_op {
             BinOp::Add
@@ -305,24 +299,24 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
             | BinOp::BitXor
             | BinOp::BitAnd
             | BinOp::BitOr => {
-                let v1 = self.visit_expr(expr1, ty.into())?;
-                let v2 = self.visit_expr(expr2, ty.into())?;
+                let v1 = self.visit_expr(expr1, intern.into())?;
+                let v2 = self.visit_expr(expr2, intern.into())?;
 
                 if let (ConstantValue::ConstantInt(i1), ConstantValue::ConstantInt(i2)) = (v1, v2) {
-                    if ty.borrow().is_any_int_type() {
+                    if ty.is_any_int_type() {
                         match bin_op {
                             BinOp::Add => i1.wrapping_add(i2),
                             BinOp::Sub => i1.wrapping_sub(i2),
                             BinOp::Mul => i1.wrapping_mul(i2),
                             BinOp::Div => {
-                                if ty.borrow().is_any_signed_int_type() {
+                                if ty.is_any_signed_int_type() {
                                     (i1 as i32).wrapping_div(i2 as i32) as u32
                                 } else {
                                     i1.wrapping_div(i2)
                                 }
                             }
                             BinOp::Rem => {
-                                if ty.borrow().is_any_signed_int_type() {
+                                if ty.is_any_signed_int_type() {
                                     (i1 as i32).wrapping_rem(i2 as i32) as u32
                                 } else {
                                     i1.wrapping_div(i2)
@@ -333,7 +327,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
                             BinOp::BitOr => i1 | i2,
                             _ => impossible!(),
                         }
-                    } else if ty.borrow().is_bool_type() {
+                    } else if ty.is_bool_type() {
                         match bin_op {
                             BinOp::BitXor => i1 ^ i2,
                             BinOp::BitAnd => i1 & i2,
@@ -350,11 +344,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
             BinOp::And | BinOp::Or => {
                 let v1 = self
-                    .visit_expr(expr1, (&mut SemanticAnalyzer::bool_type()).into())?
+                    .visit_expr(expr1, (*self.analyzer.bool_type().as_ref()).into())?
                     .into_constant_int()
                     .unwrap();
                 let v2 = self
-                    .visit_expr(expr2, (&mut SemanticAnalyzer::bool_type()).into())?
+                    .visit_expr(expr2, (*self.analyzer.bool_type().as_ref()).into())?
                     .into_constant_int()
                     .unwrap();
                 match bin_op {
@@ -365,19 +359,21 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
             }
 
             BinOp::Shl | BinOp::Shr => {
-                to_semantic_error!(TypeSolver::eq(ty, &mut SemanticAnalyzer::any_int_type()))?;
+                let right = self.analyzer.new_any_int_type();
+                self.analyzer.ty_intern_eq(intern.into(), right)?;
                 let v1 = self
-                    .visit_expr(expr1, ty.into())?
+                    .visit_expr(expr1, intern.into())?
                     .into_constant_int()
                     .unwrap();
+                let new_any_int_type = self.analyzer.new_any_int_type();
                 let v2 = self
-                    .visit_expr(expr2, (&mut SemanticAnalyzer::any_int_type()).into())?
+                    .visit_expr(expr2, (*new_any_int_type.as_ref()).into())?
                     .into_constant_int()
                     .unwrap();
                 match bin_op {
                     BinOp::Shl => v1.unbounded_shl(v2),
                     BinOp::Shr => {
-                        if ty.borrow().is_signed_integer() {
+                        if ty.is_signed_integer() {
                             (v1 as i32).wrapping_shr(v2) as u32
                         } else {
                             v1.wrapping_shr(v2)
@@ -388,21 +384,22 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
             }
 
             BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => {
-                let mut exp_ty = SemanticAnalyzer::any_type();
-                let v1 = self.visit_expr(expr1, (&mut exp_ty).into())?;
-                let v2 = self.visit_expr(expr2, (&mut exp_ty).into())?;
+                let exp_intern = self.analyzer.new_any_type();
+                let v1 = self.visit_expr(expr1, (*exp_intern.as_ref()).into())?;
+                let v2 = self.visit_expr(expr2, (*exp_intern.as_ref()).into())?;
+                let exp_ty = self.analyzer.probe_type(exp_intern).unwrap();
                 if let (ConstantValue::ConstantInt(i1), ConstantValue::ConstantInt(i2)) = (v1, v2) {
                     (match bin_op {
                         BinOp::Eq => i1 == i2,
                         BinOp::Lt => {
-                            if ty.borrow().is_signed_integer() {
+                            if exp_ty.is_signed_integer() {
                                 (i1 as i32) < (i2 as i32)
                             } else {
                                 i1 < i2
                             }
                         }
                         BinOp::Le => {
-                            if ty.borrow().is_signed_integer() {
+                            if exp_ty.is_signed_integer() {
                                 (i1 as i32) <= (i2 as i32)
                             } else {
                                 i1 <= i2
@@ -410,14 +407,14 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
                         }
                         BinOp::Ne => i1 != i2,
                         BinOp::Ge => {
-                            if ty.borrow().is_signed_integer() {
+                            if exp_ty.is_signed_integer() {
                                 (i1 as i32) >= (i2 as i32)
                             } else {
                                 i1 >= i2
                             }
                         }
                         BinOp::Gt => {
-                            if ty.borrow().is_signed_integer() {
+                            if exp_ty.is_signed_integer() {
                                 (i1 as i32) > (i2 as i32)
                             } else {
                                 i1 > i2
@@ -475,51 +472,49 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         }: &'ast LitExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let (mut ty, value) = match kind {
+        let (ty, value) = match kind {
             LitKind::Bool => (
-                SemanticAnalyzer::bool_type(),
+                self.analyzer.bool_type(),
                 ConstantValue::ConstantInt(if symbol == "true" { 1 } else { 0 }),
             ),
             LitKind::Char => (
-                SemanticAnalyzer::char_type(),
+                self.analyzer.char_type(),
                 ConstantValue::ConstantInt(symbol.chars().next().unwrap() as u32),
             ),
             LitKind::Integer => {
-                let mut ty = match suffix.as_ref().map(|x| x.as_ref()) {
-                    Some("i32") => SemanticAnalyzer::i32_type(),
-                    Some("isize") => SemanticAnalyzer::isize_type(),
-                    Some("u32") => SemanticAnalyzer::u32_type(),
-                    Some("usize") => SemanticAnalyzer::usize_type(),
-                    None => SemanticAnalyzer::any_int_type(),
+                let intern = match suffix.as_ref().map(|x| x.as_ref()) {
+                    Some("i32") => self.analyzer.i32_type(),
+                    Some("isize") => self.analyzer.isize_type(),
+                    Some("u32") => self.analyzer.u32_type(),
+                    Some("usize") => self.analyzer.usize_type(),
+                    None => self.analyzer.new_any_int_type(),
                     Some(_) => return Err(make_semantic_error!(UnknownSuffix)),
                 };
 
-                to_semantic_error!(TypeSolver::eq(extra.ty, &mut ty))?;
+                self.analyzer.ty_intern_eq(extra.ty.into(), intern)?;
 
-                let ty_ptr = ty.borrow();
+                let ty = self.analyzer.probe_type(intern).unwrap();
 
                 let value: u32 = symbol.parse().map_err(|_| make_semantic_error!(Overflow))?;
 
                 use crate::semantics::resolved_ty::BuiltInTyKind::*;
                 use crate::semantics::resolved_ty::ResolvedTyKind::*;
-                if matches!(&ty_ptr.kind, BuiltIn(I32) | BuiltIn(ISize))
+                if matches!(&ty.kind, BuiltIn(I32) | BuiltIn(ISize))
                     && ((value > 2147483648) || (value == 2147483648 && !extra.allow_i32_max))
                 {
                     return Err(make_semantic_error!(Overflow));
                 }
 
-                drop(ty_ptr);
-
-                (ty, ConstantValue::ConstantInt(value))
+                (intern, ConstantValue::ConstantInt(value))
             }
             LitKind::Str | LitKind::StrRaw(_) => (
-                SemanticAnalyzer::ref_str_type(),
+                self.analyzer.ref_str_type(),
                 ConstantValue::ConstantString(symbol.clone()),
             ),
             _ => impossible!(),
         };
 
-        to_semantic_error!(TypeSolver::eq(extra.ty, &mut ty))?;
+        self.analyzer.ty_intern_eq(extra.ty.into(), ty)?;
         Ok(value)
     }
 
@@ -617,14 +612,14 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         let index_value = self
-            .visit_expr(&index, (&mut SemanticAnalyzer::usize_type()).into())?
+            .visit_expr(&index, (*self.analyzer.usize_type().as_ref()).into())?
             .into_constant_int()
             .unwrap();
+
+        let array_ty = ResolvedTy::array_type(extra.ty.into(), None);
+        let array_intern = self.analyzer.intern_type(array_ty);
         let mut array_value = self
-            .visit_expr(
-                &array,
-                (&mut SemanticAnalyzer::array_type(extra.ty.clone(), None)).into(),
-            )?
+            .visit_expr(&array, (*array_intern.as_ref()).into())?
             .into_constant_array()
             .unwrap();
 
@@ -660,9 +655,9 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
             self.analyzer
                 .search_value_by_path(self.scope_id.unwrap(), qself, path)?;
 
-        let value = self.analyzer.get_place_value_by_index(&value_index);
-        let mut ty = value.value.ty.clone();
-        to_semantic_error!(TypeSolver::eq(&mut ty, extra.ty))?;
+        let value = self.analyzer.get_place_value_by_index(&value_index).clone();
+        let ty = value.value.ty.clone();
+        self.analyzer.ty_intern_eq(extra.ty.into(), ty)?;
         let const_value = value
             .value
             .kind

@@ -10,11 +10,22 @@ use ena::unify::{InPlace, UnificationTable};
 
 use crate::{
     ast::{
-        expr::*, item::*, pat::*, stmt::*, BindingMode, Crate, Mutability, NodeId, Span, Symbol
+        BindingMode, Crate, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*, stmt::*,
     },
     impossible, make_semantic_error,
     semantics::{
-        error::SemanticError, expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult}, impls::{DerefLevel, Impls}, item::{AssociatedInfo, ItemExtra}, pat::{Binding, PatExtra, PatResult}, preludes::Preludes, resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, ResolvedTyKind, TypeKey}, scope::{MainFunctionState, Scope, ScopeKind}, stmt::StmtResult, utils::{is_all_different, AnalyzeStage, FullName, STAGES}, value::{ConstantValue, PlaceValue, UnEvalConstant, Value, ValueIndex, ValueKind}, visitor::Visitor
+        error::SemanticError,
+        expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult},
+        impls::{DerefLevel, Impls},
+        item::{AssociatedInfo, ItemExtra},
+        pat::{Binding, PatExtra, PatResult},
+        preludes::Preludes,
+        resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, ResolvedTyKind, TypeKey},
+        scope::{MainFunctionState, Scope, ScopeKind},
+        stmt::StmtResult,
+        utils::{AnalyzeStage, FullName, STAGES, is_all_different},
+        value::{ConstantValue, PlaceValue, UnEvalConstant, Value, ValueIndex, ValueKind},
+        visitor::Visitor,
     },
 };
 

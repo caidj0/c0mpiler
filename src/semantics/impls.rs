@@ -1,15 +1,11 @@
 use std::collections::HashMap;
 
 use crate::{
-    ast::{Mutability, NodeId, Symbol},
+    ast::{Mutability, Symbol},
     make_semantic_error,
     semantics::{
-        analyzer::SemanticAnalyzer,
-        error::SemanticError,
-        expr::AssigneeKind,
-        item::AssociatedInfo,
-        resolved_ty::TypeKey,
-        value::{PlaceValue, Value},
+        analyzer::SemanticAnalyzer, error::SemanticError, item::AssociatedInfo,
+        resolved_ty::TypeKey, value::PlaceValue,
     },
 };
 
@@ -32,7 +28,8 @@ impl SemanticAnalyzer {
         name: &Symbol,
         value: PlaceValue,
     ) -> Result<&mut PlaceValue, SemanticError> {
-        let impls = self.impls.get_mut(ty).unwrap();
+        let instance = self.probe_type_instance((*ty).into()).unwrap();
+        let impls = self.impls.get_mut(&instance).unwrap();
         let info = if let Some(t) = for_trait {
             impls.traits.get_mut(t).unwrap()
         } else {
@@ -51,7 +48,8 @@ impl SemanticAnalyzer {
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
     ) -> Option<&mut PlaceValue> {
-        let impls = self.impls.get_mut(ty).unwrap();
+        let instance = self.probe_type_instance((*ty).into()).unwrap();
+        let impls = self.impls.get_mut(&instance).unwrap();
         let info = if let Some(t) = for_trait {
             impls.traits.get_mut(t).unwrap()
         } else {
@@ -61,7 +59,7 @@ impl SemanticAnalyzer {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub enum DerefLevel {
     #[default]
     Not,

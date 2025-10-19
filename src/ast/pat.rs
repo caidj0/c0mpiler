@@ -76,7 +76,7 @@ impl Pat {
                     None
                 }
             }
-            PatKind::Ident(IdentPat(mode, ident, other)) =>{
+            PatKind::Ident(IdentPat(mode, ident, other)) => {
                 if ident.symbol.is_self() {
                     Some((
                         Pat {
