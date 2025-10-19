@@ -8,7 +8,7 @@ use crate::{
         error::SemanticError,
         expr::AssigneeKind,
         item::AssociatedInfo,
-        resolved_ty::TypePtr,
+        resolved_ty::TypeKey,
         value::{PlaceValue, Value},
     },
 };
@@ -16,7 +16,7 @@ use crate::{
 #[derive(Debug)]
 pub struct Impls {
     pub(crate) inherent: ImplInfo,
-    pub(crate) traits: HashMap<TypePtr, ImplInfo>,
+    pub(crate) traits: HashMap<TypeKey, ImplInfo>,
 }
 
 // Constant 和 Function 共享一个命名空间

@@ -1,10 +1,10 @@
 use crate::{
-    ast::{NodeId, expr::*, item::*, pat::*, stmt::*},
+    ast::{expr::*, item::*, pat::*, stmt::*, NodeId},
     impossible, make_semantic_error,
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::TypePtr,
+        resolved_ty::{TypeIntern, TypeKey},
         type_solver::{TypeSolveError, TypeSolver},
         value::{ConstantValue, UnEvalConstant},
         visitor::Visitor,
@@ -16,7 +16,7 @@ impl SemanticAnalyzer {
     pub fn const_eval(
         &mut self,
         expr: &Expr,
-        target_type: &mut TypePtr,
+        target_type: TypeIntern,
         scope: Option<NodeId>,
     ) -> Result<ConstantValue, SemanticError> {
         let mut evaler = ConstEvaler {
@@ -29,7 +29,7 @@ impl SemanticAnalyzer {
     pub fn eval_unevaling(
         &mut self,
         uneval: &UnEvalConstant,
-        target_type: &mut TypePtr,
+        target_type: TypeKey,
     ) -> Result<ConstantValue, SemanticError> {
         let (scope, e) = uneval.to_ref();
         self.const_eval(e, target_type, Some(scope))
@@ -37,12 +37,12 @@ impl SemanticAnalyzer {
 }
 
 struct Extra<'tmp> {
-    ty: &'tmp mut TypePtr,
+    ty: &'tmp mut TypeKey,
     allow_i32_max: bool,
 }
 
-impl<'tmp> From<&'tmp mut TypePtr> for Extra<'tmp> {
-    fn from(value: &'tmp mut TypePtr) -> Self {
+impl<'tmp> From<&'tmp mut TypeKey> for Extra<'tmp> {
+    fn from(value: &'tmp mut TypeKey) -> Self {
         Self {
             ty: value,
             allow_i32_max: false,

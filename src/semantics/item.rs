@@ -1,6 +1,6 @@
 use crate::{
     ast::{NodeId, Span},
-    semantics::resolved_ty::TypePtr,
+    semantics::resolved_ty::TypeKey,
 };
 
 #[derive(Debug)]
@@ -16,6 +16,6 @@ pub struct ItemExtra {
 pub struct AssociatedInfo {
     pub(crate) is_trait: bool,
 
-    pub(crate) ty: TypePtr,
-    pub(crate) for_trait: Option<TypePtr>,
+    pub(crate) ty: TypeKey,
+    pub(crate) for_trait: Option<TypeKey>,
 }

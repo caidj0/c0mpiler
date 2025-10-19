@@ -8,14 +8,14 @@ use crate::{
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::TypePtr,
+        resolved_ty::TypeKey,
         value::{Value, ValueIndex},
     },
 };
 
 #[derive(Debug)]
 pub struct ExprExtra<'tmp> {
-    pub(crate) target_ty: Option<&'tmp mut TypePtr>,
+    pub(crate) target_ty: Option<&'tmp mut TypeKey>,
     pub(crate) scope_id: NodeId,
     pub(crate) self_id: NodeId,
     pub(crate) allow_i32_max: bool,

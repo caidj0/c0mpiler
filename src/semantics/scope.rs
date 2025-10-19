@@ -11,7 +11,7 @@ use crate::{
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::TypePtr,
+        resolved_ty::TypeKey,
         value::{PlaceValue, Value},
     },
 };
@@ -21,7 +21,7 @@ use crate::{
 pub struct Scope {
     pub id: NodeId,
     pub kind: ScopeKind,
-    pub types: HashMap<Symbol, TypePtr>,
+    pub types: HashMap<Symbol, TypeKey>,
     pub values: HashMap<Symbol, PlaceValue>,
     pub bindings: HashMap<Symbol, NodeId>,
     pub children: HashSet<NodeId>,
@@ -33,19 +33,19 @@ pub enum ScopeKind {
     Lambda,
     Root,
     Crate,
-    Trait(TypePtr),
+    Trait(TypeKey),
     Impl {
-        ty: TypePtr,
-        for_trait: Option<TypePtr>,
+        ty: TypeKey,
+        for_trait: Option<TypeKey>,
     },
-    Struct(TypePtr),
-    Enum(TypePtr),
+    Struct(TypeKey),
+    Enum(TypeKey),
     Fn {
-        ret_ty: TypePtr,
+        ret_ty: TypeKey,
         main_fn: MainFunctionState,
     },
     Loop {
-        ret_ty: TypePtr,
+        ret_ty: TypeKey,
     },
     CycleExceptLoop,
 }
@@ -63,7 +63,7 @@ pub struct ScopeSearchResult {
 }
 
 pub enum ScopeSearchResultKind {
-    Type(TypePtr),
+    Type(TypeKey),
 }
 
 impl SemanticAnalyzer {

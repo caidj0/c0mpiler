@@ -1,143 +1,178 @@
-use crate::make_semantic_error;
+use std::iter::zip;
+
+use ena::unify::{InPlace, UnificationTable, UnifyValue};
+
+use crate::semantics::resolved_ty::{ResolvedTy, TypeIntern};
+use crate::{impossible, make_semantic_error};
 use crate::{
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypePtr},
+        resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypeKey},
     },
     to_semantic_error,
 };
 
-pub struct TypeSolver;
-
-impl TypeSolver {
-    pub fn eq(left: &mut TypePtr, right: &mut TypePtr) -> Result<(), TypeSolveError> {
-        if TypePtr::ptr_eq(left, right) {
-            return Ok(());
+impl TypeIntern {
+    pub fn select(t1: &Self, t2: &Self) -> Self {
+        match (t1, t2) {
+            (TypeIntern::Never, TypeIntern::Never) => TypeIntern::Never,
+            (TypeIntern::Never, TypeIntern::Other(type_key))
+            | (TypeIntern::Other(type_key), TypeIntern::Never)
+            | (TypeIntern::Other(type_key), TypeIntern::Other(..)) => TypeIntern::Other(*type_key),
         }
+    }
+}
 
-        let mut left_ptr = left.borrow_mut();
-        let mut right_ptr = right.borrow_mut();
+impl UnifyValue for ResolvedTy {
+    type Error = TypeSolveError;
 
-        // 名字相同即认为类型相同，这一点需要主动保证
-        match (&left_ptr.names, &right_ptr.names) {
-            (None, None) => {}
-            (None, Some(_)) | (Some(_), None) => return Err(TypeSolveError::NameMismatch),
-            (Some(s1), Some(s2)) => {
-                if s1 != s2 {
-                    return Err(TypeSolveError::NameMismatch);
-                }
-            }
-        }
-
-        enum Leader {
-            Left,
-            Right,
-        }
-
+    fn unify_values(value1: &Self, value2: &Self) -> Result<Self, Self::Error> {
         use ResolvedTyKind::*;
-        let lead = match (&mut left_ptr.kind, &mut right_ptr.kind) {
-            (_, Any(AnyTyKind::Any)) => Leader::Left,
-            (Any(AnyTyKind::Any), _) => Leader::Right,
-
-            // Never 类型不被修改
-            (_, Never) | (Never, _) => return Ok(()),
+        match (&value1.kind, &value2.kind) {
+            (_, Any(AnyTyKind::Any)) => Ok(value1.clone()),
+            (Any(AnyTyKind::Any), _) => Ok(value2.clone()),
 
             (BuiltIn(b1), BuiltIn(b2)) => {
                 if b1 != b2 {
                     return Err(TypeSolveError::BuiltInMismatch);
                 }
-                Leader::Left
+                Ok(value1.clone())
             }
             (Ref(t1, m1), Ref(t2, m2)) => {
-                TypeSolver::eq(t1, t2)?;
-                TypeSolver::mutability_eq(m1, m2)?;
-                Leader::Left
+                let mutbl = RefMutability::eq(m1, m2)?;
+                Ok(Self {
+                    names: None,
+                    kind: ResolvedTyKind::Ref(TypeIntern::select(t1, t2), mutbl),
+                })
             }
-            (Tup(s1), Tup(s2)) => {
-                TypeSolver::one_to_one_eq(s1, s2)?;
-                Leader::Left
+            (Tup(t1), Tup(t2)) => {
+                if t1.len() != t2.len() {
+                    return Err(TypeSolveError::StructLengthMismatch);
+                }
+
+                Ok(Self {
+                    names: None,
+                    kind: ResolvedTyKind::Tup(
+                        zip(t1, t2).map(|(x, y)| TypeIntern::select(x, y)).collect(),
+                    ),
+                })
             }
-            (Enum, Enum) => Leader::Left,
-            (Trait, Trait) => Leader::Left,
+            (Enum, Enum) | (Trait, Trait) => impossible!(), // 它们必定有名字
             (Array(t1, l1), Array(t2, l2)) => {
-                TypeSolver::eq(t1, t2)?;
-                match (&l1, &l2) {
-                    (None, None) => {}
-                    (None, Some(len)) => *l1 = Some(*len),
-                    (Some(len), None) => *l2 = Some(*len),
-                    (Some(len1), Some(len2)) => {
-                        if len1 != len2 {
+                let len = match (l1, l2) {
+                    (None, None) => None,
+                    (None, Some(l)) | (Some(l), None) => Some(*l),
+                    (Some(l1), Some(l2)) => {
+                        if l1 != l2 {
                             return Err(TypeSolveError::ArrayLengthMismatch);
+                        } else {
+                            Some(*l1)
                         }
                     }
-                }
-                Leader::Left
+                };
+
+                Ok(Self {
+                    names: None,
+                    kind: ResolvedTyKind::Array(TypeIntern::select(t1, t2), len),
+                })
             }
-            (Fn(r1, a1), Fn(r2, a2)) => {
-                TypeSolver::eq(r1, r2)?;
-                TypeSolver::one_to_one_eq(a1, a2)?;
-                Leader::Left
-            }
+            (Fn(r1, a1), Fn(r2, a2)) => Ok(Self {
+                names: None,
+                kind: ResolvedTyKind::Fn(
+                    TypeIntern::select(r1, r2),
+                    zip(a1, a2).map(|(x, y)| TypeIntern::select(x, y)).collect(),
+                ),
+            }),
             (l, Any(kind)) => {
                 if kind.can_cast_to(l) {
-                    Leader::Left
+                    Ok(value1.clone())
                 } else {
-                    return Err(TypeSolveError::AnyTypeMismatch);
+                    Err(TypeSolveError::AnyTypeMismatch)
                 }
             }
             (Any(kind), r) => {
                 if kind.can_cast_to(r) {
-                    Leader::Right
+                    Ok(value2.clone())
                 } else {
-                    return Err(TypeSolveError::AnyTypeMismatch);
+                    Err(TypeSolveError::AnyTypeMismatch)
                 }
             }
-            _ => return Err(TypeSolveError::GeneralTypeMismatch),
+            _ => Err(TypeSolveError::GeneralTypeMismatch),
+        }
+    }
+}
+
+pub struct TypeSolver<'analyzer> {
+    ut: &'analyzer mut UnificationTable<InPlace<TypeKey>>,
+}
+
+impl<'analyzer> TypeSolver<'analyzer> {
+    pub fn eq(&mut self, left: TypeIntern, right: TypeIntern) -> Result<(), TypeSolveError> {
+        let (TypeIntern::Other(left), TypeIntern::Other(right)) = (left, right) else {
+            return Ok(());
         };
 
-        drop((left_ptr, right_ptr));
-
-        match lead {
-            Leader::Left => *right = left.clone(),
-            Leader::Right => *left = right.clone(),
+        if self.ut.unioned(left, right) {
+            return Ok(());
         }
 
-        Ok(())
+        let left_ty = self.ut.probe_value(left);
+        let right_ty = self.ut.probe_value(right);
+
+        self.ut.unify_var_var(left, right)?;
+
+        self.eq_inner(left_ty, right_ty)
     }
 
-    fn one_to_one_eq(left: &mut [TypePtr], right: &mut [TypePtr]) -> Result<(), TypeSolveError> {
-        if left.len() != right.len() {
-            return Err(TypeSolveError::StructLengthMismatch);
-        }
-        left.iter_mut()
-            .zip(right.iter_mut())
-            .map(|(t1, t2)| TypeSolver::eq(t1, t2))
-            .collect::<Result<(), TypeSolveError>>()
-    }
-
-    fn mutability_eq(
-        left: &mut RefMutability,
-        right: &mut RefMutability,
+    pub fn eq_with_type(
+        &mut self,
+        left: TypeIntern,
+        right_ty: ResolvedTy,
     ) -> Result<(), TypeSolveError> {
-        let mutbl = match (&left, &right) {
-            (RefMutability::WeakMut, RefMutability::WeakMut) => RefMutability::WeakMut,
-
-            (RefMutability::Not, RefMutability::Not)
-            | (RefMutability::Not, RefMutability::WeakMut)
-            | (RefMutability::WeakMut, RefMutability::Not) => RefMutability::Not,
-
-            (RefMutability::Not, RefMutability::Mut) | (RefMutability::Mut, RefMutability::Not) => {
-                return Err(TypeSolveError::MutabilityMismatch);
-            }
-
-            (RefMutability::Mut, RefMutability::Mut)
-            | (RefMutability::Mut, RefMutability::WeakMut)
-            | (RefMutability::WeakMut, RefMutability::Mut) => RefMutability::Mut,
+        let TypeIntern::Other(left) = left else {
+            return Ok(());
         };
 
-        *left = mutbl;
-        *right = mutbl;
+        let left_ty = self.ut.probe_value(left);
+
+        self.ut.unify_var_value(left, right_ty.clone())?;
+
+        self.eq_inner(left_ty, right_ty)
+    }
+
+    fn eq_inner(
+        &mut self,
+        left_ty: ResolvedTy,
+        right_ty: ResolvedTy,
+    ) -> Result<(), TypeSolveError> {
+        // 有名字的 type 一定是唯一的
+        if left_ty.names.is_some() || right_ty.names.is_some() {
+            impossible!()
+        }
+
+        use ResolvedTyKind::*;
+        match (left_ty.kind, right_ty.kind) {
+            (Ref(t1, _), Ref(t2, _)) => {
+                self.eq(t1, t2)?;
+            }
+            (Tup(t1), Tup(t2)) => {
+                zip(t1, t2)
+                    .map(|(x, y)| self.eq(x, y))
+                    .collect::<Result<(), TypeSolveError>>()?;
+            }
+            (Array(t1, _), Array(t2, _)) => {
+                self.eq(t1, t2)?;
+            }
+            (Fn(r1, a1), Fn(r2, a2)) => {
+                self.eq(r1, r2)?;
+                zip(a1, a2)
+                    .map(|(x, y)| self.eq(x, y))
+                    .collect::<Result<(), TypeSolveError>>()?;
+            }
+            _ => {}
+        }
+
         Ok(())
     }
 }
@@ -154,7 +189,21 @@ pub enum TypeSolveError {
 }
 
 impl SemanticAnalyzer {
-    pub fn type_eq(left: &mut TypePtr, right: &mut TypePtr) -> Result<(), SemanticError> {
-        to_semantic_error!(TypeSolver::eq(left, right))
+    pub fn create_type_solver(&mut self) -> TypeSolver<'_> {
+        TypeSolver { ut: &mut self.ut }
+    }
+
+    pub fn ty_intern_eq(
+        &mut self,
+        left: TypeIntern,
+        right: TypeIntern,
+    ) -> Result<(), SemanticError> {
+        let mut solver = self.create_type_solver();
+        to_semantic_error!(solver.eq(left, right))
+    }
+
+    pub fn type_eq(&mut self, left: TypeIntern, right_ty: ResolvedTy) -> Result<(), SemanticError> {
+        let mut solver = self.create_type_solver();
+        to_semantic_error!(solver.eq_with_type(left, right_ty))
     }
 }

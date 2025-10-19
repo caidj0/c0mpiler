@@ -3,7 +3,7 @@ use crate::{
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::TypePtr,
+        resolved_ty::TypeKey,
         value::{Value, ValueKind},
     },
 };
@@ -24,7 +24,7 @@ pub struct Binding(
 #[derive(Debug)]
 pub struct PatExtra<'tmp> {
     pub(crate) id: NodeId,
-    pub(crate) ty: &'tmp mut TypePtr,
+    pub(crate) ty: &'tmp mut TypeKey,
 }
 
 impl SemanticAnalyzer {

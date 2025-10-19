@@ -6,34 +6,28 @@ use std::{
     vec,
 };
 
+use ena::unify::{InPlace, UnificationTable};
+
 use crate::{
     ast::{
-        BindingMode, Crate, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*, stmt::*,
+        expr::*, item::*, pat::*, stmt::*, BindingMode, Crate, Mutability, NodeId, Span, Symbol
     },
     impossible, make_semantic_error,
     semantics::{
-        error::SemanticError,
-        expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult},
-        impls::{DerefLevel, Impls},
-        item::{AssociatedInfo, ItemExtra},
-        pat::{Binding, PatExtra, PatResult},
-        resolved_ty::{RefMutability, ResolvedTy, ResolvedTyKind, TypePtr},
-        scope::{MainFunctionState, Scope, ScopeKind},
-        stmt::StmtResult,
-        utils::{AnalyzeStage, FullName, STAGES, is_all_different},
-        value::{ConstantValue, PlaceValue, UnEvalConstant, Value, ValueIndex, ValueKind},
-        visitor::Visitor,
+        error::SemanticError, expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult}, impls::{DerefLevel, Impls}, item::{AssociatedInfo, ItemExtra}, pat::{Binding, PatExtra, PatResult}, preludes::Preludes, resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, ResolvedTyKind, TypeKey}, scope::{MainFunctionState, Scope, ScopeKind}, stmt::StmtResult, utils::{is_all_different, AnalyzeStage, FullName, STAGES}, value::{ConstantValue, PlaceValue, UnEvalConstant, Value, ValueIndex, ValueKind}, visitor::Visitor
     },
 };
 
-#[derive(Debug)]
 pub struct SemanticAnalyzer {
     pub(crate) scopes: HashMap<NodeId, Scope>,
-    pub(crate) impls: HashMap<TypePtr, Impls>,
+    pub(crate) impls: HashMap<ResolvedTyInstance, Impls>,
     pub(crate) expr_results: HashMap<NodeId, ExprResult>,
     pub(crate) expr_value: HashMap<NodeId, Value>,
     pub(crate) stmt_results: HashMap<NodeId, StmtResult>,
     pub(crate) binding_value: HashMap<NodeId, PlaceValue>,
+
+    pub(crate) ut: UnificationTable<InPlace<TypeKey>>,
+    pub(crate) preludes: Preludes,
 
     pub(crate) stage: AnalyzeStage,
 }
@@ -122,11 +116,11 @@ impl SemanticAnalyzer {
         scope: NodeId,
         name: Symbol,
         subnames: Option<Vec<Symbol>>,
-    ) -> Result<TypePtr, SemanticError> {
+    ) -> Result<TypeKey, SemanticError> {
         let fullname = Self::get_full_name(scope, name.clone());
         let scope = self.get_scope_mut(scope);
 
-        let ptr = TypePtr(Rc::new(RefCell::new(ResolvedTy {
+        let ptr = TypeKey(Rc::new(RefCell::new(ResolvedTy {
             names: Some((fullname, subnames)),
             kind: super::resolved_ty::ResolvedTyKind::Placeholder,
         })));
@@ -140,7 +134,7 @@ impl SemanticAnalyzer {
         Ok(ptr)
     }
 
-    pub fn get_type(&self, scope: NodeId, name: &Symbol) -> Option<TypePtr> {
+    pub fn get_type(&self, scope: NodeId, name: &Symbol) -> Option<TypeKey> {
         self.get_scope(scope).types.get(name).cloned()
     }
 
@@ -731,7 +725,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if !kind.is_expr()
             && let Some(traget) = &mut extra.target_ty
         {
-            Self::type_eq(traget, &mut Self::unit_type()).map_err(|e| e.set_span(span))?;
+            Self::ty_intern_eq(traget, &mut Self::unit_type()).map_err(|e| e.set_span(span))?;
         }
 
         macro_rules! set_result {
@@ -913,7 +907,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         let len = exprs.len();
         if let Some(t) = &mut extra.target_ty {
-            Self::type_eq(t, &mut Self::array_type(Self::any_type(), Some(len as u32)))?;
+            Self::ty_intern_eq(t, &mut Self::array_type(Self::any_type(), Some(len as u32)))?;
         }
 
         let mut ref_mut = extra.target_ty.as_mut().map(|x| x.borrow_mut());
@@ -977,7 +971,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         let mut ty = func_type_ref.as_mut().map(|x| x.kind.as_fn_mut().unwrap());
 
         if let Some(t) = &mut extra.target_ty {
-            Self::type_eq(ty.as_mut().unwrap().0, t)?;
+            Self::ty_intern_eq(ty.as_mut().unwrap().0, t)?;
             if ty.as_ref().unwrap().1.len() != arg_exprs.len() {
                 return Err(make_semantic_error!(ArgumentNumberMismatch));
             }
@@ -1055,7 +1049,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         let mut ret_ty = method_ref.as_mut().map(|x| x.kind.as_fn_mut().unwrap().0);
 
         if let Some(ret_ty) = ret_ty.as_mut() {
-            Self::type_eq(ret_ty, extra.target_ty.as_mut().unwrap())?;
+            Self::ty_intern_eq(ret_ty, extra.target_ty.as_mut().unwrap())?;
         }
 
         for (i, arg) in args.iter().enumerate() {
@@ -1129,7 +1123,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         let self_ty = if let Some(ty) = &mut extra.target_ty {
             let mut t =
                 Self::tup_type(repeat_with(|| Self::any_type()).take(exprs.len()).collect());
-            Self::type_eq(ty, &mut t)?;
+            Self::ty_intern_eq(ty, &mut t)?;
             Some(t)
         } else {
             None
@@ -1196,11 +1190,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
             let constant = match kind {
                 LitKind::Bool => {
-                    Self::type_eq(target_ty, &mut Self::bool_type())?;
+                    Self::ty_intern_eq(target_ty, &mut Self::bool_type())?;
                     ConstantValue::ConstantInt(if symbol == "true" { 1 } else { 0 })
                 }
                 LitKind::Char => {
-                    Self::type_eq(target_ty, &mut Self::char_type())?;
+                    Self::ty_intern_eq(target_ty, &mut Self::char_type())?;
                     ConstantValue::ConstantInt(symbol.chars().next().unwrap() as u32)
                 }
                 LitKind::Integer => {
@@ -1212,7 +1206,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         Some(_) => return Err(make_semantic_error!(UnknownSuffix)),
                         None => None,
                     } {
-                        Self::type_eq(target_ty, &mut restrict_ty)?;
+                        Self::ty_intern_eq(target_ty, &mut restrict_ty)?;
                     }
 
                     let value: u32 = symbol.parse().map_err(|_| make_semantic_error!(Overflow))?;
@@ -1232,7 +1226,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     ConstantValue::ConstantInt(value)
                 }
                 LitKind::Str | LitKind::StrRaw(_) => {
-                    Self::type_eq(target_ty, &mut Self::ref_str_type())?;
+                    Self::ty_intern_eq(target_ty, &mut Self::ref_str_type())?;
                     ConstantValue::ConstantString(symbol.clone())
                 }
                 _ => return Err(make_semantic_error!(NoImplementation)),
@@ -1259,7 +1253,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let mut to_type = self.resolve_type(&to_type, Some(extra.scope_id))?;
-            Self::type_eq(extra.target_ty.unwrap(), &mut to_type)?;
+            Self::ty_intern_eq(extra.target_ty.unwrap(), &mut to_type)?;
 
             let mut any_type = Self::any_type();
             self.visit_expr(
@@ -1354,7 +1348,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             )?;
         } else {
             if let Some(ty) = ty.as_mut() {
-                Self::type_eq(ty, &mut Self::unit_type())?;
+                Self::ty_intern_eq(ty, &mut Self::unit_type())?;
             }
         }
 
@@ -1414,7 +1408,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         )?;
 
         if let Some(ty) = extra.target_ty {
-            Self::type_eq(ty, &mut Self::unit_type())?;
+            Self::ty_intern_eq(ty, &mut Self::unit_type())?;
         }
 
         let mut unit = if self.is_body_stage() {
@@ -1471,7 +1465,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             );
         }
         if let Some(ty) = extra.target_ty.as_mut() {
-            Self::type_eq(
+            Self::ty_intern_eq(
                 ty,
                 self.get_scope_mut(extra.self_id)
                     .kind
@@ -1594,7 +1588,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     );
                 }
                 None => {
-                    Self::type_eq(
+                    Self::ty_intern_eq(
                         target.unwrap().unwrap(),
                         &mut if interrupt.is_not() {
                             Self::unit_type()
@@ -1626,7 +1620,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         mut extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if let Some(t) = &mut extra.target_ty {
-            Self::type_eq(t, &mut Self::unit_type())?;
+            Self::ty_intern_eq(t, &mut Self::unit_type())?;
         }
 
         let mut ty = option_ty!(self, Self::any_type());
@@ -1726,7 +1720,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .get(index)
                 .unwrap()
                 .clone();
-            Self::type_eq(&mut field_ty, extra.target_ty.unwrap())?;
+            Self::ty_intern_eq(&mut field_ty, extra.target_ty.unwrap())?;
 
             let interrupt = result.interrupt;
             let mutbl = result.assignee.into();
@@ -1834,7 +1828,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let value_index = self.search_value_by_path(extra.scope_id, qself, path)?;
             let value = self.get_place_value_by_index_mut(&value_index);
-            Self::type_eq(&mut value.value.ty, extra.target_ty.unwrap())?;
+            Self::ty_intern_eq(&mut value.value.ty, extra.target_ty.unwrap())?;
 
             let mutbl = value.mutbl;
 
@@ -1869,7 +1863,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
         // TODO: 如何实现 let a:&i32 = &&&&&1;？
         if let Some(t) = &mut extra.target_ty {
-            Self::type_eq(t, ty.as_mut().unwrap())?;
+            Self::ty_intern_eq(t, ty.as_mut().unwrap())?;
         }
 
         let mut ty_ref = ty.as_mut().map(|x| x.borrow_mut());
@@ -1918,7 +1912,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         let is_body = self.is_body_stage();
 
         if let Some(ty) = extra.target_ty {
-            Self::type_eq(ty, &mut Self::never_type())?;
+            Self::ty_intern_eq(ty, &mut Self::never_type())?;
         };
 
         let scope_id = self.search_cycle_scope(extra.scope_id)?;
@@ -1947,7 +1941,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 },
             )?;
         } else if let Some(t) = &mut ty {
-            Self::type_eq(t, &mut Self::unit_type())?;
+            Self::ty_intern_eq(t, &mut Self::unit_type())?;
         }
 
         if let Some(t) = ty {
@@ -1978,7 +1972,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
-            Self::type_eq(extra.target_ty.unwrap(), &mut Self::never_type())?;
+            Self::ty_intern_eq(extra.target_ty.unwrap(), &mut Self::never_type())?;
 
             self.search_cycle_scope(extra.scope_id)?;
 
@@ -1999,7 +1993,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if let Some(ty) = extra.target_ty {
-            Self::type_eq(ty, &mut Self::never_type())?;
+            Self::ty_intern_eq(ty, &mut Self::never_type())?;
         }
 
         let scope_id = self.search_fn_scope(extra.scope_id)?;
@@ -2018,7 +2012,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 },
             )?;
         } else if let Some(t) = &mut ty {
-            Self::type_eq(t, &mut Self::unit_type())?;
+            Self::ty_intern_eq(t, &mut Self::unit_type())?;
         }
 
         if self.is_body_stage() {
@@ -2051,7 +2045,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let mut struct_type = self.resolve_path_type(qself, path, Some(extra.scope_id))?;
-            Self::type_eq(extra.target_ty.unwrap(), &mut struct_type)?;
+            Self::ty_intern_eq(extra.target_ty.unwrap(), &mut struct_type)?;
 
             let type_ref = struct_type.borrow();
             let field_names = type_ref.names.as_ref().unwrap().1.as_ref().unwrap().clone();
@@ -2060,7 +2054,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .as_tup()
                 .ok_or(make_semantic_error!(NotStructType).set_span(&path.span))?
                 .clone();
-            let mut map: HashMap<Symbol, TypePtr> =
+            let mut map: HashMap<Symbol, TypeKey> =
                 HashMap::from_iter(field_names.into_iter().zip(field_tys.into_iter()));
 
             for ExprField {
@@ -2134,7 +2128,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .unwrap();
 
             let mut ty = Self::array_type(Self::any_type(), Some(len));
-            Self::type_eq(extra.target_ty.unwrap(), &mut ty)?;
+            Self::ty_intern_eq(extra.target_ty.unwrap(), &mut ty)?;
 
             let mut ty_ref = ty.borrow_mut();
             let inner_type = ty_ref.kind.as_array_mut().unwrap().0;
@@ -2251,7 +2245,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         RefPat(pat, mutbl): &'ast RefPat,
         extra: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        Self::type_eq(
+        Self::ty_intern_eq(
             extra.ty,
             &mut Self::ref_type(Self::any_type(), (*mutbl).into()),
         )?;

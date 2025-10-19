@@ -14,7 +14,7 @@ use crate::{
         error::SemanticError,
         impls::DerefLevel,
         pat::Binding,
-        resolved_ty::{AnyTyKind, TypePtr},
+        resolved_ty::{AnyTyKind, TypeIntern, TypeKey},
     },
 };
 
@@ -22,7 +22,7 @@ use crate::{
 // Value 里不需要表明可变性
 #[derive(Debug)]
 pub struct Value {
-    pub ty: TypePtr,
+    pub ty: TypeIntern,
     pub kind: ValueKind,
 }
 
@@ -102,8 +102,8 @@ pub enum ValueIndexKind {
         scope_id: NodeId,
     },
     Impl {
-        ty: TypePtr,
-        for_trait: Option<TypePtr>,
+        ty: TypeKey,
+        for_trait: Option<TypeKey>,
     },
 }
 
@@ -118,7 +118,7 @@ impl SemanticAnalyzer {
     // PathSegment 可以是 Scope 或者是 Type，实际上 Type::xxx 应该是 <Type>::xxx 的语法糖.
     // 别扭的地方在于 Value 可以在 Scope 或者 Type impl 里. 要么沿 scope 向上查，要么是 Type::xxx，先查 Type 再去 impl 里查.
     pub fn search_value_by_path(
-        &self,
+        &mut self,
         scope_id: NodeId,
         _qself: &Option<Box<QSelf>>,
         Path { segments, span }: &Path,
@@ -134,7 +134,7 @@ impl SemanticAnalyzer {
                     .ok_or(make_semantic_error!(ScopeFromPathNotFound).set_span(span))?;
                 match scope_result.kind {
                     crate::semantics::scope::ScopeSearchResultKind::Type(type_ptr) => self
-                        .search_value_in_impl(&type_ptr, &v.ident.symbol)?
+                        .search_value_in_impl(&type_ptr.into(), &v.ident.symbol)?
                         .ok_or(make_semantic_error!(ValueFromPathNotFound).set_span(span)),
                 }
             }
@@ -143,15 +143,17 @@ impl SemanticAnalyzer {
     }
 
     pub fn search_value_in_impl(
-        &self,
-        ty: &TypePtr,
+        &mut self,
+        ty: &TypeIntern,
         symbol: &Symbol,
     ) -> Result<Option<PlaceValueIndex>, SemanticError> {
-        let impls = self.impls.get(ty).unwrap();
+        let instance = self.probe_type_instance(*ty).unwrap();
+
+        let impls = self.impls.get(&instance).unwrap();
         if impls.inherent.values.contains_key(symbol) {
             return Ok(Some(PlaceValueIndex {
                 kind: ValueIndexKind::Impl {
-                    ty: ty.clone(),
+                    ty: *ty.as_ref(),
                     for_trait: None,
                 },
                 name: symbol.clone(),
@@ -167,7 +169,7 @@ impl SemanticAnalyzer {
                 }
                 ret = Some(PlaceValueIndex {
                     kind: ValueIndexKind::Impl {
-                        ty: ty.clone(),
+                        ty: *ty.as_ref(),
                         for_trait: Some(t.clone()),
                     },
                     name: symbol.clone(),
@@ -179,17 +181,17 @@ impl SemanticAnalyzer {
     }
 
     pub fn search_value_in_impl_recursively(
-        &self,
-        ty: &TypePtr,
+        &mut self,
+        intern: &TypeIntern,
         symbol: &Symbol,
     ) -> Result<Option<(DerefLevel, PlaceValueIndex)>, SemanticError> {
-        if let Some(value) = self.search_value_in_impl(ty, symbol)? {
+        if let Some(value) = self.search_value_in_impl(intern, symbol)? {
             return Ok(Some((DerefLevel::Not, value)));
         }
 
-        let ty_ref = ty.borrow();
+        let ty = self.probe_type(*intern).unwrap();
         use super::resolved_ty::ResolvedTyKind::*;
-        match &ty_ref.kind {
+        match &ty.kind {
             Placeholder => impossible!(),
             Any(AnyTyKind::Any) => return Err(make_semantic_error!(TypeUndetermined)),
             BuiltIn(_)
@@ -198,7 +200,6 @@ impl SemanticAnalyzer {
             | Trait
             | Array(_, _)
             | Fn(_, _)
-            | Never
             | Any(_)
             | ImplicitSelf(_) => {}
             Ref(type_ptr, ref_mutability) => {
@@ -212,14 +213,15 @@ impl SemanticAnalyzer {
         Ok(None)
     }
 
-    pub fn get_place_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {
+    pub fn get_place_value_by_index(&mut self, index: &PlaceValueIndex) -> &PlaceValue {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),
             ValueIndexKind::Global { scope_id } => {
                 self.get_scope(*scope_id).values.get(&index.name).unwrap()
             }
             ValueIndexKind::Impl { ty, for_trait } => {
-                let impls = self.impls.get(ty).unwrap();
+                let instance = self.probe_type_instance((*ty).into()).unwrap();
+                let impls = self.impls.get(&instance).unwrap();
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get(i).unwrap()
                 } else {
@@ -241,7 +243,8 @@ impl SemanticAnalyzer {
                 .get_mut(&index.name)
                 .unwrap(),
             ValueIndexKind::Impl { ty, for_trait } => {
-                let impls = self.impls.get_mut(ty).unwrap();
+                let instance = self.probe_type_instance((*ty).into()).unwrap();
+                let impls = self.impls.get_mut(&instance).unwrap();
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get_mut(i).unwrap()
                 } else {
@@ -252,7 +255,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn get_value_by_index(&self, index: &ValueIndex) -> &Value {
+    pub fn get_value_by_index(&mut self, index: &ValueIndex) -> &Value {
         match index {
             ValueIndex::Place(place_value_index) => {
                 &self.get_place_value_by_index(place_value_index).value
@@ -306,16 +309,16 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    pub fn unit_value() -> Value {
+    pub fn unit_value(&self) -> Value {
         Value {
-            ty: Self::unit_type(),
+            ty: self.unit_type(),
             kind: ValueKind::Anon,
         }
     }
 
-    pub fn never_value() -> Value {
+    pub fn never_value(&self) -> Value {
         Value {
-            ty: Self::never_type(),
+            ty: self.never_type(),
             kind: ValueKind::Anon,
         }
     }
