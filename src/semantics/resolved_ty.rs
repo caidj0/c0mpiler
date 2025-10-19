@@ -22,18 +22,18 @@ pub enum TypeIntern {
     Other(TypeKey),
 }
 
-impl From<TypeKey> for TypeIntern {
-    fn from(value: TypeKey) -> Self {
-        Self::Other(value)
-    }
-}
-
-impl AsRef<TypeKey> for TypeIntern {
-    fn as_ref(&self) -> &TypeKey {
+impl TypeIntern {
+    pub fn to_key(self) -> TypeKey {
         match self {
             TypeIntern::Never => impossible!(),
             TypeIntern::Other(type_key) => type_key,
         }
+    }
+}
+
+impl From<TypeKey> for TypeIntern {
+    fn from(value: TypeKey) -> Self {
+        Self::Other(value)
     }
 }
 
@@ -60,13 +60,11 @@ trait TypePtrFamily {
     type Ptr<T>;
 }
 
-#[derive(Clone)]
 struct InternFamily;
 impl TypePtrFamily for InternFamily {
     type Ptr<T> = TypeIntern;
 }
 
-#[derive(Clone)]
 struct BoxFamily;
 impl TypePtrFamily for BoxFamily {
     type Ptr<T> = Box<T>;
@@ -74,7 +72,6 @@ impl TypePtrFamily for BoxFamily {
 
 pub type ResolvedTyInstance = ResolvedTy<BoxFamily>;
 
-#[derive(Clone)]
 pub struct ResolvedTy<F: TypePtrFamily = InternFamily> {
     pub names: Option<(FullName, Option<Vec<Symbol>>)>,
     pub kind: ResolvedTyKind<F::Ptr<ResolvedTy<F>>>,
@@ -125,6 +122,24 @@ impl Hash for ResolvedTyInstance {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.names.hash(state);
         self.kind.hash(state);
+    }
+}
+
+impl Clone for ResolvedTy {
+    fn clone(&self) -> Self {
+        Self {
+            names: self.names.clone(),
+            kind: self.kind.clone(),
+        }
+    }
+}
+
+impl Clone for ResolvedTyInstance {
+    fn clone(&self) -> Self {
+        Self {
+            names: self.names.clone(),
+            kind: self.kind.clone(),
+        }
     }
 }
 //////////
@@ -315,18 +330,36 @@ impl ResolvedTy {
 }
 
 impl SemanticAnalyzer {
-    pub fn intern_type(&mut self, ty: ResolvedTy) -> TypeIntern {
-        TypeIntern::Other(self.ut.new_key(ty))
+    // 比较 Dirty 的实现
+    pub fn set_type_kind(&mut self, key: TypeKey, kind: ResolvedTyKind<TypeIntern>) {
+        let mut ut = self.ut.borrow_mut();
+        let v = ut.probe_value(key);
+        debug_assert!(v.names.is_some());
+        let value = ResolvedTy { kind, ..v };
+        ut.unify_var_value(key, value).unwrap();
     }
 
-    pub fn probe_type(&mut self, intern: TypeIntern) -> Option<ResolvedTy> {
+    pub fn intern_type(&self, ty: ResolvedTy) -> TypeKey {
+        self.ut.borrow_mut().new_key(ty)
+    }
+
+    pub fn probe_type(&self, intern: TypeIntern) -> Option<ResolvedTy> {
         match intern {
             TypeIntern::Never => None,
-            TypeIntern::Other(type_key) => Some(self.ut.probe_value(type_key)),
+            TypeIntern::Other(type_key) => Some(self.ut.borrow_mut().probe_value(type_key)),
         }
     }
 
-    pub fn probe_type_instance(&mut self, intern: TypeIntern) -> Option<ResolvedTyInstance> {
+    pub fn probe_type_instance(&self, intern: TypeIntern) -> Option<ResolvedTyInstance> {
+        self.probe_type_instance_impl(intern, false, None)
+    }
+
+    pub fn probe_type_instance_impl(
+        &self,
+        intern: TypeIntern,
+        remove_implicit_self: bool,
+        alter: Option<&ResolvedTyInstance>,
+    ) -> Option<ResolvedTyInstance> {
         let ty = self.probe_type(intern)?;
         let names = ty.names;
         Some(ResolvedTyInstance {
@@ -336,29 +369,53 @@ impl SemanticAnalyzer {
                 ResolvedTyKind::BuiltIn(built_in_ty_kind) => {
                     ResolvedTyKind::BuiltIn(built_in_ty_kind)
                 }
-                ResolvedTyKind::Ref(inner, ref_mutability) => {
-                    ResolvedTyKind::Ref(Box::new(self.probe_type_instance(inner)?), ref_mutability)
-                }
+                ResolvedTyKind::Ref(inner, ref_mutability) => ResolvedTyKind::Ref(
+                    Box::new(self.probe_type_instance_impl(inner, remove_implicit_self, alter)?),
+                    ref_mutability,
+                ),
                 ResolvedTyKind::Tup(items) => ResolvedTyKind::Tup(
                     items
                         .iter()
-                        .map(|x| self.probe_type_instance(*x).map(Box::new))
+                        .map(|x| {
+                            self.probe_type_instance_impl(*x, remove_implicit_self, alter)
+                                .map(Box::new)
+                        })
                         .collect::<Option<Vec<_>>>()?,
                 ),
                 ResolvedTyKind::Enum => ResolvedTyKind::Enum,
                 ResolvedTyKind::Trait => ResolvedTyKind::Trait,
-                ResolvedTyKind::Array(t, l) => {
-                    ResolvedTyKind::Array(Box::new(self.probe_type_instance(t)?), l)
-                }
+                ResolvedTyKind::Array(t, l) => ResolvedTyKind::Array(
+                    Box::new(self.probe_type_instance_impl(t, remove_implicit_self, alter)?),
+                    l,
+                ),
                 ResolvedTyKind::Fn(ret_ty, args) => ResolvedTyKind::Fn(
-                    Box::new(self.probe_type_instance(ret_ty)?),
+                    Box::new(self.probe_type_instance_impl(ret_ty, remove_implicit_self, alter)?),
                     args.iter()
-                        .map(|x| self.probe_type_instance(*x).map(Box::new))
+                        .map(|x| {
+                            self.probe_type_instance_impl(*x, remove_implicit_self, alter)
+                                .map(Box::new)
+                        })
                         .collect::<Option<Vec<_>>>()?,
                 ),
                 ResolvedTyKind::Any(any_ty_kind) => ResolvedTyKind::Any(any_ty_kind),
                 ResolvedTyKind::ImplicitSelf(inner) => {
-                    ResolvedTyKind::ImplicitSelf(Box::new(self.probe_type_instance(inner)?))
+                    if remove_implicit_self {
+                        if let Some(alter) = alter {
+                            return Some(alter.clone());
+                        } else {
+                            return self.probe_type_instance_impl(
+                                inner,
+                                remove_implicit_self,
+                                alter,
+                            );
+                        }
+                    } else {
+                        ResolvedTyKind::ImplicitSelf(Box::new(self.probe_type_instance_impl(
+                            inner,
+                            remove_implicit_self,
+                            alter,
+                        )?))
+                    }
                 }
             },
         })
@@ -381,11 +438,15 @@ impl SemanticAnalyzer {
                 let len = *len_value.as_constant_int().unwrap();
                 let ty = self.resolve_type(&inner, current_scope)?;
 
-                Ok(self.intern_type(ResolvedTy::array_type(ty, Some(len))))
+                Ok(self
+                    .intern_type(ResolvedTy::array_type(ty, Some(len)))
+                    .into())
             }
             Ref(RefTy(MutTy { ty, mutbl })) => {
                 let ty = self.resolve_type(ty, current_scope)?;
-                Ok(self.intern_type(ResolvedTy::ref_type(ty, (*mutbl).into())))
+                Ok(self
+                    .intern_type(ResolvedTy::ref_type(ty, (*mutbl).into()))
+                    .into())
             }
             Tup(TupTy(tys)) => match &tys[..] {
                 [] => Ok(self.unit_type()),
@@ -396,6 +457,7 @@ impl SemanticAnalyzer {
             Infer(_) => Ok(self.new_any_type()),
             ImplicitSelf => self
                 .get_self_type(current_scope, true)
+                .map(|x| x.into())
                 .ok_or(make_semantic_error!(UnknownSelfType).set_span(span)),
         }
     }
@@ -427,6 +489,7 @@ impl SemanticAnalyzer {
             "Self" => {
                 return self
                     .get_self_type(origin_scope, false)
+                    .map(|x| x.into())
                     .ok_or(make_semantic_error!(UnknownSelfType).set_span(span));
             }
             _ => return Err(make_semantic_error!(UnknownType).set_span(span)),
@@ -437,7 +500,7 @@ impl SemanticAnalyzer {
         &mut self,
         mut scope_id: Option<NodeId>,
         implicit: bool,
-    ) -> Option<TypeIntern> {
+    ) -> Option<TypeKey> {
         let mut out_of_function = false;
 
         while let Some(id) = scope_id {
@@ -451,7 +514,7 @@ impl SemanticAnalyzer {
                             names: None,
                             kind: ResolvedTyKind::ImplicitSelf((*type_ptr).into()),
                         };
-                        self.intern_type(ty).into()
+                        Some(self.intern_type(ty).into())
                     } else {
                         Some((*type_ptr).into())
                     };

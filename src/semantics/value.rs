@@ -153,7 +153,7 @@ impl SemanticAnalyzer {
         if impls.inherent.values.contains_key(symbol) {
             return Ok(Some(PlaceValueIndex {
                 kind: ValueIndexKind::Impl {
-                    ty: *ty.as_ref(),
+                    ty: ty.to_key(),
                     for_trait: None,
                 },
                 name: symbol.clone(),
@@ -169,7 +169,7 @@ impl SemanticAnalyzer {
                 }
                 ret = Some(PlaceValueIndex {
                     kind: ValueIndexKind::Impl {
-                        ty: *ty.as_ref(),
+                        ty: ty.to_key(),
                         for_trait: Some(t.clone()),
                     },
                     name: symbol.clone(),
@@ -213,15 +213,14 @@ impl SemanticAnalyzer {
         Ok(None)
     }
 
-    pub fn get_place_value_by_index(&mut self, index: &PlaceValueIndex) -> &PlaceValue {
+    pub fn get_place_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),
             ValueIndexKind::Global { scope_id } => {
                 self.get_scope(*scope_id).values.get(&index.name).unwrap()
             }
             ValueIndexKind::Impl { ty, for_trait } => {
-                let instance = self.probe_type_instance((*ty).into()).unwrap();
-                let impls = self.impls.get(&instance).unwrap();
+                let impls = self.get_impls(ty);
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get(i).unwrap()
                 } else {
@@ -243,8 +242,7 @@ impl SemanticAnalyzer {
                 .get_mut(&index.name)
                 .unwrap(),
             ValueIndexKind::Impl { ty, for_trait } => {
-                let instance = self.probe_type_instance((*ty).into()).unwrap();
-                let impls = self.impls.get_mut(&instance).unwrap();
+                let impls = self.get_impls_mut(ty);
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get_mut(i).unwrap()
                 } else {

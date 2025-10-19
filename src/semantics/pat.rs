@@ -3,7 +3,7 @@ use crate::{
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::{ResolvedTy, TypeKey},
+        resolved_ty::{ResolvedTy, TypeIntern, TypeKey},
         value::{Value, ValueKind},
     },
 };
@@ -24,7 +24,7 @@ pub struct Binding(
 #[derive(Debug)]
 pub struct PatExtra {
     pub(crate) id: NodeId,
-    pub(crate) ty: TypeKey,
+    pub(crate) ty: TypeIntern,
 }
 
 impl SemanticAnalyzer {
@@ -38,11 +38,11 @@ impl SemanticAnalyzer {
             crate::ast::ByRef::Yes(mutability) => {
                 self.intern_type(ResolvedTy::ref_type(extra.ty.into(), mutability.into()))
             }
-            crate::ast::ByRef::No => extra.ty.into(),
+            crate::ast::ByRef::No => extra.ty.to_key(),
         };
 
         let value = Value {
-            ty,
+            ty: ty.into(),
             kind: ValueKind::Binding(*by_ref),
         };
 

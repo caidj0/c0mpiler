@@ -63,6 +63,8 @@ pub enum SemanticErrorKind {
     NotInFnScope,
     MissingField,
     NotSupportCast,
+    NotFunctionType,
+    NotMethod,
 
     GeneralError,
 }

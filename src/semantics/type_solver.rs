@@ -1,3 +1,4 @@
+use std::cell::RefMut;
 use std::iter::zip;
 
 use ena::unify::{InPlace, UnificationTable, UnifyValue};
@@ -28,6 +29,10 @@ impl UnifyValue for ResolvedTy {
     type Error = TypeSolveError;
 
     fn unify_values(value1: &Self, value2: &Self) -> Result<Self, Self::Error> {
+        if value2.names.is_some() {
+            return Ok(value2.clone());
+        }
+
         use ResolvedTyKind::*;
         match (&value1.kind, &value2.kind) {
             (_, Any(AnyTyKind::Any)) => Ok(value1.clone()),
@@ -104,7 +109,7 @@ impl UnifyValue for ResolvedTy {
 }
 
 pub struct TypeSolver<'analyzer> {
-    ut: &'analyzer mut UnificationTable<InPlace<TypeKey>>,
+    ut: RefMut<'analyzer, UnificationTable<InPlace<TypeKey>>>,
 }
 
 impl<'analyzer> TypeSolver<'analyzer> {
@@ -189,15 +194,13 @@ pub enum TypeSolveError {
 }
 
 impl SemanticAnalyzer {
-    pub fn create_type_solver(&mut self) -> TypeSolver<'_> {
-        TypeSolver { ut: &mut self.ut }
+    pub fn create_type_solver(&self) -> TypeSolver<'_> {
+        TypeSolver {
+            ut: self.ut.borrow_mut(),
+        }
     }
 
-    pub fn ty_intern_eq(
-        &mut self,
-        left: TypeIntern,
-        right: TypeIntern,
-    ) -> Result<(), SemanticError> {
+    pub fn ty_intern_eq(&self, left: TypeIntern, right: TypeIntern) -> Result<(), SemanticError> {
         let mut solver = self.create_type_solver();
         to_semantic_error!(solver.eq(left, right))
     }

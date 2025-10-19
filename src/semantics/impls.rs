@@ -9,27 +9,40 @@ use crate::{
     },
 };
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Impls {
     pub(crate) inherent: ImplInfo,
-    pub(crate) traits: HashMap<TypeKey, ImplInfo>,
+    pub(crate) traits: HashMap<TypeKey, ImplInfo>, // Trait 的 key 应是唯一的，从而只需以 TypeKey 作为键
 }
 
 // Constant 和 Function 共享一个命名空间
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ImplInfo {
     pub(crate) values: HashMap<Symbol, PlaceValue>,
 }
 
 impl SemanticAnalyzer {
+    pub fn get_impls(&self, ty: &TypeKey) -> &Impls {
+        let instance = self.probe_type_instance((*ty).into()).unwrap();
+        self.impls.get(&instance).unwrap()
+    }
+
+    pub fn get_impls_mut(&mut self, ty: &TypeKey) -> &mut Impls {
+        let instance = self.probe_type_instance((*ty).into()).unwrap();
+        if !self.impls.contains_key(&instance) {
+            self.impls.insert(instance.clone(), Impls::default());
+        }
+
+        self.impls.get_mut(&instance).unwrap()
+    }
+
     pub fn add_impl_value(
         &mut self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
         value: PlaceValue,
     ) -> Result<&mut PlaceValue, SemanticError> {
-        let instance = self.probe_type_instance((*ty).into()).unwrap();
-        let impls = self.impls.get_mut(&instance).unwrap();
+        let impls = self.get_impls_mut(ty);
         let info = if let Some(t) = for_trait {
             impls.traits.get_mut(t).unwrap()
         } else {
@@ -48,8 +61,7 @@ impl SemanticAnalyzer {
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
     ) -> Option<&mut PlaceValue> {
-        let instance = self.probe_type_instance((*ty).into()).unwrap();
-        let impls = self.impls.get_mut(&instance).unwrap();
+        let impls = self.get_impls_mut(ty);
         let info = if let Some(t) = for_trait {
             impls.traits.get_mut(t).unwrap()
         } else {

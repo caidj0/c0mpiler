@@ -21,7 +21,7 @@ impl SemanticAnalyzer {
             analyzer: self,
             scope_id: scope,
         };
-        evaler.visit_expr(expr, (*target_type.as_ref()).into())
+        evaler.visit_expr(expr, target_type.to_key().into())
     }
 
     pub fn eval_unevaling(
@@ -236,7 +236,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
         let values = exprs
             .iter()
-            .map(|x| self.visit_expr(x, (*inner.as_ref()).into()))
+            .map(|x| self.visit_expr(x, inner.to_key().into()))
             .collect::<Result<Vec<_>, SemanticError>>()?;
 
         Ok(ConstantValue::ConstantArray(values))
@@ -344,11 +344,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
             BinOp::And | BinOp::Or => {
                 let v1 = self
-                    .visit_expr(expr1, (*self.analyzer.bool_type().as_ref()).into())?
+                    .visit_expr(expr1, self.analyzer.bool_type().to_key().into())?
                     .into_constant_int()
                     .unwrap();
                 let v2 = self
-                    .visit_expr(expr2, (*self.analyzer.bool_type().as_ref()).into())?
+                    .visit_expr(expr2, self.analyzer.bool_type().to_key().into())?
                     .into_constant_int()
                     .unwrap();
                 match bin_op {
@@ -367,7 +367,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
                     .unwrap();
                 let new_any_int_type = self.analyzer.new_any_int_type();
                 let v2 = self
-                    .visit_expr(expr2, (*new_any_int_type.as_ref()).into())?
+                    .visit_expr(expr2, new_any_int_type.to_key().into())?
                     .into_constant_int()
                     .unwrap();
                 match bin_op {
@@ -385,8 +385,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
             BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => {
                 let exp_intern = self.analyzer.new_any_type();
-                let v1 = self.visit_expr(expr1, (*exp_intern.as_ref()).into())?;
-                let v2 = self.visit_expr(expr2, (*exp_intern.as_ref()).into())?;
+                let v1 = self.visit_expr(expr1, exp_intern.to_key().into())?;
+                let v2 = self.visit_expr(expr2, exp_intern.to_key().into())?;
                 let exp_ty = self.analyzer.probe_type(exp_intern).unwrap();
                 if let (ConstantValue::ConstantInt(i1), ConstantValue::ConstantInt(i2)) = (v1, v2) {
                     (match bin_op {
@@ -612,14 +612,14 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         let index_value = self
-            .visit_expr(&index, (*self.analyzer.usize_type().as_ref()).into())?
+            .visit_expr(&index, self.analyzer.usize_type().to_key().into())?
             .into_constant_int()
             .unwrap();
 
         let array_ty = ResolvedTy::array_type(extra.ty.into(), None);
         let array_intern = self.analyzer.intern_type(array_ty);
         let mut array_value = self
-            .visit_expr(&array, (*array_intern.as_ref()).into())?
+            .visit_expr(&array, array_intern.into())?
             .into_constant_array()
             .unwrap();
 

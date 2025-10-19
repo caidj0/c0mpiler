@@ -69,14 +69,14 @@ define_preludes!(
 
 impl SemanticAnalyzer {
     pub fn new_any_type(&mut self) -> TypeIntern {
-        self.intern_type(ResolvedTy::any_type())
+        self.intern_type(ResolvedTy::any_type()).into()
     }
 
     pub fn new_any_int_type(&mut self) -> TypeIntern {
-        self.intern_type(ResolvedTy::any_int_type())
+        self.intern_type(ResolvedTy::any_int_type()).into()
     }
 
     pub fn new_any_signed_int_type(&mut self) -> TypeIntern {
-        self.intern_type(ResolvedTy::any_signed_int_type())
+        self.intern_type(ResolvedTy::any_signed_int_type()).into()
     }
 }
