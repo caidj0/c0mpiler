@@ -52,8 +52,6 @@ pub enum MainFunctionState {
 }
 
 pub struct ScopeSearchResult {
-    #[allow(dead_code)]
-    pub(crate) father: NodeId,
     pub(crate) kind: ScopeSearchResultKind,
 }
 
@@ -67,12 +65,18 @@ impl SemanticAnalyzer {
         symbol: &Symbol,
         start_scope: NodeId,
     ) -> Option<ScopeSearchResult> {
+        if symbol.is_big_self() {
+            let self_ty = self.get_self_type(Some(start_scope), false)?;
+            return Some(ScopeSearchResult {
+                kind: ScopeSearchResultKind::Type(self_ty),
+            });
+        }
+
         let mut scope_id = Some(start_scope);
 
         while let Some(id) = scope_id {
             if let Some(ty) = self.get_type(id, symbol) {
                 return Some(ScopeSearchResult {
-                    father: id,
                     kind: ScopeSearchResultKind::Type(ty),
                 });
             }

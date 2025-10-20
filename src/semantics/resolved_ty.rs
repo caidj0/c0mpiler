@@ -510,11 +510,7 @@ impl SemanticAnalyzer {
         })
     }
 
-    pub fn get_self_type(
-        &mut self,
-        mut scope_id: Option<NodeId>,
-        implicit: bool,
-    ) -> Option<TypeKey> {
+    pub fn get_self_type(&self, mut scope_id: Option<NodeId>, implicit: bool) -> Option<TypeKey> {
         let mut out_of_function = false;
 
         while let Some(id) = scope_id {

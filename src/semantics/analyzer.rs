@@ -1273,7 +1273,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                         let probe = self.probe_type(inner_ty).unwrap();
 
-                        if !(probe.is_integer() || probe.is_char_type() || probe.is_bool_type()) {
+                        if !(probe.is_integer()
+                            || probe.is_char_type()
+                            || probe.is_bool_type()
+                            || probe.kind.is_enum())
+                        {
                             return Err(make_semantic_error!(NoBinaryOperation));
                         }
 
