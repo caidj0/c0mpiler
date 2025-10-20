@@ -478,6 +478,10 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         }: &'ast LitExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
+        if !matches!(kind, LitKind::Integer) && suffix.is_some() {
+            return Err(make_semantic_error!(UnknownSuffix));
+        }
+
         let (ty, value) = match kind {
             LitKind::Bool => (
                 self.analyzer.bool_type(),
@@ -501,7 +505,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
                 let ty = self.analyzer.probe_type(intern).unwrap();
 
-                let value: u32 = symbol.parse().map_err(|_| make_semantic_error!(Overflow))?;
+                let value: u32 = parse_u32(&symbol)?;
 
                 use crate::semantics::resolved_ty::BuiltInTyKind::*;
                 use crate::semantics::resolved_ty::ResolvedTyKind::*;
@@ -670,7 +674,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
             .as_constant()
             .cloned()
             .ok_or(make_semantic_error!(NotConstantValue))?;
-        
+
         if let ConstantValue::UnEval(inner) = const_value {
             let value = self.analyzer.eval_unevaling(&inner, extra.ty)?;
             let value_mut = self.analyzer.get_place_value_by_index_mut(&value_index);
@@ -824,4 +828,24 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
     ) -> Self::PatRes<'_> {
         impossible!()
     }
+}
+
+pub(crate) fn parse_u32(s: &str) -> Result<u32, SemanticError> {
+    let (digits, radix) = if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B"))
+    {
+        (rest, 2)
+    } else if let Some(rest) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+        (rest, 8)
+    } else if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        (rest, 16)
+    } else {
+        (s, 10)
+    };
+
+    let cleaned: String = digits.chars().filter(|c| *c != '_').collect();
+    if cleaned.is_empty() {
+        return Err(make_semantic_error!(Overflow));
+    }
+
+    u32::from_str_radix(&cleaned, radix).map_err(|_| make_semantic_error!(Overflow))
 }

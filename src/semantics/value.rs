@@ -257,6 +257,7 @@ impl SemanticAnalyzer {
         None
     }
 
+    // TODO: 检查不遮蔽常量
     pub fn add_bindings(
         &mut self,
         bindings: Vec<Binding>,

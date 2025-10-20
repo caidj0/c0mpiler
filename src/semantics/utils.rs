@@ -32,7 +32,7 @@ fn full_name_test() {
     println!("{name}");
 }
 
-#[derive(Debug, EnumAsInner, Clone, Copy)]
+#[derive(Debug, EnumAsInner, Clone, Copy, PartialEq, Eq)]
 pub enum AnalyzeStage {
     SymbolCollect,
     Definition,

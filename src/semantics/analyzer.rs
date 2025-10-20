@@ -13,6 +13,7 @@ use crate::{
     },
     impossible, make_semantic_error,
     semantics::{
+        const_eval::parse_u32,
         error::SemanticError,
         expr::{AssigneeKind, ControlFlowInterruptKind, ExprExtra, ExprResult},
         impls::{DerefLevel, Impls},
@@ -833,7 +834,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }
             StmtKind::Semi(expr) => {
                 let expr_ty = self.new_any_type();
-                self.visit_expr(expr, extra.replace_target(expr_ty))?;
+                self.visit_expr(
+                    expr,
+                    if self.is_body_stage() {
+                        extra.replace_target(expr_ty)
+                    } else {
+                        extra
+                    },
+                )?;
                 set_result!(self, *id, {
                     self.no_assignee(expr.id)?;
                     StmtResult::Else {
@@ -1380,6 +1388,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
+            if !matches!(kind, LitKind::Integer) && suffix.is_some() {
+                return Err(make_semantic_error!(UnknownSuffix));
+            }
+
             let target_ty = extra.target_ty.unwrap();
 
             let (constant, self_ty) = match kind {
@@ -1408,7 +1420,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     };
                     self.ty_intern_eq(target_ty, restrict_ty)?;
 
-                    let value: u32 = symbol.parse().map_err(|_| make_semantic_error!(Overflow))?;
+                    let value: u32 = parse_u32(&symbol)?;
 
                     let target_probe = self.probe_type(target_ty).unwrap();
 

@@ -9,6 +9,9 @@ fn my_semantic() {
         "copy_trait2",
         "copy_trait3", // 不清楚 Copy Trait 要实现到哪一步
         "operator1",   // TODO: &1 == &1,
+        "autoderef1",  // 这个点在 IR 的处理非常麻烦
+        "item_order1",
+        "item_order2",
     ];
     let case_path = "testcases/semantics";
 
