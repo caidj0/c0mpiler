@@ -1,40 +1,26 @@
-use crate::semantics::{SemanticAnalyzer, resolved_ty::ResolvedTy, utils::TypeKind};
+use crate::{
+    make_semantic_error,
+    semantics::{
+        analyzer::SemanticAnalyzer,
+        error::SemanticError,
+        resolved_ty::{AnyTyKind, BuiltInTyKind, TypeIntern},
+    },
+};
 
 impl SemanticAnalyzer {
-    pub(crate) fn has_sized_trait(&self, ty: &ResolvedTy) -> bool {
-        if ty == self.prelude_pool.str.as_ref() {
-            return false;
-        }
-        match ty {
-            // 暂时认为 Struct 中只能以 sized type 为成员
-            ResolvedTy::Slice(_) => false,
-            _ => true,
-        }
-    }
+    pub(crate) fn check_sized(&self, ty: TypeIntern) -> Result<(), SemanticError> {
+        let Some(probe) = self.probe_type(ty) else {
+            return Err(make_semantic_error!(NotSizedType));
+        };
 
-    #[allow(dead_code)]
-    pub(crate) fn has_copy_trait(&self, ty: &ResolvedTy) -> bool {
-        if ty.is_number_type()
-            || ty == self.prelude_pool.char.as_ref()
-            || ty == self.prelude_pool.bool.as_ref()
-        {
-            return true;
-        }
-
-        match ty {
-            ResolvedTy::Named(full_name) => {
-                let info = self.get_type_info(full_name);
-
-                match &info.kind {
-                    TypeKind::Placeholder | TypeKind::Trait { .. } | TypeKind::Struct { .. } => {
-                        false
-                    }
-                    TypeKind::Enum { .. } => true,
-                }
+        use super::resolved_ty::ResolvedTyKind::*;
+        match probe.kind {
+            BuiltIn(BuiltInTyKind::Str) | Trait | Fn(_, _) | ImplicitSelf(_) => {
+                Err(make_semantic_error!(NotSizedType))
             }
-            ResolvedTy::Ref(_, mutability) => mutability.is_not(),
-            ResolvedTy::Never => true,
-            _ => false,
+            Any(AnyTyKind::AnyInt | AnyTyKind::AnySignedInt) => Ok(()),
+            Any(_) => todo!(),
+            _ => Ok(()),
         }
     }
 }

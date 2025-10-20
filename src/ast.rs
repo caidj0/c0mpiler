@@ -6,6 +6,8 @@ pub mod path;
 pub mod stmt;
 pub mod ty;
 
+use std::ops::BitAnd;
+
 use enum_as_inner::EnumAsInner;
 
 use crate::{
@@ -13,8 +15,9 @@ use crate::{
         item::Item,
         path::{Path, PathSegment},
     },
+    impossible,
     lexer::{Token, TokenIter, TokenPosition},
-    semantics::utils::DerefLevel,
+    semantics::expr::AssigneeKind,
     tokens::TokenType,
 };
 
@@ -24,6 +27,15 @@ pub type NodeId = usize;
 pub struct Span {
     pub begin: TokenPosition,
     pub end: TokenPosition,
+}
+
+impl Default for Span {
+    fn default() -> Self {
+        Self {
+            begin: TokenPosition { line: 0, col: 0 },
+            end: TokenPosition { line: 0, col: 0 },
+        }
+    }
 }
 
 pub trait Eatable: Sized {
@@ -231,7 +243,7 @@ macro_rules! kind_check {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct BindingMode(pub ByRef, pub Mutability);
 
 impl Eatable for BindingMode {
@@ -246,7 +258,7 @@ impl Eatable for BindingMode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum ByRef {
     Yes(Mutability),
     No,
@@ -263,10 +275,31 @@ impl Eatable for ByRef {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner, PartialOrd, Ord)]
 pub enum Mutability {
     Not,
     Mut,
+}
+
+impl BitAnd for Mutability {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Mutability::Mut, Mutability::Mut) => Mutability::Mut,
+            _ => Mutability::Not,
+        }
+    }
+}
+
+impl From<AssigneeKind> for Mutability {
+    fn from(value: AssigneeKind) -> Self {
+        match value {
+            AssigneeKind::Place(mutability) => mutability,
+            AssigneeKind::Value => Mutability::Mut,
+            AssigneeKind::Only => impossible!(),
+        }
+    }
 }
 
 impl Eatable for Mutability {
@@ -280,28 +313,14 @@ impl Eatable for Mutability {
     }
 }
 
-impl Mutability {
-    pub fn merge(self, other: Self) -> Self {
-        match (self, other) {
-            (Mutability::Mut, Mutability::Mut) => Mutability::Mut,
-            _ => Mutability::Not,
-        }
-    }
-
-    pub fn merge_with_deref_level(self, other: DerefLevel) -> Self {
-        match other {
-            DerefLevel::Not => self,
-            DerefLevel::Deref(mutability) => mutability, // 当发生解引用时，可变性就只和引用的可变性有关
-        }
-    }
-
-    pub fn can_trans_to(&self, other: &Self) -> bool {
-        !matches!((self, other), (Mutability::Not, Mutability::Mut))
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Symbol(pub String);
+
+impl From<&str> for Symbol {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
 
 impl Symbol {
     pub fn is_path_segment(&self) -> bool {

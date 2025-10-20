@@ -117,7 +117,7 @@ impl Eatable for LocalStmt {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum LocalKind {
     Decl,
     Init(Box<Expr>),

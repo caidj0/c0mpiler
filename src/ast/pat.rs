@@ -1,3 +1,5 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::{
         ASTResult, BindingMode, Eatable, Ident, Mutability, NodeId, OptionEatable, Span, Symbol,
@@ -24,10 +26,24 @@ impl Pat {
         Pat { kind, id, span }: Pat,
         iter: &mut crate::lexer::TokenIter,
     ) -> Option<(Pat, Ty)> {
-        match &kind {
+        match kind {
             PatKind::Path(path_pat) => {
                 if path_pat.is_self() {
-                    Some((Pat { kind, id, span }, Ty::implicit_self(iter)))
+                    Some((
+                        Pat {
+                            kind: PatKind::Ident(IdentPat(
+                                BindingMode(super::ByRef::No, Mutability::Not),
+                                Ident {
+                                    symbol: Symbol::self_symbol(),
+                                    span,
+                                },
+                                None,
+                            )),
+                            id,
+                            span,
+                        },
+                        Ty::implicit_self(iter),
+                    ))
                 } else {
                     None
                 }
@@ -60,12 +76,33 @@ impl Pat {
                     None
                 }
             }
+            PatKind::Ident(IdentPat(mode, ident, other)) => {
+                if ident.symbol.is_self() {
+                    Some((
+                        Pat {
+                            kind: PatKind::Ident(IdentPat(
+                                mode,
+                                Ident {
+                                    symbol: Symbol::self_symbol(),
+                                    span,
+                                },
+                                other,
+                            )),
+                            id,
+                            span,
+                        },
+                        Ty::implicit_self(iter),
+                    ))
+                } else {
+                    None
+                }
+            }
             _ => None,
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum PatKind {
     // Missing,
     Wild(WildPat),

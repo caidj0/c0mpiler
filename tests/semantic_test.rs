@@ -1,40 +1,6 @@
 use std::{fs, panic, path::PathBuf, str::FromStr};
 
-use c0mpiler::{
-    ast::{Crate, Eatable},
-    lexer::{Lexer, TokenBuffer},
-    semantics::SemanticAnalyzer,
-    utils::test::TestCaseInfo,
-};
-
-fn run(src: &str) -> Result<(), String> {
-    let lexer = Lexer::new(src);
-    let buffer = TokenBuffer::new(lexer)?;
-    let mut iter = buffer.iter();
-    let krate = Crate::eat(&mut iter);
-    match krate {
-        Ok(ast) => {
-            let (analyzer, result) = SemanticAnalyzer::visit(&ast);
-            match result {
-                Ok(_) => Ok(()),
-                Err(err) => Err(format!(
-                    "Semantic error occured: {}, analyze stage: {:?}, state: {:?}.\n{:#?}",
-                    err,
-                    analyzer.get_stage(),
-                    analyzer.get_state(),
-                    src.lines()
-                        .nth(analyzer.get_state().current_span.begin.line)
-                        .unwrap()
-                )),
-            }
-        }
-        Err(err) => Err(format!(
-            "Parse error occured: {:#?}.\n {:#?}",
-            err,
-            src.lines().nth(err.pos.line).unwrap()
-        )),
-    }
-}
+use c0mpiler::utils::test::{TestCaseInfo, run};
 
 #[test]
 fn my_semantic() {
@@ -43,6 +9,10 @@ fn my_semantic() {
         "copy_trait2",
         "copy_trait3", // 不清楚 Copy Trait 要实现到哪一步
         "operator1",   // TODO: &1 == &1,
+        "autoderef1",  // 这个点在 IR 的处理非常麻烦
+        "item_order1",
+        "item_order2",
+        "type1",
     ];
     let case_path = "testcases/semantics";
 

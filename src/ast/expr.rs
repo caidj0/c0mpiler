@@ -513,7 +513,7 @@ impl BinaryHelper {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, EnumAsInner)]
 pub enum BinOp {
     Add,
     Sub,
@@ -768,7 +768,7 @@ impl AssignHelper {
 pub struct CallExpr(pub Box<Expr>, pub Vec<Box<Expr>>);
 
 #[derive(Debug)]
-pub struct TupExpr(pub Vec<Box<Expr>>);
+pub struct TupExpr(pub Vec<Box<Expr>>, pub bool);
 pub type CallHelper = TupExpr;
 
 impl OptionEatable for CallHelper {
@@ -777,13 +777,29 @@ impl OptionEatable for CallHelper {
 
         let mut exprs = Vec::new();
 
+        let mut force = false;
+
         loop_until!(iter, TokenType::ClosePar, {
             exprs.push(Box::new(Expr::eat(iter)?));
 
-            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::ClosePar);
+            let token = iter.peek()?;
+            if token.token_type == (TokenType::Comma) {
+                force = true;
+                iter.advance();
+            } else if token.token_type == (TokenType::ClosePar) {
+                break;
+            } else {
+                return Err(crate::make_syntax_error!(
+                    token,
+                    MisMatch {
+                        expected: stringify!((TokenType::Comma)(TokenType::ClosePar)).to_owned(),
+                        actual: format!("{:?}", token),
+                    }
+                ));
+            };
         });
 
-        Ok(Some(TupExpr(exprs)))
+        Ok(Some(TupExpr(exprs, force)))
     }
 }
 
@@ -793,13 +809,29 @@ impl Eatable for TupExpr {
 
         let mut exprs = Vec::new();
 
+        let mut force = false;
+
         loop_until!(iter, TokenType::ClosePar, {
             exprs.push(Box::new(Expr::eat(iter)?));
 
-            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::ClosePar);
+            let token = iter.peek()?;
+            if token.token_type == (TokenType::Comma) {
+                force = true;
+                iter.advance();
+            } else if token.token_type == (TokenType::ClosePar) {
+                break;
+            } else {
+                return Err(crate::make_syntax_error!(
+                    token,
+                    MisMatch {
+                        expected: stringify!((TokenType::Comma)(TokenType::ClosePar)).to_owned(),
+                        actual: format!("{:?}", token),
+                    }
+                ));
+            };
         });
 
-        Ok(Self(exprs))
+        Ok(Self(exprs, force))
     }
 }
 
@@ -1096,7 +1128,7 @@ impl AssignOpHelper {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum AssignOp {
     AddAssign,
     SubAssign,
