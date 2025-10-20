@@ -434,7 +434,8 @@ impl SemanticAnalyzer {
             }
 
             Array(ArrayTy(inner, len_expr)) => {
-                let len_value = self.const_eval(&len_expr.value, self.u32_type(), current_scope)?;
+                let len_value =
+                    self.const_eval(&len_expr.value, self.usize_type(), current_scope)?;
                 let len = *len_value.as_constant_int().unwrap();
                 let ty = self.resolve_type(&inner, current_scope)?;
 

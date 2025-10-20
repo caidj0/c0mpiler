@@ -693,7 +693,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     let trait_info = &self.get_impls(&trait_ty).inherent;
                     let mut names: HashSet<&Symbol> = trait_info.values.keys().collect();
 
-                    let self_impl = self.get_impls(&ty).traits.get(&trait_ty).unwrap();
+                    let self_impl = self.get_impl_for_trait(&ty, &trait_ty);
                     for (s, v) in &self_impl.values {
                         let self_ty = self.probe_type_instance(ty.into()).unwrap();
 
@@ -979,7 +979,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.type_eq(target, ResolvedTy::array_type(inner_ty, Some(len as u32)))?;
 
             for e in exprs {
-                self.visit_expr(e, extra.replace_target(target))?;
+                self.visit_expr(e, extra.replace_target(inner_ty))?;
             }
 
             let (interrupt, assignee) = self.merge_result_info(exprs.iter())?;
@@ -1217,7 +1217,6 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
             let probe = self.probe_type(target_ty).unwrap();
-            println!("{probe:?}");
             let self_ty = if Self::is_string_type(&probe) && bin_op.is_add() {
                 self.visit_expr(&expr1, extra.replace_target(target_ty))?;
                 self.visit_expr(&expr2, extra.replace_target(self.ref_str_type()))?;
@@ -1639,7 +1638,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
-            let scope_ty = *self.get_scope(extra.scope_id).kind.as_loop().unwrap();
+            let scope_ty = *self.get_scope(extra.self_id).kind.as_loop().unwrap();
             self.ty_intern_eq(target_ty, scope_ty.into())?;
 
             self.visit_block_expr(
@@ -1703,11 +1702,21 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         }
 
         if self.is_body_stage() {
-            let last_expr_pos = stmts
+            let mut last_expr_pos = stmts
                 .iter()
                 .rev()
-                .position(|x| x.kind.is_expr())
+                .position(|x| {
+                    matches!(
+                        x.kind,
+                        StmtKind::Empty(_) | StmtKind::Expr(_) | StmtKind::Semi(_)
+                    )
+                })
                 .map(|inv_pos| stmts.len() - 1 - inv_pos);
+            if let Some(p) = last_expr_pos
+                && !stmts.get(p).unwrap().kind.is_expr()
+            {
+                last_expr_pos = None;
+            }
 
             let target_ty = extra.target_ty.unwrap();
 
@@ -1752,8 +1761,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 self.set_expr_value(
                     extra.self_id,
                     if !interrupt.is_not() {
+                        self.ty_intern_eq(target_ty, self.never_type())?;
                         self.never_value()
                     } else {
+                        self.ty_intern_eq(target_ty, self.unit_type())?;
                         self.unit_value()
                     },
                 );
@@ -1859,7 +1870,20 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
             self.visit_expr(&right, extra.replace_target(right_ty))?;
 
-            self.batch_no_assignee_expr([left, right].into_iter())?;
+            self.no_assignee(right.id)?;
+            match self.get_expr_result(&left.id).assignee {
+                AssigneeKind::Place(Mutability::Mut) => {}
+                AssigneeKind::Place(Mutability::Not) => {
+                    return Err(make_semantic_error!(Immutable).set_span(&left.span));
+                }
+                AssigneeKind::Value => {
+                    return Err(make_semantic_error!(IllegalLeftExpression).set_span(&left.span));
+                }
+                AssigneeKind::Only => {
+                    return Err(make_semantic_error!(AssigneeExprNotAllowed).set_span(&left.span));
+                }
+            }
+
             let interrupt = self.merge_expr_interrupt([left, right].into_iter());
 
             self.set_expr_value_and_result(

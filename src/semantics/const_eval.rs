@@ -670,8 +670,15 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
             .as_constant()
             .cloned()
             .ok_or(make_semantic_error!(NotConstantValue))?;
-
-        Ok(const_value)
+        
+        if let ConstantValue::UnEval(inner) = const_value {
+            let value = self.analyzer.eval_unevaling(&inner, extra.ty)?;
+            let value_mut = self.analyzer.get_place_value_by_index_mut(&value_index);
+            *value_mut.value.kind.as_constant_mut().unwrap() = value.clone();
+            Ok(value)
+        } else {
+            Ok(const_value)
+        }
     }
 
     fn visit_addr_of_expr<'tmp>(

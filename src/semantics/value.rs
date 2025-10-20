@@ -1,12 +1,10 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, rc::Rc};
 
 use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        ByRef, Mutability, NodeId, Symbol,
-        expr::Expr,
-        path::{Path, QSelf},
+        expr::Expr, path::{Path, QSelf}, ByRef, Mutability, NodeId, Symbol
     },
     impossible, make_semantic_error,
     semantics::{
@@ -14,7 +12,7 @@ use crate::{
         error::SemanticError,
         impls::DerefLevel,
         pat::Binding,
-        resolved_ty::{TypeIntern, TypeKey},
+        resolved_ty::{ResolvedTyInstance, TypeIntern, TypeKey},
     },
 };
 
@@ -104,7 +102,7 @@ pub enum ValueIndexKind {
     },
     Impl {
         ty: TypeKey,
-        for_trait: Option<TypeKey>,
+        for_trait: Option<Rc<ResolvedTyInstance>>,
     },
 }
 

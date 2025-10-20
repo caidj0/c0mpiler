@@ -198,10 +198,9 @@ impl SemanticAnalyzer {
         )
         .unwrap();
 
-        // TODO: 为数组动态生成 len
         let string_len_ty =
-            self.intern_type(ResolvedTy::fn_type(u32_ty, vec![ref_string_ty.into()]));
-        let str_len_ty = self.intern_type(ResolvedTy::fn_type(u32_ty, vec![ref_str_ty]));
+            self.intern_type(ResolvedTy::fn_type(usize_ty, vec![ref_string_ty.into()]));
+        let str_len_ty = self.intern_type(ResolvedTy::fn_type(usize_ty, vec![ref_str_ty]));
         self.add_impl_value(
             &AssociatedInfo {
                 is_trait: false,

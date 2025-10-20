@@ -92,13 +92,6 @@ macro_rules! make_semantic_error {
     };
 }
 
-#[macro_export]
-macro_rules! to_semantic_error {
-    ($e:expr) => {
-        $e.map_err(|e| make_semantic_error!(TypeError(e)))
-    };
-}
-
 impl Display for SemanticError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         #[cfg(debug_assertions)]

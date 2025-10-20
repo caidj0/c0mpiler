@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, rc::Rc};
 
 use enum_as_inner::EnumAsInner;
 
@@ -9,7 +9,7 @@ use crate::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
         item::AssociatedInfo,
-        resolved_ty::{RefMutability, ResolvedTy, TypeKey},
+        resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, TypeKey},
         value::{PlaceValue, Value, ValueKind},
     },
 };
@@ -17,7 +17,7 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct Impls {
     pub(crate) inherent: ImplInfo,
-    pub(crate) traits: HashMap<TypeKey, ImplInfo>, // Trait 的 key 应是唯一的，从而只需以 TypeKey 作为键
+    pub(crate) traits: HashMap<Rc<ResolvedTyInstance>, ImplInfo>,
 }
 
 // Constant 和 Function 共享一个命名空间
@@ -40,7 +40,7 @@ impl SemanticAnalyzer {
                 let ref_ty =
                     self.intern_type(ResolvedTy::ref_type((*ty).into(), RefMutability::Not));
                 let len_ty =
-                    self.intern_type(ResolvedTy::fn_type(self.u32_type(), vec![ref_ty.into()]));
+                    self.intern_type(ResolvedTy::fn_type(self.usize_type(), vec![ref_ty.into()]));
                 inherent.values.insert(
                     Symbol::from("len"),
                     PlaceValue {
@@ -68,17 +68,37 @@ impl SemanticAnalyzer {
         self.impls.get_mut(&instance).unwrap()
     }
 
+    pub fn get_impl_for_trait(&self, ty: &TypeKey, trait_ty: &TypeKey) -> &ImplInfo {
+        let impls = self.get_impls(ty);
+        let instance = self.probe_type_instance((*trait_ty).into()).unwrap();
+        impls.traits.get(&instance).unwrap()
+    }
+
+    pub fn get_impl_for_trait_mut<'i>(
+        &mut self,
+        ty: &TypeKey,
+        trait_ty: &TypeKey,
+    ) -> &mut ImplInfo {
+        let instance = self.probe_type_instance((*trait_ty).into()).unwrap();
+        let impls = self.get_impls_mut(ty);
+        if !impls.traits.contains_key(&instance) {
+            impls
+                .traits
+                .insert(instance.clone().into(), ImplInfo::default());
+        }
+        impls.traits.get_mut(&instance).unwrap()
+    }
+
     pub fn add_impl_value(
         &mut self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
         value: PlaceValue,
     ) -> Result<&mut PlaceValue, SemanticError> {
-        let impls = self.get_impls_mut(ty);
         let info = if let Some(t) = for_trait {
-            impls.traits.get_mut(t).unwrap()
+            self.get_impl_for_trait_mut(ty, t)
         } else {
-            &mut impls.inherent
+            &mut self.get_impls_mut(ty).inherent
         };
         let replace = info.values.insert(name.clone(), value);
         if replace.is_some() {
@@ -93,11 +113,10 @@ impl SemanticAnalyzer {
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
     ) -> Option<&mut PlaceValue> {
-        let impls = self.get_impls_mut(ty);
         let info = if let Some(t) = for_trait {
-            impls.traits.get_mut(t).unwrap()
+            self.get_impl_for_trait_mut(ty, t)
         } else {
-            &mut impls.inherent
+            &mut self.get_impls_mut(ty).inherent
         };
         info.values.get_mut(name)
     }

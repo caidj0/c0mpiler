@@ -4,15 +4,12 @@ use std::iter::zip;
 use ena::unify::{InPlace, UnificationTable, UnifyValue};
 
 use crate::semantics::resolved_ty::{ResolvedTy, TypeIntern};
-use crate::{impossible, make_semantic_error};
-use crate::{
-    semantics::{
-        analyzer::SemanticAnalyzer,
-        error::SemanticError,
-        resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypeKey},
-    },
-    to_semantic_error,
+use crate::semantics::{
+    analyzer::SemanticAnalyzer,
+    error::SemanticError,
+    resolved_ty::{AnyTyKind, RefMutability, ResolvedTyKind, TypeKey},
 };
+use crate::{impossible, make_semantic_error};
 
 impl TypeIntern {
     pub fn select(t1: &Self, t2: &Self) -> Self {
@@ -31,6 +28,8 @@ impl UnifyValue for ResolvedTy {
     fn unify_values(value1: &Self, value2: &Self) -> Result<Self, Self::Error> {
         if value2.names.is_some() {
             return Ok(value2.clone());
+        } else if value1.names.is_some() {
+            return Ok(value1.clone());
         }
 
         use ResolvedTyKind::*;
@@ -153,7 +152,11 @@ impl<'analyzer> TypeSolver<'analyzer> {
     ) -> Result<(), TypeSolveError> {
         // 有名字的 type 一定是唯一的
         if left_ty.names != right_ty.names {
-            return Err(TypeSolveError::NameMismatch);
+            if !(left_ty.is_any_type() || right_ty.is_any_type()) {
+                return Err(TypeSolveError::NameMismatch);
+            } else {
+                return Ok(());
+            }
         }
 
         use ResolvedTyKind::*;
@@ -193,6 +196,21 @@ pub enum TypeSolveError {
     GeneralTypeMismatch,
 }
 
+macro_rules! to_semantic_error {
+    ($e:expr) => {{
+        let mut result = $e.map_err(|e| make_semantic_error!(TypeError(e)));
+        #[cfg(debug_assertions)]
+        {
+            let caller_location = std::panic::Location::caller();
+            if let Err(e) = result.as_mut() {
+                e.file = caller_location.file();
+                e.line = caller_location.line();
+            };
+        }
+        result
+    }};
+}
+
 impl SemanticAnalyzer {
     pub fn create_type_solver(&self) -> TypeSolver<'_> {
         TypeSolver {
@@ -200,11 +218,13 @@ impl SemanticAnalyzer {
         }
     }
 
+    #[track_caller]
     pub fn ty_intern_eq(&self, left: TypeIntern, right: TypeIntern) -> Result<(), SemanticError> {
         let mut solver = self.create_type_solver();
         to_semantic_error!(solver.eq(left, right))
     }
 
+    #[track_caller]
     pub fn type_eq(&mut self, left: TypeIntern, right_ty: ResolvedTy) -> Result<(), SemanticError> {
         let mut solver = self.create_type_solver();
         to_semantic_error!(solver.eq_with_type(left, right_ty))
