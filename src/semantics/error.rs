@@ -69,6 +69,9 @@ pub enum SemanticErrorKind {
     NotMethod,
     NotArrayType,
     NotReferenceType,
+    MainFnWithoutExit,
+    NotInMainFunction,
+    MainFunctionDoubleExit,
 
     GeneralError,
 }

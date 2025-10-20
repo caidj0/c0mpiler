@@ -25,7 +25,10 @@ use crate::{
         scope::{MainFunctionState, Scope, ScopeKind},
         stmt::StmtResult,
         utils::{AnalyzeStage, FullName, STAGES, is_all_different},
-        value::{ConstantValue, PlaceValue, UnEvalConstant, Value, ValueIndex, ValueKind},
+        value::{
+            ConstantValue, PlaceValue, PlaceValueIndex, UnEvalConstant, Value, ValueIndex,
+            ValueIndexKind, ValueKind,
+        },
         visitor::Visitor,
     },
 };
@@ -63,7 +66,7 @@ impl SemanticAnalyzer {
         let mut ut = UnificationTable::new();
         let preludes = Preludes::new(&mut ut);
 
-        Self {
+        let mut analyzer = Self {
             scopes,
             impls: HashMap::default(),
             expr_results: HashMap::default(),
@@ -73,7 +76,11 @@ impl SemanticAnalyzer {
             stage: AnalyzeStage::SymbolCollect,
             ut: RefCell::new(ut),
             preludes,
-        }
+        };
+
+        analyzer.add_prelude_functions();
+
+        analyzer
     }
 
     pub fn visit(krate: &Crate) -> (Self, Result<(), SemanticError>) {
@@ -451,6 +458,18 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     allow_i32_max: false,
                 },
             )?;
+        }
+
+        if self.is_body_stage()
+            && self
+                .get_scope(self_id)
+                .kind
+                .as_fn()
+                .unwrap()
+                .1
+                .is_un_exited()
+        {
+            return Err(make_semantic_error!(MainFnWithoutExit));
         }
 
         Ok(())
@@ -994,13 +1013,36 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             }
 
             let iter = once(func_expr).chain(arg_exprs);
-            let interrupt = self.merge_expr_interrupt(iter.clone());
+            let mut interrupt = self.merge_expr_interrupt(iter.clone());
+            if ret.is_never() {
+                interrupt = interrupt + ControlFlowInterruptKind::Return;
+            }
             self.batch_no_assignee_expr(iter)?;
+
+            // 针对 exit 函数的特判
+            let result = self.get_expr_result(&func_expr.id);
+            if result.value_index
+                == ValueIndex::Place(PlaceValueIndex {
+                    name: Symbol::from("exit"),
+                    kind: ValueIndexKind::Global { scope_id: 0 },
+                })
+            {
+                let scope_id = self.search_fn_scope(extra.scope_id)?;
+                let scope_mut = self.get_scope_mut(scope_id);
+                let (_, t) = scope_mut.kind.as_fn_mut().unwrap();
+                match t {
+                    MainFunctionState::Not => return Err(make_semantic_error!(NotInMainFunction)),
+                    MainFunctionState::UnExited => *t = MainFunctionState::Exited,
+                    MainFunctionState::Exited => {
+                        return Err(make_semantic_error!(MainFunctionDoubleExit));
+                    }
+                }
+            }
 
             self.set_expr_value_and_result(
                 extra.self_id,
                 Value {
-                    ty: extra.target_ty.unwrap(),
+                    ty: ret,
                     kind: ValueKind::Anon,
                 },
                 AssigneeKind::Value,
@@ -1304,26 +1346,31 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
 
-            let constant = match kind {
+            let (constant, self_ty) = match kind {
                 LitKind::Bool => {
                     self.ty_intern_eq(target_ty, self.bool_type())?;
-                    ConstantValue::ConstantInt(if symbol == "true" { 1 } else { 0 })
+                    (
+                        ConstantValue::ConstantInt(if symbol == "true" { 1 } else { 0 }),
+                        self.bool_type(),
+                    )
                 }
                 LitKind::Char => {
                     self.ty_intern_eq(target_ty, self.char_type())?;
-                    ConstantValue::ConstantInt(symbol.chars().next().unwrap() as u32)
+                    (
+                        ConstantValue::ConstantInt(symbol.chars().next().unwrap() as u32),
+                        self.char_type(),
+                    )
                 }
                 LitKind::Integer => {
-                    if let Some(restrict_ty) = match suffix.as_ref().map(|x| x.as_str()) {
-                        Some("i32") => Some(self.i32_type()),
-                        Some("u32") => Some(self.u32_type()),
-                        Some("isize") => Some(self.isize_type()),
-                        Some("usize") => Some(self.usize_type()),
+                    let restrict_ty = match suffix.as_ref().map(|x| x.as_str()) {
+                        Some("i32") => self.i32_type(),
+                        Some("u32") => self.u32_type(),
+                        Some("isize") => self.isize_type(),
+                        Some("usize") => self.usize_type(),
                         Some(_) => return Err(make_semantic_error!(UnknownSuffix)),
-                        None => None,
-                    } {
-                        self.ty_intern_eq(target_ty, restrict_ty)?;
-                    }
+                        None => self.new_any_int_type(),
+                    };
+                    self.ty_intern_eq(target_ty, restrict_ty)?;
 
                     let value: u32 = symbol.parse().map_err(|_| make_semantic_error!(Overflow))?;
 
@@ -1337,11 +1384,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         return Err(make_semantic_error!(Overflow));
                     }
 
-                    ConstantValue::ConstantInt(value)
+                    (ConstantValue::ConstantInt(value), restrict_ty)
                 }
                 LitKind::Str | LitKind::StrRaw(_) => {
                     self.ty_intern_eq(target_ty, self.ref_str_type())?;
-                    ConstantValue::ConstantString(symbol.clone())
+                    (
+                        ConstantValue::ConstantString(symbol.clone()),
+                        self.ref_str_type(),
+                    )
                 }
                 _ => return Err(make_semantic_error!(NoImplementation)),
             };
@@ -1349,7 +1399,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.set_expr_value_and_result(
                 extra.self_id,
                 Value {
-                    ty: target_ty.clone(),
+                    ty: self_ty,
                     kind: ValueKind::Constant(constant),
                 },
                 AssigneeKind::Value,

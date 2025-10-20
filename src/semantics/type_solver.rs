@@ -152,8 +152,8 @@ impl<'analyzer> TypeSolver<'analyzer> {
         right_ty: ResolvedTy,
     ) -> Result<(), TypeSolveError> {
         // 有名字的 type 一定是唯一的
-        if left_ty.names.is_some() || right_ty.names.is_some() {
-            impossible!()
+        if left_ty.names != right_ty.names {
+            return Err(TypeSolveError::NameMismatch);
         }
 
         use ResolvedTyKind::*;

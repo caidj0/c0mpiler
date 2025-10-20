@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum TypeIntern {
     Never,
     Other(TypeKey),
@@ -559,6 +559,10 @@ impl SemanticAnalyzer {
             if let ResolvedTyKind::Ref(inner, ref_mutbl) = probe.kind {
                 intern = Some(inner);
                 level.wrap(ref_mutbl.into());
+            } else if probe.is_any_int_type() {
+                intern = Some(self.u32_type()); // 为了 3.to_string
+            } else {
+                intern = None;
             }
         }
 

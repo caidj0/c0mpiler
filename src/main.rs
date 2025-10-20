@@ -3,7 +3,11 @@ use std::fs;
 use c0mpiler::utils::test;
 
 fn main() {
-    let test_str = fs::read_to_string("RCompiler-Testcases/semantic-2/misc59/misc59.rx").unwrap();
+    let test_str =
+        fs::read_to_string("RCompiler-Testcases/semantic-1/src/return1/return1.rx").unwrap();
 
-    let _ = test::run(&test_str).map_err(|e| println!("{e}"));
+    match test::run(&test_str) {
+        Ok(_) => println!("Semantic check passed!"),
+        Err(e) => println!("{e}"),
+    }
 }

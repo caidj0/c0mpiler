@@ -6,8 +6,11 @@ use crate::{
     ast::{Mutability, Symbol},
     make_semantic_error,
     semantics::{
-        analyzer::SemanticAnalyzer, error::SemanticError, item::AssociatedInfo,
-        resolved_ty::TypeKey, value::PlaceValue,
+        analyzer::SemanticAnalyzer,
+        error::SemanticError,
+        item::AssociatedInfo,
+        resolved_ty::{RefMutability, ResolvedTy, TypeKey},
+        value::{PlaceValue, Value, ValueKind},
     },
 };
 
@@ -32,7 +35,34 @@ impl SemanticAnalyzer {
     pub fn get_impls_mut(&mut self, ty: &TypeKey) -> &mut Impls {
         let instance = self.probe_type_instance((*ty).into()).unwrap();
         if !self.impls.contains_key(&instance) {
-            self.impls.insert(instance.clone(), Impls::default());
+            let mut inherent = ImplInfo::default();
+            if instance.kind.is_array() {
+                let ref_ty =
+                    self.intern_type(ResolvedTy::ref_type((*ty).into(), RefMutability::Not));
+                let len_ty =
+                    self.intern_type(ResolvedTy::fn_type(self.u32_type(), vec![ref_ty.into()]));
+                inherent.values.insert(
+                    Symbol::from("len"),
+                    PlaceValue {
+                        value: Value {
+                            ty: len_ty.into(),
+                            kind: ValueKind::Fn {
+                                is_method: true,
+                                is_placeholder: false,
+                            },
+                        },
+                        mutbl: Mutability::Not,
+                    },
+                );
+            }
+
+            self.impls.insert(
+                instance.clone(),
+                Impls {
+                    inherent,
+                    ..Default::default()
+                },
+            );
         }
 
         self.impls.get_mut(&instance).unwrap()

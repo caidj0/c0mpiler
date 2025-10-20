@@ -70,7 +70,7 @@ impl UnEvalConstant {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueIndex {
     Place(PlaceValueIndex),
     Expr(NodeId),
@@ -88,13 +88,13 @@ impl From<NodeId> for ValueIndex {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlaceValueIndex {
-    name: Symbol,
-    kind: ValueIndexKind,
+    pub(crate) name: Symbol,
+    pub(crate) kind: ValueIndexKind,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueIndexKind {
     Bindings {
         binding_id: NodeId,
@@ -148,9 +148,7 @@ impl SemanticAnalyzer {
         ty: &TypeIntern,
         symbol: &Symbol,
     ) -> Result<Option<PlaceValueIndex>, SemanticError> {
-        let instance = self.probe_type_instance(*ty).unwrap();
-
-        let impls = self.impls.get(&instance).unwrap();
+        let impls = self.get_impls_mut(&ty.to_key());
         if impls.inherent.values.contains_key(symbol) {
             return Ok(Some(PlaceValueIndex {
                 kind: ValueIndexKind::Impl {

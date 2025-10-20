@@ -316,6 +316,12 @@ impl Eatable for Mutability {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct Symbol(pub String);
 
+impl From<&str> for Symbol {
+    fn from(value: &str) -> Self {
+        Self(value.to_string())
+    }
+}
+
 impl Symbol {
     pub fn is_path_segment(&self) -> bool {
         self.0 == "self" || self.0 == "Self"
