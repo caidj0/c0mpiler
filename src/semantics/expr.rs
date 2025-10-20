@@ -20,6 +20,7 @@ pub struct ExprExtra {
     pub(crate) self_id: NodeId,
     pub(crate) allow_i32_max: bool,
 
+    #[allow(dead_code)]
     pub(crate) span: Span,
 }
 

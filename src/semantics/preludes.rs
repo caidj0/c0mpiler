@@ -1,9 +1,11 @@
+use crate::ast::Symbol;
 use crate::semantics::analyzer::SemanticAnalyzer;
 use crate::semantics::resolved_ty::RefMutability;
 use crate::semantics::resolved_ty::ResolvedTy;
 use crate::semantics::resolved_ty::ResolvedTyKind;
 use crate::semantics::resolved_ty::TypeIntern;
 use crate::semantics::resolved_ty::TypeKey;
+use crate::semantics::utils::FullName;
 use ena::unify::InPlace;
 use ena::unify::UnificationTable;
 
@@ -78,5 +80,9 @@ impl SemanticAnalyzer {
 
     pub fn new_any_signed_int_type(&mut self) -> TypeIntern {
         self.intern_type(ResolvedTy::any_signed_int_type()).into()
+    }
+
+    pub fn is_string_type(ty: &ResolvedTy) -> bool {
+        ty.names == Some((FullName(vec![Symbol("String".to_string())]), None))
     }
 }

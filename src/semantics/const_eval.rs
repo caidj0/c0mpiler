@@ -303,20 +303,20 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
                 let v2 = self.visit_expr(expr2, intern.into())?;
 
                 if let (ConstantValue::ConstantInt(i1), ConstantValue::ConstantInt(i2)) = (v1, v2) {
-                    if ty.is_any_int_type() {
+                    if ty.is_integer() {
                         match bin_op {
                             BinOp::Add => i1.wrapping_add(i2),
                             BinOp::Sub => i1.wrapping_sub(i2),
                             BinOp::Mul => i1.wrapping_mul(i2),
                             BinOp::Div => {
-                                if ty.is_any_signed_int_type() {
+                                if ty.is_signed_integer() {
                                     (i1 as i32).wrapping_div(i2 as i32) as u32
                                 } else {
                                     i1.wrapping_div(i2)
                                 }
                             }
                             BinOp::Rem => {
-                                if ty.is_any_signed_int_type() {
+                                if ty.is_signed_integer() {
                                     (i1 as i32).wrapping_rem(i2 as i32) as u32
                                 } else {
                                     i1.wrapping_div(i2)

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     ast::{Mutability, Symbol},
     make_semantic_error,
@@ -71,7 +73,7 @@ impl SemanticAnalyzer {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, EnumAsInner)]
 pub enum DerefLevel {
     #[default]
     Not,

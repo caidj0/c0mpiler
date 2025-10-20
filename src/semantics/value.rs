@@ -14,7 +14,7 @@ use crate::{
         error::SemanticError,
         impls::DerefLevel,
         pat::Binding,
-        resolved_ty::{AnyTyKind, TypeIntern, TypeKey},
+        resolved_ty::{TypeIntern, TypeKey},
     },
 };
 
@@ -41,6 +41,7 @@ pub enum ValueKind {
         index: PlaceValueIndex,
     },
     ExtractElement {
+        level: DerefLevel,
         index: usize,
     },
 }
@@ -69,7 +70,7 @@ impl UnEvalConstant {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ValueIndex {
     Place(PlaceValueIndex),
     Expr(NodeId),
@@ -185,32 +186,10 @@ impl SemanticAnalyzer {
         intern: &TypeIntern,
         symbol: &Symbol,
     ) -> Result<Option<(DerefLevel, PlaceValueIndex)>, SemanticError> {
-        if let Some(value) = self.search_value_in_impl(intern, symbol)? {
-            return Ok(Some((DerefLevel::Not, value)));
-        }
-
-        let ty = self.probe_type(*intern).unwrap();
-        use super::resolved_ty::ResolvedTyKind::*;
-        match &ty.kind {
-            Placeholder => impossible!(),
-            Any(AnyTyKind::Any) => return Err(make_semantic_error!(TypeUndetermined)),
-            BuiltIn(_)
-            | Tup(_)
-            | Enum
-            | Trait
-            | Array(_, _)
-            | Fn(_, _)
-            | Any(_)
-            | ImplicitSelf(_) => {}
-            Ref(type_ptr, ref_mutability) => {
-                let mut result = self.search_value_in_impl_recursively(type_ptr, symbol)?;
-                result
-                    .as_mut()
-                    .map(|(level, _)| level.wrap((*ref_mutability).into()));
-            }
-        }
-
-        Ok(None)
+        self.auto_deref(*intern, |analyzer, intern| {
+            analyzer.search_value_in_impl(&intern, symbol)
+        })
+        .map(|x| x.map(|(level, _, index)| (level, index)))
     }
 
     pub fn get_place_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {

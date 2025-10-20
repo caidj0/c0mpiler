@@ -39,6 +39,8 @@ pub enum SemanticErrorKind {
     ScopeFromPathNotFound,
     NotConstantValue,
     NoBinaryOperation,
+    NoUnaryOperation,
+    NoAssignOperation,
     ConstantWithoutBody,
     FunctionWithoutBody,
     SelfInNotAssociateItem,
@@ -65,6 +67,8 @@ pub enum SemanticErrorKind {
     NotSupportCast,
     NotFunctionType,
     NotMethod,
+    NotArrayType,
+    NotReferenceType,
 
     GeneralError,
 }

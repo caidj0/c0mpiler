@@ -513,7 +513,7 @@ impl BinaryHelper {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, EnumAsInner)]
 pub enum BinOp {
     Add,
     Sub,
@@ -1096,7 +1096,7 @@ impl AssignOpHelper {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, EnumAsInner)]
 pub enum AssignOp {
     AddAssign,
     SubAssign,

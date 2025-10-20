@@ -52,6 +52,7 @@ pub enum MainFunctionState {
 }
 
 pub struct ScopeSearchResult {
+    #[allow(dead_code)]
     pub(crate) father: NodeId,
     pub(crate) kind: ScopeSearchResultKind,
 }

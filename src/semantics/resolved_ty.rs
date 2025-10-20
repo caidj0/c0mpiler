@@ -11,8 +11,8 @@ use crate::{
     },
     impossible, make_semantic_error,
     semantics::{
-        analyzer::SemanticAnalyzer, error::SemanticError, type_solver::TypeSolveError,
-        utils::FullName,
+        analyzer::SemanticAnalyzer, error::SemanticError, impls::DerefLevel,
+        type_solver::TypeSolveError, utils::FullName,
     },
 };
 
@@ -56,16 +56,16 @@ impl UnifyKey for TypeKey {
     }
 }
 
-trait TypePtrFamily {
+pub trait TypePtrFamily {
     type Ptr<T>;
 }
 
-struct InternFamily;
+pub struct InternFamily;
 impl TypePtrFamily for InternFamily {
     type Ptr<T> = TypeIntern;
 }
 
-struct BoxFamily;
+pub struct BoxFamily;
 impl TypePtrFamily for BoxFamily {
     type Ptr<T> = Box<T>;
 }
@@ -536,5 +536,32 @@ impl SemanticAnalyzer {
         }
 
         None
+    }
+
+    pub fn auto_deref<
+        T,
+        F: Fn(&mut SemanticAnalyzer, TypeIntern) -> Result<Option<T>, SemanticError>,
+    >(
+        &mut self,
+        intern: TypeIntern,
+        func: F,
+    ) -> Result<Option<(DerefLevel, TypeIntern, T)>, SemanticError> {
+        let mut intern = Some(intern);
+        let mut level = DerefLevel::Not;
+        while let Some(i) = intern {
+            if let Some(t) = func(self, i)? {
+                return Ok(Some((level, i, t)));
+            }
+
+            let Some(probe) = self.probe_type(i) else {
+                return Ok(None);
+            };
+            if let ResolvedTyKind::Ref(inner, ref_mutbl) = probe.kind {
+                intern = Some(inner);
+                level.wrap(ref_mutbl.into());
+            }
+        }
+
+        Ok(None)
     }
 }

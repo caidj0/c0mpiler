@@ -3,7 +3,7 @@ use crate::{
     semantics::{
         analyzer::SemanticAnalyzer,
         error::SemanticError,
-        resolved_ty::{ResolvedTy, TypeIntern, TypeKey},
+        resolved_ty::{ResolvedTy, TypeIntern},
         value::{Value, ValueKind},
     },
 };
