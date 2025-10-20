@@ -192,7 +192,7 @@ pub enum BuiltInTyKind {
     Str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumAsInner)]
 pub enum RefMutability {
     Not,
     Mut,

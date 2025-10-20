@@ -1022,7 +1022,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let ResolvedTyKind::Fn(ret, args) = func_probe.kind else {
                 return Err(make_semantic_error!(NotFunctionType));
             };
-            self.ty_intern_eq(extra.target_ty.unwrap(), ret)?;
+            self.ty_downgrade_eq(extra.target_ty.unwrap(), ret)?;
             if args.len() != arg_exprs.len() {
                 return Err(make_semantic_error!(ArgumentNumberMismatch));
             }
@@ -1106,7 +1106,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let method_probe = self.probe_type(method_ty).unwrap();
             let (ret_ty, method_args) = method_probe.kind.as_fn().unwrap();
 
-            self.ty_intern_eq(extra.target_ty.unwrap(), *ret_ty)?;
+            self.ty_downgrade_eq(extra.target_ty.unwrap(), *ret_ty)?;
             if args.len() + 1 != method_args.len() {
                 return Err(make_semantic_error!(ArgumentNumberMismatch));
             }
@@ -1140,7 +1140,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.set_expr_value_and_result(
                 extra.self_id,
                 Value {
-                    ty: extra.target_ty.unwrap().clone(),
+                    ty: *ret_ty,
                     kind: ValueKind::MethodCall { level, index },
                 },
                 AssigneeKind::Value,
@@ -1156,7 +1156,6 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Ok(())
     }
 
-    // TODO: 区分 (ty) 和 ty
     fn visit_tup_expr<'tmp>(
         &mut self,
         TupExpr(exprs, force): &'ast TupExpr,
@@ -1194,7 +1193,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.set_expr_value_and_result(
                 extra.self_id,
                 Value {
-                    ty: target_ty,
+                    ty: right_ty,
                     kind: ValueKind::Anon,
                 },
                 assignee,
@@ -1318,7 +1317,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         return Err(make_semantic_error!(NotReferenceType));
                     };
 
-                    self.ty_intern_eq(extra.target_ty.unwrap(), inner)?;
+                    self.ty_downgrade_eq(extra.target_ty.unwrap(), inner)?;
 
                     (inner, AssigneeKind::Place(mutbl.into()))
                 }
@@ -1639,7 +1638,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
             let scope_ty = *self.get_scope(extra.self_id).kind.as_loop().unwrap();
-            self.ty_intern_eq(target_ty, scope_ty.into())?;
+            self.ty_downgrade_eq(target_ty, scope_ty.into())?;
 
             self.visit_block_expr(
                 &body_expr,
@@ -1656,7 +1655,6 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .map_err(|e| e.set_span(&body_expr.span))?;
             let interrupt = self.get_expr_result(&body_expr.id).interrupt;
 
-            // TODO: loop 的类型较难确定
             self.set_expr_value_and_result(
                 extra.self_id,
                 if interrupt.is_return() || interrupt.is_not() {
@@ -1800,8 +1798,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
-            let self_ty = self.unit_type();
-            self.ty_intern_eq(extra.target_ty.unwrap(), self_ty)?;
+            self.ty_intern_eq(extra.target_ty.unwrap(), self.unit_type())?;
 
             let left_ty = self.new_any_type();
             self.visit_expr(&left, extra.replace_target(left_ty))?;
@@ -1841,8 +1838,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
-            let unit_ty = self.unit_type();
-            self.ty_intern_eq(target_ty, unit_ty)?;
+            self.ty_intern_eq(target_ty, self.unit_type())?;
 
             let exp_ty = self.new_any_type();
             self.visit_expr(&left, extra.replace_target(exp_ty))?;
@@ -1941,7 +1937,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             };
 
             let field_ty = receiver_probe.kind.as_tup().unwrap().get(index).unwrap();
-            self.ty_intern_eq(extra.target_ty.unwrap(), *field_ty)?;
+            self.ty_downgrade_eq(extra.target_ty.unwrap(), *field_ty)?;
             let (interrupt, assignee) = self.merge_result_info(once(receiver_expr))?;
 
             let mutbl = level.chain_mutbl(assignee.into());
@@ -1987,7 +1983,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .ok_or(make_semantic_error!(NotArrayType).set_span(&array_expr.span))?;
 
             let inner_ty = *probe.kind.as_array().unwrap().0;
-            self.ty_intern_eq(target_ty, inner_ty)?;
+            self.ty_downgrade_eq(target_ty, inner_ty)?;
 
             self.no_assignee(array_expr.id)?;
             self.no_assignee(index_expr.id)?;
@@ -2047,7 +2043,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let value_index = self.search_value_by_path(extra.scope_id, qself, path)?;
             let value = self.get_place_value_by_index(&value_index);
-            self.ty_intern_eq(extra.target_ty.unwrap(), value.value.ty)?;
+            self.ty_downgrade_eq(extra.target_ty.unwrap(), value.value.ty)?;
 
             let mutbl = value.mutbl;
 
@@ -2079,7 +2075,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 },
             ));
 
-            self.ty_intern_eq(self_ty.into(), extra.target_ty.unwrap())?;
+            // TODO: 有了 downgrade 后是否可以删除 WeakMut？
+            self.ty_intern_eq(extra.target_ty.unwrap(), self_ty.into())?;
 
             self.visit_expr(&expr, extra.replace_target(inner_ty))?;
 
@@ -2220,6 +2217,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let struct_type = self.resolve_path_type(qself, path, Some(extra.scope_id))?;
+
+            // struct 不可能有 downgrade
             self.ty_intern_eq(extra.target_ty.unwrap(), struct_type)?;
 
             let probe = self.probe_type(struct_type).unwrap();
@@ -2279,7 +2278,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
             let inner_ty = self.new_any_type();
             let ty = self.intern_type(ResolvedTy::array_type(inner_ty, Some(len)));
-            self.ty_intern_eq(ty.into(), extra.target_ty.unwrap())?;
+            self.ty_intern_eq(extra.target_ty.unwrap(), ty.into())?;
 
             self.visit_expr(&elm_expr, extra.replace_target(inner_ty))?;
 

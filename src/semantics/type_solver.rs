@@ -109,6 +109,7 @@ impl UnifyValue for ResolvedTy {
 
 pub struct TypeSolver<'analyzer> {
     ut: RefMut<'analyzer, UnificationTable<InPlace<TypeKey>>>,
+    downgrade: bool,
 }
 
 impl<'analyzer> TypeSolver<'analyzer> {
@@ -123,6 +124,21 @@ impl<'analyzer> TypeSolver<'analyzer> {
 
         let left_ty = self.ut.probe_value(left);
         let right_ty = self.ut.probe_value(right);
+
+        if self.downgrade && left_ty.names.is_none() && right_ty.names.is_none() {
+            match (&left_ty.kind, &right_ty.kind) {
+                (
+                    ResolvedTyKind::Ref(inner1, RefMutability::Not),
+                    ResolvedTyKind::Ref(inner2, RefMutability::Mut),
+                ) => {
+                    self.downgrade = false;
+                    self.eq(*inner1, *inner2)?;
+                    self.downgrade = true;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
 
         self.ut.unify_var_var(left, right)?;
 
@@ -212,21 +228,33 @@ macro_rules! to_semantic_error {
 }
 
 impl SemanticAnalyzer {
-    pub fn create_type_solver(&self) -> TypeSolver<'_> {
+    pub fn create_type_solver(&self, downgrade: bool) -> TypeSolver<'_> {
         TypeSolver {
             ut: self.ut.borrow_mut(),
+            downgrade,
         }
     }
 
     #[track_caller]
     pub fn ty_intern_eq(&self, left: TypeIntern, right: TypeIntern) -> Result<(), SemanticError> {
-        let mut solver = self.create_type_solver();
+        let mut solver = self.create_type_solver(false);
         to_semantic_error!(solver.eq(left, right))
     }
 
     #[track_caller]
     pub fn type_eq(&mut self, left: TypeIntern, right_ty: ResolvedTy) -> Result<(), SemanticError> {
-        let mut solver = self.create_type_solver();
+        debug_assert!(right_ty.names.is_none());
+        let mut solver = self.create_type_solver(false);
         to_semantic_error!(solver.eq_with_type(left, right_ty))
+    }
+
+    #[track_caller]
+    pub fn ty_downgrade_eq(
+        &self,
+        lower: TypeIntern,
+        higher: TypeIntern,
+    ) -> Result<(), SemanticError> {
+        let mut solver = self.create_type_solver(true);
+        to_semantic_error!(solver.eq(lower, higher))
     }
 }
