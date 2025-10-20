@@ -4,7 +4,9 @@ use enum_as_inner::EnumAsInner;
 
 use crate::{
     ast::{
-        expr::Expr, path::{Path, QSelf}, ByRef, Mutability, NodeId, Symbol
+        ByRef, Mutability, NodeId, Symbol,
+        expr::Expr,
+        path::{Path, QSelf},
     },
     impossible, make_semantic_error,
     semantics::{
@@ -50,6 +52,7 @@ pub enum ConstantValue {
     ConstantString(String),
     ConstantArray(Vec<ConstantValue>),
     Unit,
+    UnitStruct,
 
     UnEval(UnEvalConstant),
     Placeholder, // Only for Trait
@@ -195,7 +198,7 @@ impl SemanticAnalyzer {
                 self.get_scope(*scope_id).values.get(&index.name).unwrap()
             }
             ValueIndexKind::Impl { ty, for_trait } => {
-                let impls = self.get_impls(ty);
+                let impls = self.get_impls(ty).unwrap();
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get(i).unwrap()
                 } else {
@@ -257,7 +260,6 @@ impl SemanticAnalyzer {
         None
     }
 
-    // TODO: 检查不遮蔽常量
     pub fn add_bindings(
         &mut self,
         bindings: Vec<Binding>,
@@ -266,6 +268,8 @@ impl SemanticAnalyzer {
         let mut set = HashSet::new();
 
         for Binding(symbol, value, mutbl, pat_id) in bindings {
+            self.check_sized(value.ty)?;
+
             if !set.insert(symbol.clone()) {
                 return Err(make_semantic_error!(BindingNameConflict));
             }

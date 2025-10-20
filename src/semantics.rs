@@ -13,3 +13,4 @@ pub mod type_solver;
 pub mod utils;
 pub mod value;
 pub mod visitor;
+pub mod super_trait;

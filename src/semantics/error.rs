@@ -74,6 +74,7 @@ pub enum SemanticErrorKind {
     MainFunctionDoubleExit,
     MainFunctionWithWrongType,
     ExprAfterExit,
+    NotSizedType,
 
     GeneralError,
 }
@@ -96,12 +97,20 @@ impl Display for SemanticError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         #[cfg(debug_assertions)]
         {
-            writeln!(f, "{:?} at {}:{}", self.kind, self.file, self.line)
+            writeln!(
+                f,
+                "{:?} at {}:{}, from {}:{}",
+                self.kind,
+                self.span.unwrap().begin.line + 1,
+                self.span.unwrap().begin.col,
+                self.file,
+                self.line
+            )
         }
 
         #[cfg(not(debug_assertions))]
         {
-            writeln!(f, "{:?}", self.kind)
+            writeln!(f, "{:?}" at {}:{}, self.kind, self.span.unwrap().begin.line + 1, self.span.unwrap().begin.col)
         }
     }
 }

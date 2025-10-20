@@ -438,6 +438,7 @@ impl SemanticAnalyzer {
                     self.const_eval(&len_expr.value, self.usize_type(), current_scope)?;
                 let len = *len_value.as_constant_int().unwrap();
                 let ty = self.resolve_type(&inner, current_scope)?;
+                self.check_sized(ty)?;
 
                 Ok(self
                     .intern_type(ResolvedTy::array_type(ty, Some(len)))
@@ -453,6 +454,7 @@ impl SemanticAnalyzer {
                 [] => Ok(self.unit_type()),
                 [t1] => {
                     let inner = self.resolve_type(t1, current_scope)?;
+                    self.check_sized(inner)?;
                     if *force {
                         Ok(self.intern_type(ResolvedTy::tup_type(vec![inner])).into())
                     } else {
@@ -464,6 +466,9 @@ impl SemanticAnalyzer {
                         .iter()
                         .map(|x| self.resolve_type(&x, current_scope))
                         .collect::<Result<Vec<_>, SemanticError>>()?;
+                    for x in &inners {
+                        self.check_sized(*x)?;
+                    }
                     Ok(self.intern_type(ResolvedTy::tup_type(inners)).into())
                 }
             },
@@ -502,7 +507,7 @@ impl SemanticAnalyzer {
             "str" => self.str_type(),
             "Self" => {
                 return self
-                    .get_self_type(origin_scope, false)
+                    .get_self_type(origin_scope, true)
                     .map(|x| x.into())
                     .ok_or(make_semantic_error!(UnknownSelfType).set_span(span));
             }
@@ -510,7 +515,11 @@ impl SemanticAnalyzer {
         })
     }
 
-    pub fn get_self_type(&self, mut scope_id: Option<NodeId>, implicit: bool) -> Option<TypeKey> {
+    pub fn get_self_type(
+        &self,
+        mut scope_id: Option<NodeId>,
+        implicit_trait: bool,
+    ) -> Option<TypeKey> {
         let mut out_of_function = false;
 
         while let Some(id) = scope_id {
@@ -519,7 +528,7 @@ impl SemanticAnalyzer {
             use super::scope::ScopeKind::*;
             match &scope.kind {
                 Trait(type_ptr) => {
-                    return if implicit {
+                    return if implicit_trait {
                         let ty = ResolvedTy {
                             names: None,
                             kind: ResolvedTyKind::ImplicitSelf((*type_ptr).into()),

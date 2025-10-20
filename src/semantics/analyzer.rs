@@ -391,6 +391,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     FnRetTy::Ty(ty) => self.resolve_type(ty, Some(father))?,
                 };
 
+                if !associated_info.as_ref().is_some_and(|x| x.is_trait) {
+                    for x in &params_ty {
+                        self.check_sized(*x)?;
+                    }
+                    self.check_sized(ret_ty)?;
+                }
+
                 if self
                     .get_scope(self_id)
                     .kind
@@ -590,8 +597,22 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     VariantData::Unit => vec![],
                 };
 
-                let ptr = self.get_scope(self_id).kind.as_struct().unwrap();
-                self.set_type_kind(*ptr, ResolvedTyKind::Tup(fields));
+                let ptr = self.get_scope(self_id).kind.as_struct().unwrap().clone();
+                self.set_type_kind(ptr, ResolvedTyKind::Tup(fields));
+
+                if variants.is_unit() {
+                    self.add_scope_value(
+                        father,
+                        &ident.symbol,
+                        PlaceValue {
+                            value: Value {
+                                ty: ptr.into(),
+                                kind: ValueKind::Constant(ConstantValue::UnitStruct),
+                            },
+                            mutbl: Mutability::Not,
+                        },
+                    )?;
+                }
             }
             AnalyzeStage::Body => {}
         }
@@ -691,10 +712,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             AnalyzeStage::Body => {
                 let (&ty, &for_trait) = self.get_scope(self_id).kind.as_impl().unwrap();
                 if let Some(trait_ty) = for_trait {
-                    let trait_info = &self.get_impls(&trait_ty).inherent;
+                    let trait_info = &self
+                        .get_impls(&trait_ty)
+                        .ok_or(make_semantic_error!(UnknownAssociateItem).set_span(&span))?
+                        .inherent;
                     let mut names: HashSet<&Symbol> = trait_info.values.keys().collect();
 
-                    let self_impl = self.get_impl_for_trait(&ty, &trait_ty);
+                    let self_impl = self.get_impl_for_trait(&ty, &trait_ty).unwrap();
                     for (s, v) in &self_impl.values {
                         let self_ty = self.probe_type_instance(ty.into()).unwrap();
 
@@ -990,6 +1014,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             for e in exprs {
                 self.visit_expr(e, extra.replace_target(inner_ty))?;
             }
+            self.check_sized(inner_ty)?;
 
             let (interrupt, assignee) = self.merge_result_info(exprs.iter())?;
 
@@ -1194,6 +1219,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let tys = probe.kind.as_tup().unwrap();
                 for (e, ty) in zip(exprs, tys) {
                     self.visit_expr(e, extra.replace_target(*ty))?;
+                    self.check_sized(*ty)?;
                 }
             }
 
@@ -2062,7 +2088,16 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let value = self.get_place_value_by_index(&value_index);
             self.ty_downgrade_eq(extra.target_ty.unwrap(), value.value.ty)?;
 
-            let mutbl = value.mutbl;
+            let mutbl = if value
+                .value
+                .kind
+                .as_constant()
+                .map_or(false, |x| x.is_unit_struct())
+            {
+                Mutability::Mut
+            } else {
+                value.mutbl
+            };
 
             self.set_expr_result(
                 extra.self_id,
@@ -2299,6 +2334,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
             self.visit_expr(&elm_expr, extra.replace_target(inner_ty))?;
 
+            self.check_sized(inner_ty)?;
             self.no_assignee(elm_expr.id)?;
             let interrupt = self.get_expr_result(&elm_expr.id).interrupt;
 

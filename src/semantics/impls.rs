@@ -27,9 +27,9 @@ pub struct ImplInfo {
 }
 
 impl SemanticAnalyzer {
-    pub fn get_impls(&self, ty: &TypeKey) -> &Impls {
+    pub fn get_impls(&self, ty: &TypeKey) -> Option<&Impls> {
         let instance = self.probe_type_instance((*ty).into()).unwrap();
-        self.impls.get(&instance).unwrap()
+        self.impls.get(&instance)
     }
 
     pub fn get_impls_mut(&mut self, ty: &TypeKey) -> &mut Impls {
@@ -68,10 +68,10 @@ impl SemanticAnalyzer {
         self.impls.get_mut(&instance).unwrap()
     }
 
-    pub fn get_impl_for_trait(&self, ty: &TypeKey, trait_ty: &TypeKey) -> &ImplInfo {
-        let impls = self.get_impls(ty);
+    pub fn get_impl_for_trait(&self, ty: &TypeKey, trait_ty: &TypeKey) -> Option<&ImplInfo> {
+        let impls = self.get_impls(ty)?;
         let instance = self.probe_type_instance((*trait_ty).into()).unwrap();
-        impls.traits.get(&instance).unwrap()
+        impls.traits.get(&instance)
     }
 
     pub fn get_impl_for_trait_mut<'i>(

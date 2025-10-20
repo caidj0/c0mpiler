@@ -12,6 +12,7 @@ fn my_semantic() {
         "autoderef1",  // 这个点在 IR 的处理非常麻烦
         "item_order1",
         "item_order2",
+        "type1",
     ];
     let case_path = "testcases/semantics";
 

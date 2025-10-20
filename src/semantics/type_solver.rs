@@ -122,8 +122,34 @@ impl<'analyzer> TypeSolver<'analyzer> {
             return Ok(());
         }
 
-        let left_ty = self.ut.probe_value(left);
-        let right_ty = self.ut.probe_value(right);
+        let mut left_ty = self.ut.probe_value(left);
+        let mut right_ty = self.ut.probe_value(right);
+
+        match (&left_ty.kind, &right_ty.kind) {
+            (ResolvedTyKind::ImplicitSelf(l), ResolvedTyKind::ImplicitSelf(r)) => {
+                if self.ut.unioned(l.to_key(), r.to_key()) {
+                    return Ok(());
+                } else {
+                    left_ty = self.ut.probe_value(l.to_key());
+                    right_ty = self.ut.probe_value(r.to_key());
+                }
+            }
+            (ResolvedTyKind::ImplicitSelf(l), _) => {
+                if self.ut.unioned(l.to_key(), right) {
+                    return Ok(());
+                } else {
+                    left_ty = self.ut.probe_value(l.to_key());
+                }
+            }
+            (_, ResolvedTyKind::ImplicitSelf(r)) => {
+                if self.ut.unioned(left, r.to_key()) {
+                    return Ok(());
+                } else {
+                    right_ty = self.ut.probe_value(r.to_key());
+                }
+            }
+            _ => {}
+        };
 
         if self.downgrade && left_ty.names.is_none() && right_ty.names.is_none() {
             match (&left_ty.kind, &right_ty.kind) {
@@ -139,6 +165,8 @@ impl<'analyzer> TypeSolver<'analyzer> {
                 _ => {}
             }
         }
+
+        self.downgrade = false;
 
         self.ut.unify_var_var(left, right)?;
 
@@ -169,6 +197,8 @@ impl<'analyzer> TypeSolver<'analyzer> {
         // 有名字的 type 一定是唯一的
         if left_ty.names != right_ty.names {
             if !(left_ty.is_any_type() || right_ty.is_any_type()) {
+                println!("{left_ty:?}");
+                println!("{right_ty:?}");
                 return Err(TypeSolveError::NameMismatch);
             } else {
                 return Ok(());
