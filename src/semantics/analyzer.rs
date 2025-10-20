@@ -832,7 +832,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 });
             }
             StmtKind::Semi(expr) => {
-                self.visit_expr(expr, extra)?;
+                let expr_ty = self.new_any_type();
+                self.visit_expr(expr, extra.replace_target(expr_ty))?;
                 set_result!(self, *id, {
                     self.no_assignee(expr.id)?;
                     StmtResult::Else {
