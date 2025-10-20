@@ -4,7 +4,7 @@ use c0mpiler::utils::test;
 
 fn main() {
     let test_str =
-        fs::read_to_string("RCompiler-Testcases/semantic-1/src/return1/return1.rx").unwrap();
+        fs::read_to_string("RCompiler-Testcases/semantic-1/src/return8/return8.rx").unwrap();
 
     match test::run(&test_str) {
         Ok(_) => println!("Semantic check passed!"),

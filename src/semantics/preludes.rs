@@ -66,7 +66,7 @@ define_preludes!(
     u32: ResolvedTy::u32_type(),
     usize: ResolvedTy::usize_type(),
     str: ResolvedTy::str_type(),
-    unit: ResolvedTy::str_type(),
+    unit: ResolvedTy::unit_type(),
 
     ref_str: ResolvedTy{
         names: None,

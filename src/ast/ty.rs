@@ -7,8 +7,7 @@ use crate::{
     },
     is_keyword, kind_check,
     lexer::TokenIter,
-    loop_until, match_keyword, skip_keyword_or_break,
-    tokens::TokenType,
+    loop_until, match_keyword, tokens::TokenType,
 };
 
 #[derive(Debug)]
@@ -173,21 +172,36 @@ impl Eatable for SliceTy {
 }
 
 #[derive(Debug)]
-pub struct TupTy(pub Vec<Box<Ty>>);
+pub struct TupTy(pub Vec<Box<Ty>>, pub bool);
 
 impl Eatable for TupTy {
     fn eat_impl(iter: &mut TokenIter) -> ASTResult<Self> {
         match_keyword!(iter, TokenType::OpenPar);
 
         let mut ties = Vec::new();
+        let mut force = false;
 
         loop_until!(iter, TokenType::ClosePar, {
             ties.push(Box::new(Ty::eat(iter)?));
 
-            skip_keyword_or_break!(iter, TokenType::Comma, TokenType::ClosePar);
+            let token = iter.peek()?;
+            if token.token_type == (TokenType::Comma) {
+                force = true;
+                iter.advance();
+            } else if token.token_type == (TokenType::ClosePar) {
+                break;
+            } else {
+                return Err(crate::make_syntax_error!(
+                    token,
+                    MisMatch {
+                        expected: stringify!((TokenType::Comma)(TokenType::ClosePar)).to_owned(),
+                        actual: format!("{:?}", token),
+                    }
+                ));
+            };
         });
 
-        Ok(Self(ties))
+        Ok(Self(ties, force))
     }
 }
 

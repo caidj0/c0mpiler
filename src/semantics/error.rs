@@ -72,6 +72,8 @@ pub enum SemanticErrorKind {
     MainFnWithoutExit,
     NotInMainFunction,
     MainFunctionDoubleExit,
+    MainFunctionWithWrongType,
+    ExprAfterExit,
 
     GeneralError,
 }

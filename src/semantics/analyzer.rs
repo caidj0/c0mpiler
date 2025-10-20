@@ -390,6 +390,18 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     FnRetTy::Ty(ty) => self.resolve_type(ty, Some(father))?,
                 };
 
+                if self
+                    .get_scope(self_id)
+                    .kind
+                    .as_fn()
+                    .unwrap()
+                    .1
+                    .is_un_exited()
+                    && (ret_ty != self.unit_type() || params_ty.len() != 0)
+                {
+                    return Err(make_semantic_error!(MainFunctionWithWrongType));
+                }
+
                 let is_method = sig.decl.inputs.iter().next().map_or(false, |x| {
                     x.pat
                         .kind
@@ -901,6 +913,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Expr { kind, span, id }: &'ast Expr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
+        if self.search_fn_scope(extra.scope_id).map_or(false, |x| {
+            self.get_scope(x).kind.as_fn().unwrap().1.is_exited()
+        }) {
+            return Err(make_semantic_error!(ExprAfterExit));
+        }
+
         let new_extra = ExprExtra {
             self_id: *id,
             span: *span,
@@ -1138,23 +1156,37 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Ok(())
     }
 
+    // TODO: 区分 (ty) 和 ty
     fn visit_tup_expr<'tmp>(
         &mut self,
-        TupExpr(exprs): &'ast TupExpr,
+        TupExpr(exprs, force): &'ast TupExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
-            let right_ty = ResolvedTy::tup_type(
-                repeat_with(|| self.new_any_type())
-                    .take(exprs.len())
-                    .collect(),
-            );
-            self.type_eq(target_ty, right_ty)?;
-            let target_probe = self.probe_type(target_ty).unwrap();
-            let tys = target_probe.kind.as_tup().unwrap();
-            for (e, ty) in zip(exprs, tys) {
-                self.visit_expr(e, extra.replace_target(*ty))?;
+            let (right_ty, expanded) = match (&exprs[..], force) {
+                ([], _) => (self.unit_type(), false),
+                ([_], false) => (self.new_any_type(), true),
+                _ => {
+                    let tup_ty = ResolvedTy::tup_type(
+                        repeat_with(|| self.new_any_type())
+                            .take(exprs.len())
+                            .collect(),
+                    );
+                    (self.intern_type(tup_ty).into(), false)
+                }
+            };
+
+            self.ty_intern_eq(target_ty, right_ty)?;
+
+            if expanded {
+                self.visit_expr(exprs.first().unwrap(), extra.replace_target(right_ty))?;
+            } else {
+                let probe = self.probe_type(right_ty).unwrap();
+                let tys = probe.kind.as_tup().unwrap();
+                for (e, ty) in zip(exprs, tys) {
+                    self.visit_expr(e, extra.replace_target(*ty))?;
+                }
             }
 
             let (interrupt, assignee) = self.merge_result_info(exprs.iter())?;
@@ -1185,6 +1217,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
             let probe = self.probe_type(target_ty).unwrap();
+            println!("{probe:?}");
             let self_ty = if Self::is_string_type(&probe) && bin_op.is_add() {
                 self.visit_expr(&expr1, extra.replace_target(target_ty))?;
                 self.visit_expr(&expr2, extra.replace_target(self.ref_str_type()))?;

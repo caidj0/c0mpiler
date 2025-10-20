@@ -448,10 +448,23 @@ impl SemanticAnalyzer {
                     .intern_type(ResolvedTy::ref_type(ty, (*mutbl).into()))
                     .into())
             }
-            Tup(TupTy(tys)) => match &tys[..] {
+            Tup(TupTy(tys, force)) => match &tys[..] {
                 [] => Ok(self.unit_type()),
-                [t1] => self.resolve_type(t1, current_scope),
-                _ => Err(make_semantic_error!(NoImplementation).set_span(span)),
+                [t1] => {
+                    let inner = self.resolve_type(t1, current_scope)?;
+                    if *force {
+                        Ok(self.intern_type(ResolvedTy::tup_type(vec![inner])).into())
+                    } else {
+                        Ok(inner)
+                    }
+                }
+                _ => {
+                    let inners = tys
+                        .iter()
+                        .map(|x| self.resolve_type(&x, current_scope))
+                        .collect::<Result<Vec<_>, SemanticError>>()?;
+                    Ok(self.intern_type(ResolvedTy::tup_type(inners)).into())
+                }
             },
             Path(path_ty) => self.resolve_path_type(&path_ty.0, &path_ty.1, current_scope),
             Infer(_) => Ok(self.new_any_type()),

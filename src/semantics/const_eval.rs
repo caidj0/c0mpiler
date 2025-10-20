@@ -268,7 +268,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
     fn visit_tup_expr<'tmp>(
         &mut self,
-        TupExpr(exprs): &'ast TupExpr,
+        TupExpr(exprs, force): &'ast TupExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         match &exprs[..] {
@@ -277,7 +277,13 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
                     .ty_intern_eq(extra.ty.into(), self.analyzer.unit_type())?;
                 Ok(ConstantValue::Unit)
             }
-            [e] => self.visit_expr(e, extra),
+            [e] => {
+                if *force {
+                    Err(make_semantic_error!(ConstEvalNoImplementation))
+                } else {
+                    self.visit_expr(e, extra)
+                }
+            }
             _ => Err(make_semantic_error!(ConstEvalNoImplementation)),
         }
     }
