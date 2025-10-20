@@ -244,7 +244,7 @@ impl SemanticAnalyzer {
         let mut scope_id = Some(start_scope);
 
         while let Some(id) = scope_id {
-            if let Some(_) = self.get_scope_value(id, symbol) {
+            if self.get_scope_value(id, symbol).is_some() {
                 return Some(PlaceValueIndex {
                     kind: ValueIndexKind::Global { scope_id: id },
                     name: symbol.clone(),
@@ -273,9 +273,10 @@ impl SemanticAnalyzer {
             if !set.insert(symbol.clone()) {
                 return Err(make_semantic_error!(BindingNameConflict));
             }
-            if self.search_value(&symbol, scope_id).map_or(false, |x| {
-                self.get_place_value_by_index(&x).value.kind.is_constant()
-            }) {
+            if self
+                .search_value(&symbol, scope_id)
+                .is_some_and(|x| self.get_place_value_by_index(&x).value.kind.is_constant())
+            {
                 return Err(make_semantic_error!(BindingConflictWithConstant));
             }
 

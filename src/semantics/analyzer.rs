@@ -294,7 +294,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         match self.stage {
             AnalyzeStage::SymbolCollect => {}
             AnalyzeStage::Definition => {
-                let t = self.resolve_type(&ty, Some(father))?;
+                let t = self.resolve_type(ty, Some(father))?;
 
                 let const_value = match expr {
                     Some(e) => ConstantValue::UnEval(UnEvalConstant::new(father, e.as_ref())),
@@ -331,7 +331,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                 if let ConstantValue::UnEval(u) = constant {
                     let u = u.clone();
-                    let ty = place.value.ty.clone();
+                    let ty = place.value.ty;
                     let v = self.eval_unevaling(&u, ty.to_key())?;
                     let place_mut = self.get_scope_value_mut(father, &ident.symbol).unwrap();
                     place_mut.value.ty = ty;
@@ -405,17 +405,15 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     .unwrap()
                     .1
                     .is_un_exited()
-                    && (ret_ty != self.unit_type() || params_ty.len() != 0)
+                    && (ret_ty != self.unit_type() || !params_ty.is_empty())
                 {
                     return Err(make_semantic_error!(MainFunctionWithWrongType));
                 }
 
-                let is_method = sig.decl.inputs.iter().next().map_or(false, |x| {
-                    x.pat
-                        .kind
-                        .as_ident()
-                        .map_or(false, |y| y.1.symbol.is_self())
-                });
+                let is_method =
+                    sig.decl.inputs.first().is_some_and(|x| {
+                        x.pat.kind.as_ident().is_some_and(|y| y.1.symbol.is_self())
+                    });
                 if is_method && associated_info.is_none() {
                     return Err(make_semantic_error!(SelfInNotAssociateItem));
                 }
@@ -449,7 +447,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     .iter()
                     .map(|x| -> Result<_, SemanticError> {
                         let ty = self.resolve_type(&x.ty, Some(father))?;
-                        let bindings = self.visit_pat(&x.pat, PatExtra { id: 0, ty: ty })?;
+                        let bindings = self.visit_pat(&x.pat, PatExtra { id: 0, ty })?;
                         Ok(bindings.bindings.into_iter())
                     })
                     .collect::<Result<Vec<_>, SemanticError>>()?
@@ -471,7 +469,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.visit_block_expr(
                 body,
                 ExprExtra {
-                    target_ty: target_ty,
+                    target_ty,
                     scope_id: self_id,
                     self_id: body.id,
                     span,
@@ -530,7 +528,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     self.add_impl_value(
                         &AssociatedInfo {
                             is_trait: false,
-                            ty: key.clone(),
+                            ty: key,
                             for_trait: None,
                         },
                         &x.ident.symbol,
@@ -597,7 +595,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     VariantData::Unit => vec![],
                 };
 
-                let ptr = self.get_scope(self_id).kind.as_struct().unwrap().clone();
+                let ptr = *self.get_scope(self_id).kind.as_struct().unwrap();
                 self.set_type_kind(ptr, ResolvedTyKind::Tup(fields));
 
                 if variants.is_unit() {
@@ -697,7 +695,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 );
             }
             AnalyzeStage::Definition => {
-                let self_ty = self.resolve_type(&self_ty, Some(father))?.to_key();
+                let self_ty = self.resolve_type(self_ty, Some(father))?.to_key();
                 let for_trait = if let Some(trait_ty) = of_trait {
                     let t = self.resolve_path_type(&None, &trait_ty.path, Some(father))?;
                     Some(t.to_key())
@@ -745,7 +743,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         names.remove(s);
                     }
 
-                    for name in names {
+                    if let Some(name) = names.into_iter().next() {
                         let v = trait_info.values.get(name).unwrap();
                         match &v.value.kind {
                             ValueKind::Fn {
@@ -773,8 +771,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     span: Span::default(),
                     associated_info: Some(AssociatedInfo {
                         is_trait: false,
-                        ty: ty.clone(),
-                        for_trait: for_trait.clone(),
+                        ty: *ty,
+                        for_trait: *for_trait,
                     }),
                 },
             )?;
@@ -809,7 +807,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if !kind.is_expr()
             && let Some(traget) = extra.target_ty
         {
-            self.ty_intern_eq(traget.into(), self.unit_type())
+            self.ty_intern_eq(traget, self.unit_type())
                 .map_err(|e| e.set_span(span))?;
         }
 
@@ -946,9 +944,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Expr { kind, span, id }: &'ast Expr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        if self.search_fn_scope(extra.scope_id).map_or(false, |x| {
-            self.get_scope(x).kind.as_fn().unwrap().1.is_exited()
-        }) {
+        if self
+            .search_fn_scope(extra.scope_id)
+            .is_ok_and(|x| self.get_scope(x).kind.as_fn().unwrap().1.is_exited())
+        {
             return Err(make_semantic_error!(ExprAfterExit));
         }
 
@@ -1051,7 +1050,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let func_ty = self.new_any_type();
-            self.visit_expr(&func_expr, extra.replace_target(func_ty))?;
+            self.visit_expr(func_expr, extra.replace_target(func_ty))?;
             let func_probe = self.probe_type(func_ty).unwrap();
             let ResolvedTyKind::Fn(ret, args) = func_probe.kind else {
                 return Err(make_semantic_error!(NotFunctionType));
@@ -1101,9 +1100,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&func_expr, extra)?;
+            self.visit_expr(func_expr, extra)?;
             for x in arg_exprs {
-                self.visit_expr(&x, extra)?;
+                self.visit_expr(x, extra)?;
             }
         }
 
@@ -1122,7 +1121,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let receiver_type = self.new_any_type();
-            self.visit_expr(&receiver, extra.replace_target(receiver_type))?;
+            self.visit_expr(receiver, extra.replace_target(receiver_type))?;
             let symbol = &seg.ident.symbol;
             let (level, index) = self
                 .search_value_in_impl_recursively(&receiver_type, symbol)?
@@ -1132,7 +1131,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .value
                 .kind
                 .as_fn()
-                .map_or(true, |(is_method, _)| !*is_method)
+                .is_none_or(|(is_method, _)| !*is_method)
             {
                 return Err(make_semantic_error!(NotMethod));
             }
@@ -1152,7 +1151,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let iter = once(receiver).chain(args);
             let interrupt = self.merge_expr_interrupt(iter.clone());
             self.batch_no_assignee_expr(iter)?;
-            let first_probe = self.probe_type(*method_args.get(0).unwrap()).unwrap();
+            let first_probe = self.probe_type(*method_args.first().unwrap()).unwrap();
 
             let receiver_mutbl = self.get_expr_result(&receiver.id).assignee.into();
 
@@ -1181,9 +1180,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&receiver, extra)?;
+            self.visit_expr(receiver, extra)?;
             for x in args {
-                self.visit_expr(&x, extra)?;
+                self.visit_expr(x, extra)?;
             }
         }
 
@@ -1252,8 +1251,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let target_ty = extra.target_ty.unwrap();
             let probe = self.probe_type(target_ty).unwrap();
             let self_ty = if Self::is_string_type(&probe) && bin_op.is_add() {
-                self.visit_expr(&expr1, extra.replace_target(target_ty))?;
-                self.visit_expr(&expr2, extra.replace_target(self.ref_str_type()))?;
+                self.visit_expr(expr1, extra.replace_target(target_ty))?;
+                self.visit_expr(expr2, extra.replace_target(self.ref_str_type()))?;
                 target_ty
             } else {
                 match bin_op {
@@ -1265,8 +1264,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     | BinOp::BitXor
                     | BinOp::BitAnd
                     | BinOp::BitOr => {
-                        self.visit_expr(&expr1, extra.replace_target(target_ty))?;
-                        self.visit_expr(&expr2, extra.replace_target(target_ty))?;
+                        self.visit_expr(expr1, extra.replace_target(target_ty))?;
+                        self.visit_expr(expr2, extra.replace_target(target_ty))?;
 
                         let probe = self.probe_type(target_ty).unwrap();
 
@@ -1282,17 +1281,17 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
                     BinOp::And | BinOp::Or => {
                         let bool_ty = self.bool_type();
-                        self.visit_expr(&expr1, extra.replace_target(bool_ty))?;
-                        self.visit_expr(&expr2, extra.replace_target(bool_ty))?;
+                        self.visit_expr(expr1, extra.replace_target(bool_ty))?;
+                        self.visit_expr(expr2, extra.replace_target(bool_ty))?;
                         self.ty_intern_eq(target_ty, bool_ty)?;
 
                         bool_ty
                     }
 
                     BinOp::Shl | BinOp::Shr => {
-                        self.visit_expr(&expr1, extra.replace_target(target_ty))?;
+                        self.visit_expr(expr1, extra.replace_target(target_ty))?;
                         let ty2 = self.new_any_int_type();
-                        self.visit_expr(&expr2, extra.replace_target(ty2))?;
+                        self.visit_expr(expr2, extra.replace_target(ty2))?;
 
                         target_ty
                     }
@@ -1302,8 +1301,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         self.ty_intern_eq(target_ty, bool_ty)?;
 
                         let inner_ty = self.new_any_type();
-                        self.visit_expr(&expr1, extra.replace_target(inner_ty))?;
-                        self.visit_expr(&expr2, extra.replace_target(inner_ty))?;
+                        self.visit_expr(expr1, extra.replace_target(inner_ty))?;
+                        self.visit_expr(expr2, extra.replace_target(inner_ty))?;
 
                         let probe = self.probe_type(inner_ty).unwrap();
 
@@ -1333,8 +1332,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&expr1, extra)?;
-            self.visit_expr(&expr2, extra)?;
+            self.visit_expr(expr1, extra)?;
+            self.visit_expr(expr2, extra)?;
         }
 
         Ok(())
@@ -1374,7 +1373,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     let self_ty = self.new_any_signed_int_type();
                     self.ty_intern_eq(extra.target_ty.unwrap(), self_ty)?;
                     self.visit_expr(
-                        &expr,
+                        expr,
                         ExprExtra {
                             target_ty: Some(self_ty),
                             allow_i32_max: !extra.allow_i32_max,
@@ -1391,14 +1390,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.set_expr_value_and_result(
                 extra.self_id,
                 Value {
-                    ty: ty,
+                    ty,
                     kind: ValueKind::Anon,
                 },
                 assignee,
                 interrupt,
             );
         } else {
-            self.visit_expr(&expr, extra)?;
+            self.visit_expr(expr, extra)?;
         }
 
         Ok(())
@@ -1446,7 +1445,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     };
                     self.ty_intern_eq(target_ty, restrict_ty)?;
 
-                    let value: u32 = parse_u32(&symbol)?;
+                    let value: u32 = parse_u32(symbol)?;
 
                     let target_probe = self.probe_type(target_ty).unwrap();
 
@@ -1490,7 +1489,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
-            let to_type = self.resolve_type(&to_type, Some(extra.scope_id))?;
+            let to_type = self.resolve_type(to_type, Some(extra.scope_id))?;
             self.ty_intern_eq(extra.target_ty.unwrap(), to_type)?;
 
             let expr_type = self.new_any_type();
@@ -1546,10 +1545,10 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
-            self.visit_expr(&cond_expr, extra.replace_target(self.bool_type()))?;
+            self.visit_expr(cond_expr, extra.replace_target(self.bool_type()))?;
             let target_ty = extra.target_ty.unwrap();
             self.visit_block_expr(
-                &body_expr,
+                body_expr,
                 ExprExtra {
                     target_ty: Some(target_ty),
                     self_id: body_expr.id,
@@ -1558,7 +1557,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 },
             )?;
             if let Some(else_expr) = else_expr {
-                self.visit_expr(&else_expr, extra.replace_target(target_ty))?;
+                self.visit_expr(else_expr, extra.replace_target(target_ty))?;
             } else {
                 self.ty_intern_eq(target_ty, self.unit_type())?;
             }
@@ -1590,9 +1589,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&cond_expr, extra)?;
+            self.visit_expr(cond_expr, extra)?;
             self.visit_block_expr(
-                &body_expr,
+                body_expr,
                 ExprExtra {
                     self_id: body_expr.id,
                     span: body_expr.span,
@@ -1600,7 +1599,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 },
             )?;
             if let Some(else_expr) = else_expr {
-                self.visit_expr(&else_expr, extra)?;
+                self.visit_expr(else_expr, extra)?;
             }
         }
 
@@ -1617,11 +1616,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         }
 
         if self.is_body_stage() {
-            self.visit_expr(&cond_expr, extra.replace_target(self.bool_type()))?;
+            self.visit_expr(cond_expr, extra.replace_target(self.bool_type()))?;
             let target_ty = extra.target_ty.unwrap();
             self.ty_intern_eq(target_ty, self.unit_type())?;
             self.visit_block_expr(
-                &body_expr,
+                body_expr,
                 ExprExtra {
                     target_ty: Some(self.unit_type()),
                     scope_id: extra.scope_id,
@@ -1645,9 +1644,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&cond_expr, extra)?;
+            self.visit_expr(cond_expr, extra)?;
             self.visit_block_expr(
-                &body_expr,
+                body_expr,
                 ExprExtra {
                     self_id: body_expr.id,
                     span: body_expr.span,
@@ -1684,7 +1683,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.ty_downgrade_eq(target_ty, scope_ty.into())?;
 
             self.visit_block_expr(
-                &body_expr,
+                body_expr,
                 ExprExtra {
                     target_ty: Some(self.unit_type()),
                     scope_id: extra.self_id,
@@ -1713,7 +1712,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             );
         } else {
             self.visit_block_expr(
-                &body_expr,
+                body_expr,
                 ExprExtra {
                     scope_id: extra.self_id,
                     self_id: body_expr.id,
@@ -1815,7 +1814,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.set_expr_result(
                 extra.self_id,
                 ExprResult {
-                    value_index: value_index,
+                    value_index,
                     assignee: AssigneeKind::Value,
                     interrupt,
                 },
@@ -1844,8 +1843,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.ty_intern_eq(extra.target_ty.unwrap(), self.unit_type())?;
 
             let left_ty = self.new_any_type();
-            self.visit_expr(&left, extra.replace_target(left_ty))?;
-            self.visit_expr(&right, extra.replace_target(left_ty))?;
+            self.visit_expr(left, extra.replace_target(left_ty))?;
+            self.visit_expr(right, extra.replace_target(left_ty))?;
 
             let interrupt = self.merge_expr_interrupt(once(left).chain(once(right)));
             self.no_assignee(right.id)?;
@@ -1867,8 +1866,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&left, extra)?;
-            self.visit_expr(&right, extra)?;
+            self.visit_expr(left, extra)?;
+            self.visit_expr(right, extra)?;
         }
 
         Ok(())
@@ -1884,7 +1883,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.ty_intern_eq(target_ty, self.unit_type())?;
 
             let exp_ty = self.new_any_type();
-            self.visit_expr(&left, extra.replace_target(exp_ty))?;
+            self.visit_expr(left, extra.replace_target(exp_ty))?;
 
             let probe = self.probe_type(exp_ty).unwrap();
 
@@ -1907,7 +1906,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 return Err(make_semantic_error!(NoAssignOperation));
             };
 
-            self.visit_expr(&right, extra.replace_target(right_ty))?;
+            self.visit_expr(right, extra.replace_target(right_ty))?;
 
             self.no_assignee(right.id)?;
             match self.get_expr_result(&left.id).assignee {
@@ -1932,8 +1931,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&left, extra)?;
-            self.visit_expr(&right, extra)?;
+            self.visit_expr(left, extra)?;
+            self.visit_expr(right, extra)?;
         }
 
         Ok(())
@@ -1946,7 +1945,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.is_body_stage() {
             let receiver_ty = self.new_any_type();
-            self.visit_expr(&receiver_expr, extra.replace_target(receiver_ty))?;
+            self.visit_expr(receiver_expr, extra.replace_target(receiver_ty))?;
             self.no_assignee(receiver_expr.id)?;
             let (level, _, receiver_probe) = self
                 .auto_deref(receiver_ty, |analyzer, intern| {
@@ -1995,7 +1994,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&receiver_expr, extra)?;
+            self.visit_expr(receiver_expr, extra)?;
         }
 
         Ok(())
@@ -2009,8 +2008,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
             let array_intern = self.new_any_type();
-            self.visit_expr(&array_expr, extra.replace_target(array_intern.into()))?;
-            self.visit_expr(&index_expr, extra.replace_target(self.usize_type()))?;
+            self.visit_expr(array_expr, extra.replace_target(array_intern))?;
+            self.visit_expr(index_expr, extra.replace_target(self.usize_type()))?;
 
             let (level, _, probe) = self
                 .auto_deref(array_intern, |analyzer, intern| {
@@ -2044,8 +2043,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&array_expr, extra)?;
-            self.visit_expr(&index_expr, extra)?;
+            self.visit_expr(array_expr, extra)?;
+            self.visit_expr(index_expr, extra)?;
         }
 
         Ok(())
@@ -2068,7 +2067,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.set_expr_value_and_result(
                 extra.self_id,
                 Value {
-                    ty: t.clone(),
+                    ty: t,
                     kind: ValueKind::Anon,
                 },
                 AssigneeKind::Only,
@@ -2092,7 +2091,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .value
                 .kind
                 .as_constant()
-                .map_or(false, |x| x.is_unit_struct())
+                .is_some_and(|x| x.is_unit_struct())
             {
                 Mutability::Mut
             } else {
@@ -2130,7 +2129,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             // TODO: 有了 downgrade 后是否可以删除 WeakMut？
             self.ty_intern_eq(extra.target_ty.unwrap(), self_ty.into())?;
 
-            self.visit_expr(&expr, extra.replace_target(inner_ty))?;
+            self.visit_expr(expr, extra.replace_target(inner_ty))?;
 
             self.no_assignee(expr.id)?;
             let (interrupt, assignee) = self.merge_result_info(once(expr))?;
@@ -2192,10 +2191,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 AssigneeKind::Value,
                 interrupt,
             );
-        } else {
-            if let Some(expr) = expr {
-                self.visit_expr(expr, extra)?;
-            }
+        } else if let Some(expr) = expr {
+            self.visit_expr(expr, extra)?;
         }
 
         Ok(())
@@ -2248,10 +2245,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 AssigneeKind::Value,
                 interrupt,
             );
-        } else {
-            if let Some(e) = expr {
-                self.visit_expr(e, extra)?;
-            }
+        } else if let Some(e) = expr {
+            self.visit_expr(e, extra)?;
         }
 
         Ok(())
@@ -2281,7 +2276,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .clone();
             let field_names = probe.names.as_ref().unwrap().1.as_ref().unwrap().clone();
             let mut map: HashMap<Symbol, TypeIntern> =
-                HashMap::from_iter(field_names.into_iter().zip(field_tys.into_iter()));
+                HashMap::from_iter(field_names.into_iter().zip(field_tys));
 
             for ExprField {
                 ident, expr, span, ..
@@ -2310,7 +2305,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             );
         } else {
             for ExprField { expr, .. } in fields {
-                self.visit_expr(&expr, extra)?;
+                self.visit_expr(expr, extra)?;
             }
         };
 
@@ -2332,7 +2327,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let ty = self.intern_type(ResolvedTy::array_type(inner_ty, Some(len)));
             self.ty_intern_eq(extra.target_ty.unwrap(), ty.into())?;
 
-            self.visit_expr(&elm_expr, extra.replace_target(inner_ty))?;
+            self.visit_expr(elm_expr, extra.replace_target(inner_ty))?;
 
             self.check_sized(inner_ty)?;
             self.no_assignee(elm_expr.id)?;
@@ -2348,7 +2343,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 interrupt,
             );
         } else {
-            self.visit_expr(&elm_expr, extra)?;
+            self.visit_expr(elm_expr, extra)?;
         }
 
         Ok(())

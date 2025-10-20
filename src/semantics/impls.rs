@@ -74,11 +74,7 @@ impl SemanticAnalyzer {
         impls.traits.get(&instance)
     }
 
-    pub fn get_impl_for_trait_mut<'i>(
-        &mut self,
-        ty: &TypeKey,
-        trait_ty: &TypeKey,
-    ) -> &mut ImplInfo {
+    pub fn get_impl_for_trait_mut(&mut self, ty: &TypeKey, trait_ty: &TypeKey) -> &mut ImplInfo {
         let instance = self.probe_type_instance((*trait_ty).into()).unwrap();
         let impls = self.get_impls_mut(ty);
         if !impls.traits.contains_key(&instance) {

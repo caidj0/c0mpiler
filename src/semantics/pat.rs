@@ -36,7 +36,7 @@ impl SemanticAnalyzer {
     ) -> Result<PatResult, SemanticError> {
         let ty = match *by_ref {
             crate::ast::ByRef::Yes(mutability) => {
-                self.intern_type(ResolvedTy::ref_type(extra.ty.into(), mutability.into()))
+                self.intern_type(ResolvedTy::ref_type(extra.ty, mutability.into()))
             }
             crate::ast::ByRef::No => extra.ty.to_key(),
         };

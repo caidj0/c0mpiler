@@ -91,7 +91,7 @@ impl SemanticAnalyzer {
         ty.names == Some((FullName(vec![Symbol("String".to_string())]), None))
     }
 
-    pub(crate)  fn add_prelude_functions(&mut self) {
+    pub(crate) fn add_prelude_functions(&mut self) {
         let string_ty = self
             .add_type_placeholder(0, Symbol::from("String"), None)
             .unwrap();

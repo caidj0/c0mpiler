@@ -15,7 +15,7 @@ pub struct SemanticError {
 impl SemanticError {
     pub fn set_span(mut self, span: &Span) -> Self {
         if self.span.is_none() {
-            self.span = Some(span.clone());
+            self.span = Some(*span);
         }
 
         self
@@ -110,7 +110,13 @@ impl Display for SemanticError {
 
         #[cfg(not(debug_assertions))]
         {
-            writeln!(f, "{:?}" at {}:{}, self.kind, self.span.unwrap().begin.line + 1, self.span.unwrap().begin.col)
+            writeln!(
+                f,
+                "{:?} at {}:{}",
+                self.kind,
+                self.span.unwrap().begin.line + 1,
+                self.span.unwrap().begin.col
+            )
         }
     }
 }

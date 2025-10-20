@@ -505,7 +505,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
 
                 let ty = self.analyzer.probe_type(intern).unwrap();
 
-                let value: u32 = parse_u32(&symbol)?;
+                let value: u32 = parse_u32(symbol)?;
 
                 use crate::semantics::resolved_ty::BuiltInTyKind::*;
                 use crate::semantics::resolved_ty::ResolvedTyKind::*;
@@ -622,14 +622,14 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         let index_value = self
-            .visit_expr(&index, self.analyzer.usize_type().to_key().into())?
+            .visit_expr(index, self.analyzer.usize_type().to_key().into())?
             .into_constant_int()
             .unwrap();
 
         let array_ty = ResolvedTy::array_type(extra.ty.into(), None);
         let array_intern = self.analyzer.intern_type(array_ty);
         let mut array_value = self
-            .visit_expr(&array, array_intern.into())?
+            .visit_expr(array, array_intern.into())?
             .into_constant_array()
             .unwrap();
 
@@ -666,7 +666,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
                 .search_value_by_path(self.scope_id.unwrap(), qself, path)?;
 
         let value = self.analyzer.get_place_value_by_index(&value_index).clone();
-        let ty = value.value.ty.clone();
+        let ty = value.value.ty;
         self.analyzer.ty_intern_eq(extra.ty.into(), ty)?;
         let const_value = value
             .value

@@ -7,7 +7,8 @@ use crate::{
     },
     is_keyword, kind_check,
     lexer::TokenIter,
-    loop_until, match_keyword, tokens::TokenType,
+    loop_until, match_keyword,
+    tokens::TokenType,
 };
 
 #[derive(Debug)]

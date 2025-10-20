@@ -151,19 +151,18 @@ impl<'analyzer> TypeSolver<'analyzer> {
             _ => {}
         };
 
-        if self.downgrade && left_ty.names.is_none() && right_ty.names.is_none() {
-            match (&left_ty.kind, &right_ty.kind) {
-                (
-                    ResolvedTyKind::Ref(inner1, RefMutability::Not),
-                    ResolvedTyKind::Ref(inner2, RefMutability::Mut),
-                ) => {
-                    self.downgrade = false;
-                    self.eq(*inner1, *inner2)?;
-                    self.downgrade = true;
-                    return Ok(());
-                }
-                _ => {}
-            }
+        if self.downgrade
+            && left_ty.names.is_none()
+            && right_ty.names.is_none()
+            && let (
+                ResolvedTyKind::Ref(inner1, RefMutability::Not),
+                ResolvedTyKind::Ref(inner2, RefMutability::Mut),
+            ) = (&left_ty.kind, &right_ty.kind)
+        {
+            self.downgrade = false;
+            self.eq(*inner1, *inner2)?;
+            self.downgrade = true;
+            return Ok(());
         }
 
         self.downgrade = false;
@@ -211,18 +210,14 @@ impl<'analyzer> TypeSolver<'analyzer> {
                 self.eq(t1, t2)?;
             }
             (Tup(t1), Tup(t2)) => {
-                zip(t1, t2)
-                    .map(|(x, y)| self.eq(x, y))
-                    .collect::<Result<(), TypeSolveError>>()?;
+                zip(t1, t2).try_for_each(|(x, y)| self.eq(x, y))?;
             }
             (Array(t1, _), Array(t2, _)) => {
                 self.eq(t1, t2)?;
             }
             (Fn(r1, a1), Fn(r2, a2)) => {
                 self.eq(r1, r2)?;
-                zip(a1, a2)
-                    .map(|(x, y)| self.eq(x, y))
-                    .collect::<Result<(), TypeSolveError>>()?;
+                zip(a1, a2).try_for_each(|(x, y)| self.eq(x, y))?;
             }
             _ => {}
         }
@@ -244,6 +239,7 @@ pub enum TypeSolveError {
 
 macro_rules! to_semantic_error {
     ($e:expr) => {{
+        #[allow(unused_mut)]
         let mut result = $e.map_err(|e| make_semantic_error!(TypeError(e)));
         #[cfg(debug_assertions)]
         {

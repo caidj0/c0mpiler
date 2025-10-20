@@ -248,18 +248,19 @@ impl AnyTyKind {
     pub fn can_cast_to<T>(&self, target: &ResolvedTyKind<T>) -> bool {
         use ResolvedTyKind::*;
 
-        match (self, target) {
-            (AnyTyKind::Any, _) => true,
-            (
-                AnyTyKind::AnyInt | AnyTyKind::AnySignedInt,
-                BuiltIn(BuiltInTyKind::I32 | BuiltInTyKind::ISize) | Any(AnyTyKind::AnySignedInt),
-            ) => true,
-            (
-                AnyTyKind::AnyInt,
-                BuiltIn(BuiltInTyKind::U32 | BuiltInTyKind::USize) | Any(AnyTyKind::AnyInt),
-            ) => true,
-            _ => false,
-        }
+        matches!(
+            (self, target),
+            (AnyTyKind::Any, _)
+                | (
+                    AnyTyKind::AnyInt | AnyTyKind::AnySignedInt,
+                    BuiltIn(BuiltInTyKind::I32 | BuiltInTyKind::ISize)
+                        | Any(AnyTyKind::AnySignedInt),
+                )
+                | (
+                    AnyTyKind::AnyInt,
+                    BuiltIn(BuiltInTyKind::U32 | BuiltInTyKind::USize) | Any(AnyTyKind::AnyInt),
+                )
+        )
     }
 }
 
@@ -430,14 +431,14 @@ impl SemanticAnalyzer {
         use crate::ast::ty::*;
         match kind {
             Slice(_) | TraitObject(_) | ImplTrait(_) => {
-                return Err(make_semantic_error!(NoImplementation).set_span(span));
+                Err(make_semantic_error!(NoImplementation).set_span(span))
             }
 
             Array(ArrayTy(inner, len_expr)) => {
                 let len_value =
                     self.const_eval(&len_expr.value, self.usize_type(), current_scope)?;
                 let len = *len_value.as_constant_int().unwrap();
-                let ty = self.resolve_type(&inner, current_scope)?;
+                let ty = self.resolve_type(inner, current_scope)?;
                 self.check_sized(ty)?;
 
                 Ok(self
@@ -464,7 +465,7 @@ impl SemanticAnalyzer {
                 _ => {
                     let inners = tys
                         .iter()
-                        .map(|x| self.resolve_type(&x, current_scope))
+                        .map(|x| self.resolve_type(x, current_scope))
                         .collect::<Result<Vec<_>, SemanticError>>()?;
                     for x in &inners {
                         self.check_sized(*x)?;
@@ -533,12 +534,12 @@ impl SemanticAnalyzer {
                             names: None,
                             kind: ResolvedTyKind::ImplicitSelf((*type_ptr).into()),
                         };
-                        Some(self.intern_type(ty).into())
+                        Some(self.intern_type(ty))
                     } else {
-                        Some((*type_ptr).into())
+                        Some(*type_ptr)
                     };
                 }
-                Impl { ty: type_ptr, .. } => return Some((*type_ptr).into()),
+                Impl { ty: type_ptr, .. } => return Some(*type_ptr),
                 Struct(..) | Enum(..) => impossible!(),
                 Fn {
                     ret_ty: _,
