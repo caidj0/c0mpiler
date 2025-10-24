@@ -1,229 +1,121 @@
-use std::collections::HashMap;
+pub mod extra;
+pub mod pat;
+pub mod ty;
+pub mod value;
+pub mod visitor;
+
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::NodeId,
-    ir::{
-        LLVMBuilder, LLVMContext, LLVMModule,
-        ir_type::{FunctionTypePtr, StructTypePtr, TypePtr},
+    impossible,
+    ir::{LLVMBuilder, LLVMContext, LLVMModule, ir_type::FunctionTypePtr, ir_value::ValuePtr},
+    irgen::value::ValuePtrContainer,
+    semantics::{
+        analyzer::SemanticAnalyzer,
+        resolved_ty::{ResolvedTy, TypeKey},
+        value::{PlaceValue, ValueIndex},
     },
-    semantics::{SemanticAnalyzer, resolved_ty::ResolvedTy, utils::FullName},
 };
 
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct IRGenHelper {
+pub struct IRGenerator<'analyzer> {
     pub(crate) context: LLVMContext,
     pub(crate) builder: LLVMBuilder,
     pub(crate) module: LLVMModule,
 
-    structs: HashMap<FullName, StructTypePtr>,
+    pub(crate) analyzer: &'analyzer SemanticAnalyzer,
+
+    pub(crate) value_indexes: HashMap<ValueIndex, ValuePtrContainer>,
 }
 
-impl Default for IRGenHelper {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[allow(dead_code)]
-impl IRGenHelper {
-    pub fn new() -> Self {
+impl<'analyzer> IRGenerator<'analyzer> {
+    pub fn new(analyzer: &'analyzer SemanticAnalyzer) -> Self {
         let mut context = LLVMContext::default();
         let builder = context.create_builder();
         let module = context.create_module("crate");
 
-        Self {
+        let mut generator = Self {
             context,
             builder,
             module,
+            analyzer,
+            value_indexes: HashMap::default(),
+        };
 
-            structs: Default::default(),
-        }
+        generator.add_struct_type();
+        generator.absorb_analyzer_function(0);
+
+        generator
     }
 
-    pub(crate) fn resolved_ty_to_ir_type(
-        &self,
-        analyzer: &SemanticAnalyzer,
-        ty: &ResolvedTy,
-        from: Option<NodeId>,
-    ) -> TypePtr {
-        match ty {
-            ResolvedTy::BuiltIn(symbol, _) => match symbol.0.as_str() {
-                "bool" => self.context.i1_type().into(),
-                "u32" | "i32" | "usize" | "isize" => self.context.i32_type().into(),
-                "char" => self.context.i8_type().into(),
-                "str" => todo!(),
-                "String" => todo!(),
-                _ => panic!("Impossible!"),
-            },
-            ResolvedTy::Named(full_name) => {
-                let info = analyzer.get_type_info(full_name);
-                match &info.kind {
-                    crate::semantics::utils::TypeKind::Placeholder => panic!("Impossible!"),
-                    crate::semantics::utils::TypeKind::Struct { .. } => {
-                        self.structs.get(full_name).unwrap().clone().into()
-                    }
-                    crate::semantics::utils::TypeKind::Enum { .. } => {
-                        self.context.i32_type().into()
-                    }
-                    crate::semantics::utils::TypeKind::Trait { .. } => {
-                        panic!("Impossible!")
-                    }
+    fn absorb_analyzer_struct(&self, structs: &mut HashMap<TypeKey, ResolvedTy>) {
+        self.absorb_scope_struct(0, structs);
+    }
+
+    fn absorb_scope_struct(&self, scope_id: NodeId, structs: &mut HashMap<TypeKey, ResolvedTy>) {
+        let scope = self.analyzer.get_scope(scope_id);
+        for (_, key) in &scope.types {
+            let ty = self.analyzer.probe_type((*key).into()).unwrap();
+
+            use crate::semantics::resolved_ty::ResolvedTyKind::*;
+            match ty.kind {
+                Tup(_) => {
+                    structs.insert(*key, ty);
                 }
+                _ => {}
             }
-            ResolvedTy::Ref(_, _) => self.context.ptr_type().into(),
-            ResolvedTy::Array(resolved_ty, length) => self
-                .context
-                .array_type(
-                    self.resolved_ty_to_ir_type(analyzer, resolved_ty, from),
-                    *length,
-                )
-                .into(),
-            ResolvedTy::Slice(_) => panic!("Impossible!"),
-            ResolvedTy::Tup(items) => match &items[..] {
-                [] => self.context.void_type().into(),
-                [inner] => self.resolved_ty_to_ir_type(analyzer, inner, from),
-                _ => panic!("Impossible!"),
-            },
-            ResolvedTy::Fn(items, resolved_ty) => self
-                .context
-                .function_type(
-                    self.resolved_ty_to_ir_type(analyzer, resolved_ty, from),
-                    items
-                        .iter()
-                        .map(|x| self.resolved_ty_to_ir_type(analyzer, x, from))
-                        .collect(),
-                )
-                .into(),
-            ResolvedTy::ImplicitSelf => self.resolved_ty_to_ir_type(
-                analyzer,
-                &analyzer.get_self_type_from(from.unwrap()).unwrap(),
-                from,
-            ),
-            ResolvedTy::Never => self.context.void_type().into(),
         }
-    }
 
-    pub(crate) fn add_struct_declares(&mut self, analyzer: &SemanticAnalyzer, scope_id: NodeId) {
-        let scope = analyzer.scopes.get(&scope_id).unwrap();
-        for info in scope.types.values() {
-            if let crate::semantics::utils::TypeKind::Struct { .. } = &info.kind {
-                let name = analyzer.get_full_name_from(scope_id, info.name.clone());
-                let ptr = self.context.create_opaque_struct_type(&name.to_string());
-                self.structs.insert(name, ptr);
-            }
-        }
         for child in &scope.children {
-            self.add_struct_declares(analyzer, *child);
+            self.absorb_scope_struct(*child, structs);
         }
     }
 
-    pub(crate) fn complete_struct_declares(&mut self, analyzer: &SemanticAnalyzer) {
-        for (name, ptr) in &self.structs {
-            let info = analyzer.get_type_info(name);
-            ptr.set_body(
-                info.kind
-                    .as_struct()
+    fn add_struct_type(&mut self) {
+        let mut map = HashMap::new();
+        self.absorb_analyzer_struct(&mut map);
+
+        for (_, ty) in &map {
+            self.context
+                .create_opaque_struct_type(&ty.names.as_ref().unwrap().0.to_string());
+        }
+
+        for (_, ty) in &map {
+            let struct_ty = self
+                .context
+                .get_named_struct_type(&ty.names.as_ref().unwrap().0.to_string())
+                .unwrap();
+            struct_ty.set_body(
+                ty.kind
+                    .as_tup()
                     .unwrap()
-                    .values()
-                    .map(|x| self.resolved_ty_to_ir_type(analyzer, x, None))
-                    .filter(|x| !x.is_void())
+                    .iter()
+                    .map(|x| self.transform_interned_ty_faithfully(*x))
                     .collect(),
                 false,
             );
         }
     }
 
-    pub(crate) fn add_globals(&mut self, analyzer: &SemanticAnalyzer, scope_id: NodeId) {
-        let scope = analyzer.scopes.get(&scope_id).unwrap();
-
-        for (symbol, var) in &scope.values {
-            let name = analyzer.get_full_name_from(scope_id, symbol.clone());
-            match &var.kind {
-                crate::semantics::utils::VariableKind::Fn => {
-                    let function_type =
-                        self.resolved_ty_to_ir_type(analyzer, &var.ty, Some(scope_id));
-                    debug_assert!(function_type.is_function());
-                    self.module.add_function(
-                        FunctionTypePtr(function_type),
-                        &name.to_string(),
-                        None,
-                    );
+    fn absorb_analyzer_function(&mut self, scope_id: NodeId) {
+        let scope = self.analyzer.get_scope(scope_id);
+        for (s, PlaceValue { value, .. }) in &scope.values {
+            use crate::semantics::value::ValueKind::*;
+            match &value.kind {
+                Constant(..) => {}
+                Fn { .. } => {
+                    let fn_ty = self.transform_interned_ty_faithfully(value.ty);
+                    let full_name = SemanticAnalyzer::get_full_name(scope_id, s.clone());
+                    let _ = self
+                        .module
+                        .add_function(fn_ty.into(), &full_name.to_string(), None);
                 }
-                crate::semantics::utils::VariableKind::Constant(const_eval_value) => {
-                    if let Some(initializer) =
-                        self.transform_constant(analyzer, scope_id, &var.ty, const_eval_value)
-                    {
-                        self.module
-                            .add_global_variable(true, initializer, &name.to_string());
-                    }
-                }
-                _ => {}
+                _ => impossible!(),
             }
         }
-    }
 
-    fn transform_constant(
-        &self,
-        analyzer: &SemanticAnalyzer,
-        scope_id: usize,
-        ty: &ResolvedTy,
-        const_eval_value: &crate::const_eval::ConstEvalValue,
-    ) -> Option<crate::ir::ir_value::ConstantPtr> {
-        Some(match const_eval_value {
-            crate::const_eval::ConstEvalValue::U32(num)
-            | crate::const_eval::ConstEvalValue::USize(num)
-            | crate::const_eval::ConstEvalValue::Integer(num) => self.context.get_i32(*num).into(),
-            crate::const_eval::ConstEvalValue::I32(num)
-            | crate::const_eval::ConstEvalValue::ISize(num)
-            | crate::const_eval::ConstEvalValue::SignedInteger(num) => {
-                self.context.get_i32(*num as u32).into()
-            }
-            crate::const_eval::ConstEvalValue::UnitStruct(_) => return None,
-            crate::const_eval::ConstEvalValue::Bool(b) => self.context.get_i1(*b).into(),
-            crate::const_eval::ConstEvalValue::Char(c) => self.context.get_i8(*c as u8).into(),
-            crate::const_eval::ConstEvalValue::RefStr(s) => self.context.get_string(s).into(),
-            crate::const_eval::ConstEvalValue::Array(const_eval_values) => {
-                let inner_ty = ty.as_array().unwrap().0;
-                let inner_ty1 = self.resolved_ty_to_ir_type(analyzer, inner_ty, Some(scope_id));
-                if const_eval_values.is_empty() || inner_ty1.is_void() {
-                    return None;
-                }
-                self.context
-                    .get_array(
-                        inner_ty1,
-                        const_eval_values
-                            .iter()
-                            .map(|x| {
-                                self.transform_constant(analyzer, scope_id, inner_ty, x)
-                                    .unwrap()
-                            })
-                            .collect(),
-                    )
-                    .into()
-            }
-            crate::const_eval::ConstEvalValue::Struct(full_name, hash_map) => {
-                let info = analyzer.get_type_info(full_name).kind.as_struct().unwrap();
-
-                let struct_ty = self.structs.get(full_name)?;
-
-                self.context
-                    .get_struct(
-                        struct_ty.clone(),
-                        hash_map
-                            .values()
-                            .zip(info.values())
-                            .filter_map(|(c, t)| self.transform_constant(analyzer, scope_id, t, c))
-                            .collect(),
-                    )
-                    .into()
-            }
-            crate::const_eval::ConstEvalValue::Enum(full_name, symbol) => {
-                let info = analyzer.get_type_info(full_name).kind.as_enum().unwrap();
-                let num = info.iter().position(|x| x == symbol).unwrap();
-                self.context.get_i32(num as u32).into()
-            }
-            _ => panic!("Impossible"),
-        })
+        for id in &scope.children {
+            self.absorb_analyzer_function(*id);
+        }
     }
 }

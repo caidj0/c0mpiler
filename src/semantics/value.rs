@@ -71,7 +71,7 @@ impl UnEvalConstant {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ValueIndex {
     Place(PlaceValueIndex),
     Expr(NodeId),
@@ -89,13 +89,13 @@ impl From<NodeId> for ValueIndex {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlaceValueIndex {
     pub(crate) name: Symbol,
     pub(crate) kind: ValueIndexKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ValueIndexKind {
     Bindings {
         binding_id: NodeId,
@@ -231,7 +231,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn get_value_by_index(&mut self, index: &ValueIndex) -> &Value {
+    pub fn get_value_by_index(&self, index: &ValueIndex) -> &Value {
         match index {
             ValueIndex::Place(place_value_index) => {
                 &self.get_place_value_by_index(place_value_index).value

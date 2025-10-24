@@ -33,7 +33,7 @@ macro_rules! add_func {
     };
 }
 
-pub trait Visitor<'ast> {
+pub(crate) trait Visitor<'ast> {
     type DefaultRes<'res>
     where
         Self: 'res;

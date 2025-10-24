@@ -398,6 +398,8 @@ impl LLVMContextImpl {
     }
 }
 
+pub struct BuilderLocation(Option<BasicBlockPtr>);
+
 #[derive(Debug)]
 pub struct LLVMBuilder {
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
@@ -405,6 +407,14 @@ pub struct LLVMBuilder {
 }
 
 impl LLVMBuilder {
+    pub fn get_location(&self) -> BuilderLocation {
+        BuilderLocation(self.target_block.clone())
+    }
+
+    pub fn set_location(&mut self, location: BuilderLocation) {
+        self.target_block = location.0;
+    }
+
     pub fn locate(&mut self, target_block: BasicBlockPtr) {
         self.target_block = Some(target_block)
     }

@@ -159,6 +159,11 @@ impl SemanticAnalyzer {
         self.expr_results.get(expr_id).unwrap()
     }
 
+    pub(crate) fn get_expr_type(&self, expr_id: &NodeId) -> TypeIntern {
+        let index = &self.get_expr_result(expr_id).value_index;
+        self.get_value_by_index(&index).ty
+    }
+
     pub(crate) fn merge_result_info<'a, I, E>(
         &self,
         iter: I,

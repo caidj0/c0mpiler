@@ -104,6 +104,13 @@ macro_rules! define_extension {
                         value.0
                     }
                 }
+
+                impl From<TypePtr> for [<$name Type Ptr>] {
+                    fn from(value: TypePtr) -> Self {
+                        debug_assert!(value.[<is_ $name:lower>]());
+                        Self(value)
+                    }
+                }
             )*
         }
     };

@@ -196,8 +196,6 @@ impl<'analyzer> TypeSolver<'analyzer> {
         // 有名字的 type 一定是唯一的
         if left_ty.names != right_ty.names {
             if !(left_ty.is_any_type() || right_ty.is_any_type()) {
-                println!("{left_ty:?}");
-                println!("{right_ty:?}");
                 return Err(TypeSolveError::NameMismatch);
             } else {
                 return Ok(());
