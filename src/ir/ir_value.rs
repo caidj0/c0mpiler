@@ -86,6 +86,7 @@ pub enum Constant {
     ConstantArray(ConstantArray),
     ConstantStruct(ConstantStruct),
     ConstantString(ConstantString),
+    ConstantNull(ConstantNull),
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -99,6 +100,9 @@ pub struct ConstantStruct(pub Vec<ConstantPtr>);
 
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ConstantString(pub String);
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub struct ConstantNull;
 
 #[derive(Debug)]
 pub struct Instruction {
@@ -120,6 +124,7 @@ impl Instruction {
             InstructionKind::Icmp(..) => "icmp",
             InstructionKind::Phi => "phi",
             InstructionKind::Select => "select",
+            InstructionKind::PtrToInt { .. } => "ptrtoint",
         }
     }
 }
@@ -136,7 +141,8 @@ pub enum InstructionKind {
     Store,
     Icmp(ICmpCode),
     Phi,
-    Select, // TODO
+    Select,
+    PtrToInt,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -251,7 +257,7 @@ macro_rules! define_extension {
 }
 
 define_extension!(Value; BasicBlock, Argument, Constant, Instruction, GlobalObject);
-define_extension!(Constant; ConstantInt, ConstantArray, ConstantStruct, ConstantString);
+define_extension!(Constant; ConstantInt, ConstantArray, ConstantStruct, ConstantString, ConstantNull);
 
 impl Hash for ConstantPtr {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

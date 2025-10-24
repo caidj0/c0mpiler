@@ -18,10 +18,10 @@ use crate::ir::{
         PtrType, PtrTypePtr, StructType, StructTypePtr, Type, TypePtr, VoidType,
     },
     ir_value::{
-        Argument, ArgumentPtr, BasicBlock, BasicBlockPtr, BinaryOpcode, ConstantArray,
-        ConstantArrayPtr, ConstantInt, ConstantIntPtr, ConstantPtr, ConstantString,
-        ConstantStringPtr, ConstantStruct, ConstantStructPtr, GlobalObjectPtr, ICmpCode,
-        Instruction, InstructionPtr, Value, ValueBase, ValuePtr,
+        Argument, ArgumentPtr, BasicBlock, BasicBlockPtr, BinaryOpcode, Constant, ConstantArray,
+        ConstantArrayPtr, ConstantInt, ConstantIntPtr, ConstantNull, ConstantNullPtr, ConstantPtr,
+        ConstantString, ConstantStringPtr, ConstantStruct, ConstantStructPtr, GlobalObjectPtr,
+        ICmpCode, Instruction, InstructionPtr, Value, ValueBase, ValuePtr,
     },
 };
 
@@ -164,6 +164,10 @@ impl LLVMContext {
         self.ctx_impl.borrow_mut().get_i32(value)
     }
 
+    pub fn get_null(&self) -> ConstantNullPtr {
+        self.ctx_impl.borrow_mut().get_null()
+    }
+
     pub fn get_array(&self, inner_ty: TypePtr, values: Vec<ConstantPtr>) -> ConstantArrayPtr {
         self.ctx_impl.borrow_mut().get_array(inner_ty, values)
     }
@@ -212,6 +216,7 @@ pub struct LLVMContextImpl {
     array_pool: HashMap<(TypePtr, Vec<ConstantPtr>), ConstantArrayPtr>,
     struct_pool: HashMap<Vec<ConstantPtr>, ConstantStructPtr>,
     string_pool: HashMap<String, ConstantStringPtr>,
+    null: Option<ConstantNullPtr>,
 }
 
 impl LLVMContextImpl {
@@ -313,6 +318,20 @@ impl LLVMContextImpl {
 
     fn get_i32(&mut self, value: u32) -> ConstantIntPtr {
         self.get_int(value, 32)
+    }
+
+    fn get_null(&mut self) -> ConstantNullPtr {
+        if let Some(null) = &self.null {
+            null.clone()
+        } else {
+            let t = ConstantNullPtr(ConstantPtr(ValuePtr::new(Value {
+                base: ValueBase::new(self.ptr_type().into(), None),
+                kind: ir_value::ValueKind::Constant(Constant::ConstantNull(ConstantNull)),
+            })));
+
+            self.null = Some(t.clone());
+            t.into()
+        }
     }
 
     fn get_array(&mut self, inner_ty: TypePtr, values: Vec<ConstantPtr>) -> ConstantArrayPtr {
@@ -677,6 +696,105 @@ impl LLVMBuilder {
             }
             .into(),
         ))
+    }
+
+    pub fn build_ptr_to_int(
+        &self,
+        value: ValuePtr,
+        to_ty: IntTypePtr,
+        name: Option<&str>,
+    ) -> InstructionPtr {
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase::new(to_ty.into(), name),
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::PtrToInt,
+                    operands: vec![value],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    // TODO: 完成 typelayout, 这个也太抽象了🫡
+    pub fn build_get_size(&self, ty: TypePtr) -> ValuePtr {
+        let value: ConstantPtr = self.ctx_impl.borrow_mut().get_null().into();
+        let p = self.build_getelementptr(
+            ty,
+            value.into(),
+            vec![self.ctx_impl.borrow_mut().get_i32(1).into()],
+            None,
+        );
+        self.build_ptr_to_int(
+            p.into(),
+            self.ctx_impl.borrow_mut().i32_type(),
+            Some("size"),
+        )
+        .into()
+    }
+
+    pub fn build_memcpy(
+        &self,
+        module: &mut LLVMModule,
+        dest: ValuePtr,
+        src: ValuePtr,
+        ty: TypePtr,
+    ) -> InstructionPtr {
+        const NAME: &str = "llvm.memcpy.p0.p0.i32";
+        self.build_memxxx(module, dest, src, ty, NAME)
+    }
+
+    pub fn build_memmove(
+        &self,
+        module: &mut LLVMModule,
+        dest: ValuePtr,
+        src: ValuePtr,
+        ty: TypePtr,
+    ) -> InstructionPtr {
+        const NAME: &str = "llvm.memmove.p0.p0.i32";
+        self.build_memxxx(module, dest, src, ty, NAME)
+    }
+
+    fn build_memxxx(
+        &self,
+        module: &mut LLVMModule,
+        dest: Rc<Value>,
+        src: Rc<Value>,
+        ty: Rc<Type>,
+        name: &str,
+    ) -> InstructionPtr {
+        let f = if let Some(f) = module.get_function(name) {
+            f
+        } else {
+            let mut ctx = self.ctx_impl.borrow_mut();
+            let void_type = ctx.void_type();
+            let ptr_type = ctx.ptr_type();
+            let i32_type = ctx.i32_type();
+            let i1_type = ctx.i1_type();
+            let t = ctx.function_type(
+                void_type.into(),
+                vec![
+                    ptr_type.clone().into(),
+                    ptr_type.into(),
+                    i32_type.into(),
+                    i1_type.into(),
+                ],
+            );
+            module.add_function(t, name, None)
+        };
+
+        let size = self.build_get_size(ty);
+
+        self.build_call(
+            f,
+            vec![
+                dest,
+                src,
+                size,
+                self.ctx_impl.borrow_mut().get_i1(false).into(),
+            ],
+            None,
+        )
     }
 }
 

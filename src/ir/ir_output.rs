@@ -365,6 +365,12 @@ impl IRPrint for InstructionPtr {
                 chunked.ir_print(helper);
             }
             Select => operands.ir_print(helper),
+            PtrToInt => {
+                operands.ir_print(helper);
+                helper.append_white("");
+                helper.append_white("to");
+                self.get_type().ir_print(helper);
+            }
         }
     }
 }
@@ -443,7 +449,7 @@ where
 impl IRPrint for Constant {
     fn ir_print(&self, helper: &mut PrintHelper) {
         match self {
-            Constant::ConstantInt(constant_int) => helper.append(&format!("{}", constant_int.0)), // clang 能够正确处理大于 2147483647 的数
+            Constant::ConstantInt(constant_int) => helper.append(&format!("{}", constant_int.0)),
             Constant::ConstantArray(constant_array) => {
                 helper.append("[");
                 helper.value_with_type = true;
@@ -462,6 +468,7 @@ impl IRPrint for Constant {
                 // TODO: 匿名常量的处理
                 helper.append(&format!(r##""{}""##, bytes_escape(&constant_string.0)));
             }
+            Constant::ConstantNull(_) => helper.append("null"),
         }
     }
 }
