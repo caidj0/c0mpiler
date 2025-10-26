@@ -802,10 +802,33 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_assign_op_expr<'tmp>(
         &mut self,
-        expr: &'ast AssignOpExpr,
+        AssignOpExpr(op, left, right): &'ast AssignOpExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let left_value = self.visit_expr(&left, extra)?;
+        let right_value = self.visit_expr(&right, extra)?;
+        let left_raw = self.get_raw_value(left_value.clone());
+        let right_raw = self.get_raw_value(right_value);
+        let intern = self.analyzer.get_expr_type(&left.id);
+
+        let bin_op = match op {
+            AssignOp::AddAssign => BinOp::Add,
+            AssignOp::SubAssign => BinOp::Sub,
+            AssignOp::MulAssign => BinOp::Mul,
+            AssignOp::DivAssign => BinOp::Div,
+            AssignOp::RemAssign => BinOp::Rem,
+            AssignOp::BitXorAssign => BinOp::BitXor,
+            AssignOp::BitAndAssign => BinOp::BitAnd,
+            AssignOp::BitOrAssign => BinOp::BitOr,
+            AssignOp::ShlAssign => BinOp::Shl,
+            AssignOp::ShrAssign => BinOp::Shr,
+        };
+
+        let v = self.visit_binary_impl(bin_op, left_raw, right_raw, intern);
+        let ptr = self.get_value_ptr(left_value);
+        self.store_to_ptr(ptr.value_ptr, v);
+
+        None
     }
 
     fn visit_field_expr<'tmp>(

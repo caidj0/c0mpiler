@@ -20,8 +20,21 @@ impl<'analyzer> IRGenerator<'analyzer> {
     ) -> Option<ValuePtrContainer> {
         let value1 = self.visit_expr(expr1, extra)?;
         let value2 = self.visit_expr(expr2, extra)?;
+        let raw1 = self.get_raw_value(value1);
+        let raw2 = self.get_raw_value(value2);
 
         let intern = self.analyzer.get_expr_type(&extra.self_id);
+
+        Some(self.visit_binary_impl(bin_op, raw1, raw2, intern))
+    }
+
+    pub(crate) fn visit_binary_impl(
+        &mut self,
+        bin_op: BinOp,
+        raw1: std::rc::Rc<crate::ir::ir_value::Value>,
+        raw2: std::rc::Rc<crate::ir::ir_value::Value>,
+        intern: crate::semantics::resolved_ty::TypeIntern,
+    ) -> ValuePtrContainer {
         let resolved_ty = self.analyzer.probe_type(intern).unwrap();
         let is_signed = resolved_ty.is_signed_integer();
         let ty = self.transform_ty_faithfully(&resolved_ty);
@@ -58,18 +71,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
             _ => impossible!(),
         };
 
-        let value = self.builder.build_binary(
-            op_code,
-            ty,
-            self.get_raw_value(value1),
-            self.get_raw_value(value2),
-            None,
-        );
+        let value = self.builder.build_binary(op_code, ty, raw1, raw2, None);
 
-        Some(ValuePtrContainer {
+        ValuePtrContainer {
             value_ptr: value.into(),
             kind: ContainerKind::Raw,
-        })
+        }
     }
 
     pub(crate) fn visit_compare(

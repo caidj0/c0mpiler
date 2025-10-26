@@ -7,12 +7,13 @@ use crate::{
     semantics::{resolved_ty::TypeIntern, value::ValueIndex},
 };
 
+#[derive(Debug, Clone)]
 pub(crate) struct ValuePtrContainer {
     pub(crate) value_ptr: ValuePtr,
     pub(crate) kind: ContainerKind,
 }
 
-#[derive(Debug, PartialEq, Eq, EnumAsInner)]
+#[derive(Debug, PartialEq, Eq, EnumAsInner, Clone)]
 pub(crate) enum ContainerKind {
     Raw,
     Ptr(TypePtr),
