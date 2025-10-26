@@ -365,8 +365,10 @@ impl IRPrint for InstructionPtr {
                 chunked.ir_print(helper);
             }
             Select => operands.ir_print(helper),
-            PtrToInt => {
+            PtrToInt | Trunc | Zext | Sext => {
+                helper.value_with_type = true;
                 operands.ir_print(helper);
+                helper.value_with_type = false;
                 helper.append_white("");
                 helper.append_white("to");
                 self.get_type().ir_print(helper);

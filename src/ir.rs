@@ -820,6 +820,45 @@ impl LLVMBuilder {
         let zero = ctx.get_int(0, bits);
         self.build_binary(BinaryOpcode::Sub, ty.clone(), zero.into(), operant, None)
     }
+
+    pub fn build_zext(&self, from: ValuePtr, to: TypePtr, name: Option<&str>) -> InstructionPtr {
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase::new(to, name),
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Zext,
+                    operands: vec![from],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_sext(&self, from: ValuePtr, to: TypePtr, name: Option<&str>) -> InstructionPtr {
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase::new(to, name),
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Sext,
+                    operands: vec![from],
+                }),
+            }
+            .into(),
+        ))
+    }
+
+    pub fn build_trunc(&self, from: ValuePtr, to: TypePtr, name: Option<&str>) -> InstructionPtr {
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase::new(to, name),
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Trunc,
+                    operands: vec![from],
+                }),
+            }
+            .into(),
+        ))
+    }
 }
 
 #[derive(Debug)]

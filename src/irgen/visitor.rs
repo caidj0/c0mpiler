@@ -538,16 +538,33 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_cast_expr<'tmp>(
         &mut self,
-        expr: &'ast CastExpr,
+        CastExpr(expr, _): &'ast CastExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let expr_value = self.visit_expr(expr, extra)?;
+        let expr_raw = self.get_raw_value(expr_value);
+        let ty = self.transform_interned_ty_faithfully(self.analyzer.get_expr_type(&extra.self_id));
+
+        let src_bits = expr_raw.get_type_as_int().unwrap().0;
+        let target_bits = ty.as_int().unwrap().0;
+        let value = if src_bits < target_bits {
+            self.builder.build_zext(expr_raw, ty, None).into()
+        } else if src_bits == target_bits {
+            expr_raw
+        } else {
+            impossible!()
+        };
+
+        Some(ValuePtrContainer {
+            value_ptr: value,
+            kind: ContainerKind::Raw,
+        })
     }
 
     fn visit_let_expr<'tmp>(
         &mut self,
-        expr: &'ast LetExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast LetExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         impossible!()
     }

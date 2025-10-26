@@ -125,6 +125,9 @@ impl Instruction {
             InstructionKind::Phi => "phi",
             InstructionKind::Select => "select",
             InstructionKind::PtrToInt { .. } => "ptrtoint",
+            InstructionKind::Trunc => "trunc",
+            InstructionKind::Zext => "zext",
+            InstructionKind::Sext => "sext",
         }
     }
 }
@@ -143,6 +146,9 @@ pub enum InstructionKind {
     Phi,
     Select,
     PtrToInt,
+    Trunc,
+    Zext,
+    Sext,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
