@@ -16,6 +16,22 @@ pub enum Type {
     Label(LabelType), // basic block 专用
 }
 
+impl Type {
+    pub fn is_aggregate_type(&self) -> bool {
+        matches!(
+            self,
+            Type::Array(..) | Type::Function(..) | Type::Struct(..)
+        )
+    }
+
+    pub fn is_zero_length_type(&self) -> bool {
+        self.is_void()
+            || self.as_struct().map_or(false, |x| {
+                x.kind.borrow().as_body().map_or(false, |y| y.0.is_empty())
+            })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IntType(pub u8);
 

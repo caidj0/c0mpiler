@@ -31,14 +31,6 @@ impl TransfromTypeConfig {
 }
 
 impl<'analyzer> IRGenerator<'analyzer> {
-    pub(crate) fn is_aggregate_intern(&self, x: TypeIntern) -> bool {
-        let p = self.analyzer.probe_type(x).unwrap();
-        matches!(
-            p.kind,
-            ResolvedTyKind::Array(..) | ResolvedTyKind::Fn(..) | ResolvedTyKind::Tup(..)
-        )
-    }
-
     pub(crate) fn is_aggregate_type(&self, x: &ResolvedTy) -> bool {
         matches!(
             x.kind,
@@ -64,6 +56,10 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
     pub(crate) fn transform_interned_ty_for_reg(&self, intern: TypeIntern) -> TypePtr {
         self.transform_interned_ty_impl(intern, TransfromTypeConfig::FirstClass)
+    }
+
+    pub(crate) fn transform_ty_faithfully(&self, ty: &ResolvedTy) -> TypePtr {
+        self.transform_ty_impl(ty, TransfromTypeConfig::Faithful)
     }
 
     pub(crate) fn transform_interned_ty_impl(

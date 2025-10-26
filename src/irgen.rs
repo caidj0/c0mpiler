@@ -3,17 +3,23 @@ pub mod pat;
 pub mod ty;
 pub mod value;
 pub mod visitor;
+pub mod expr;
 
 use std::collections::{HashMap, HashSet};
 
 use crate::{
     ast::NodeId,
     impossible,
-    ir::{LLVMBuilder, LLVMContext, LLVMModule, ir_type::FunctionTypePtr, ir_value::ValuePtr},
+    ir::{
+        LLVMBuilder, LLVMContext, LLVMModule,
+        ir_type::{FunctionTypePtr, TypePtr},
+        ir_value::ValuePtr,
+    },
     irgen::value::ValuePtrContainer,
     semantics::{
         analyzer::SemanticAnalyzer,
         resolved_ty::{ResolvedTy, TypeKey},
+        utils::FullName,
         value::{PlaceValue, ValueIndex},
     },
 };
@@ -26,6 +32,8 @@ pub struct IRGenerator<'analyzer> {
     pub(crate) analyzer: &'analyzer SemanticAnalyzer,
 
     pub(crate) value_indexes: HashMap<ValueIndex, ValuePtrContainer>,
+
+    pub(crate) functions: HashMap<String, (TypePtr, Vec<TypePtr>)>,
 }
 
 impl<'analyzer> IRGenerator<'analyzer> {
@@ -40,6 +48,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
             module,
             analyzer,
             value_indexes: HashMap::default(),
+            functions: HashMap::default(),
         };
 
         generator.add_struct_type();
@@ -104,11 +113,22 @@ impl<'analyzer> IRGenerator<'analyzer> {
             match &value.kind {
                 Constant(..) => {}
                 Fn { .. } => {
-                    let fn_ty = self.transform_interned_ty_faithfully(value.ty);
+                    let fn_resloved_ty = self.analyzer.probe_type(value.ty).unwrap();
+                    let f = {
+                        let (r, a) = fn_resloved_ty.kind.as_fn().unwrap();
+                        (
+                            self.transform_interned_ty_faithfully(*r),
+                            a.iter()
+                                .map(|x| self.transform_interned_ty_faithfully(*x))
+                                .collect(),
+                        )
+                    };
+                    let fn_ty = self.transform_ty_faithfully(&fn_resloved_ty);
                     let full_name = SemanticAnalyzer::get_full_name(scope_id, s.clone());
                     let _ = self
                         .module
                         .add_function(fn_ty.into(), &full_name.to_string(), None);
+                    self.functions.insert(full_name.to_string(), f);
                 }
                 _ => impossible!(),
             }

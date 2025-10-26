@@ -9,7 +9,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         &mut self,
         BindingMode(by_ref, _): &BindingMode,
         ident: &crate::ast::Ident,
-        PatExtra { ptr, self_id }: PatExtra,
+        PatExtra { value: ptr, self_id }: PatExtra,
     ) {
         let index = ValueIndex::Place(PlaceValueIndex {
             name: ident.symbol.clone(),

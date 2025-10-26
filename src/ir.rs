@@ -417,12 +417,12 @@ impl LLVMContextImpl {
     }
 }
 
-pub struct BuilderLocation(Option<BasicBlockPtr>);
+pub struct BuilderLocation(Option<(FunctionPtr, BasicBlockPtr)>);
 
 #[derive(Debug)]
 pub struct LLVMBuilder {
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
-    target_block: Option<BasicBlockPtr>,
+    target_block: Option<(FunctionPtr, BasicBlockPtr)>,
 }
 
 impl LLVMBuilder {
@@ -434,12 +434,20 @@ impl LLVMBuilder {
         self.target_block = location.0;
     }
 
-    pub fn locate(&mut self, target_block: BasicBlockPtr) {
-        self.target_block = Some(target_block)
+    pub fn get_current_function(&self) -> &FunctionPtr {
+        &self.target_block.as_ref().unwrap().0
+    }
+
+    pub fn get_current_basic_block(&self) -> &BasicBlockPtr {
+        &self.target_block.as_ref().unwrap().1
+    }
+
+    pub fn locate(&mut self, target_function: FunctionPtr, target_block: BasicBlockPtr) {
+        self.target_block = Some((target_function, target_block))
     }
 
     fn insert(&self, ins: InstructionPtr) -> InstructionPtr {
-        let bb = self.target_block.as_ref().unwrap().as_basic_block();
+        let bb = self.target_block.as_ref().unwrap().1.as_basic_block();
         bb.instructions.borrow_mut().push(ins.clone());
         ins
     }
@@ -926,7 +934,7 @@ fn foo() {
 
     let bb = context.append_basic_block(&func, "entry");
 
-    builder.locate(bb);
+    builder.locate(func.clone(), bb);
 
     let addee_ptr = builder.build_getelementptr(
         struct_type.clone().into(),

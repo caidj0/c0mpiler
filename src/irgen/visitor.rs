@@ -3,12 +3,13 @@ use std::iter::zip;
 use crate::{
     ast::{BindingMode, Crate, Mutability, expr::*, item::*, pat::*, stmt::*},
     impossible,
+    ir::{globalxxx::FunctionPtr, ir_value::GlobalObjectPtr},
     irgen::{
         IRGenerator,
         extra::{ExprExtra, PatExtra},
         value::{ContainerKind, ValuePtrContainer},
     },
-    semantics::{analyzer::SemanticAnalyzer, visitor::Visitor},
+    semantics::{analyzer::SemanticAnalyzer, value::PlaceValueIndex, visitor::Visitor},
 };
 
 impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
@@ -96,85 +97,53 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         }: &'ast FnItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let fn_value = self
-            .analyzer
-            .get_scope_value(extra.scope_id, &ident.symbol)
-            .unwrap();
-
-        let probe = self.analyzer.probe_type(fn_value.value.ty).unwrap();
-        let ret_ty_is_aggregate = self.is_aggregate_intern(*probe.kind.as_fn().unwrap().0);
-        let arg_is_aggregate: Vec<_> = probe
-            .kind
-            .as_fn()
-            .unwrap()
-            .1
-            .iter()
-            .map(|x| self.is_aggregate_intern(*x))
-            .collect();
-
-        let name = SemanticAnalyzer::get_full_name(extra.scope_id, ident.symbol.clone());
-
-        let fn_ptr = self.module.get_function(&name.to_string()).unwrap();
-        let ret_ty = fn_ptr.get_type_as_function().unwrap().0.clone();
+        let full_name = SemanticAnalyzer::get_full_name(extra.scope_id, ident.symbol.clone());
+        let name_string = full_name.to_string();
+        let fn_ptr = self.module.get_function(&name_string).unwrap();
 
         let bb = self.context.append_basic_block(&fn_ptr, "entry");
-
         let loc = self.builder.get_location();
+        self.builder.locate(fn_ptr.clone(), bb);
 
-        self.builder.locate(bb);
+        let (ret_type, arg_types) = self.functions.get(&name_string).unwrap().clone();
 
         let args = fn_ptr.as_function().args();
-        let params = &decl.inputs;
-        debug_assert_eq!(args.len(), params.len());
-        zip(zip(args, arg_is_aggregate), params).for_each(
-            |(
-                (ptr, is_aggregate),
-                Param {
-                    ty: _,
-                    pat,
-                    id: _,
-                    span: _,
-                },
-            )| {
+
+        zip(args, arg_types)
+            .zip(&decl.inputs)
+            .for_each(|((arg, ty), param)| {
                 self.visit_pat(
-                    pat,
+                    &param.pat,
                     PatExtra {
-                        ptr: ValuePtrContainer {
-                            ptr: ptr.clone().into(),
-                            kind: if is_aggregate {
-                                ContainerKind::Ptr
+                        value: ValuePtrContainer {
+                            value_ptr: arg.clone().into(),
+                            kind: if ty.is_aggregate_type() {
+                                ContainerKind::Ptr(ty)
                             } else {
                                 ContainerKind::Raw
                             },
                         },
                         self_id: 0,
                     },
-                );
+                )
+            });
+
+        let value = self.visit_block_expr(
+            body.as_ref().unwrap(),
+            ExprExtra {
+                scope_id: extra.self_id,
+                self_id: 0,
             },
         );
-
-        if let Some(body) = body {
-            let value = self.visit_block_expr(
-                &body,
-                ExprExtra {
-                    scope_id: extra.self_id,
-                    self_id: body.id,
-                },
-            );
-            if ret_ty.is_void() {
-                self.builder.build_return(None);
+        self.builder.build_return(if let Some(value) = value {
+            Some(if ret_type.is_aggregate_type() {
+                self.get_value_ptr(value).value_ptr
             } else {
-                let value = value.unwrap();
-
-                let return_value = if ret_ty_is_aggregate {
-                    self.get_value_ptr(value).ptr
-                } else {
-                    self.get_raw_value(value, &ret_ty)
-                };
-
-                self.builder.build_return(Some(return_value));
-            }
-        }
+                self.get_raw_value(value)
+            })
+        } else {
+            None
+        });
 
         self.builder.set_location(loc);
     }
@@ -272,13 +241,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             LocalKind::Init(expr) => self.visit_expr(&expr, extra).unwrap(),
         };
 
-        self.visit_pat(
-            pat,
-            PatExtra {
-                ptr: value,
-                self_id: 0,
-            },
-        );
+        self.visit_pat(pat, PatExtra { value, self_id: 0 });
 
         None
     }
@@ -333,33 +296,75 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let intern = self.analyzer.get_expr_type(&extra.self_id);
         let ty = self.transform_interned_ty_faithfully(intern);
 
-        let value = self.builder.build_alloca(ty, None);
+        let inner_ty = ty.as_array().unwrap().0.clone();
+        let value = self.builder.build_alloca(ty.clone(), None);
 
         for (i, expr) in exprs.iter().enumerate() {
             let v = self.visit_expr(expr, extra)?;
-            todo!()
+            let ith = self.builder.build_getelementptr(
+                inner_ty.clone(),
+                value.clone().into(),
+                vec![self.context.get_i32(i as u32).into()],
+                None,
+            );
+            self.store_to_ptr(ith.into(), v);
         }
 
         Some(ValuePtrContainer {
-            ptr: value.into(),
-            kind: ContainerKind::Ptr,
+            value_ptr: value.into(),
+            kind: ContainerKind::Ptr(ty),
         })
     }
 
     fn visit_const_block_expr<'tmp>(
         &mut self,
-        expr: &'ast ConstBlockExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast ConstBlockExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         impossible!()
     }
 
     fn visit_call_expr<'tmp>(
         &mut self,
-        expr: &'ast CallExpr,
+        CallExpr(fn_expr, args_expr): &'ast CallExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let fn_value = self.visit_expr(fn_expr, extra)?;
+        debug_assert!(fn_value.value_ptr.is_function_type());
+        let args = args_expr
+            .iter()
+            .map(|x| self.visit_expr(&x, extra))
+            .collect::<Option<Vec<_>>>()?;
+
+        let (ret_ty, arg_tys) = self
+            .functions
+            .get(fn_value.value_ptr.get_name().as_ref().unwrap())
+            .unwrap();
+
+        let ins = self.builder.build_call(
+            FunctionPtr(GlobalObjectPtr(fn_value.value_ptr)),
+            args.into_iter()
+                .zip(arg_tys)
+                .into_iter()
+                .map(|(x, ty)| {
+                    if ty.is_aggregate_type() {
+                        self.get_value_ptr(x).value_ptr
+                    } else {
+                        self.get_raw_value(x)
+                    }
+                })
+                .collect(),
+            None,
+        );
+
+        Some(ValuePtrContainer {
+            value_ptr: ins.into(),
+            kind: if ret_ty.is_aggregate_type() {
+                ContainerKind::Ptr(ret_ty.clone())
+            } else {
+                ContainerKind::Raw
+            },
+        })
     }
 
     fn visit_method_call_expr<'tmp>(
@@ -367,23 +372,66 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         expr: &'ast MethodCallExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        todo!()
     }
 
     fn visit_tup_expr<'tmp>(
         &mut self,
-        expr: &'ast TupExpr,
+        TupExpr(exprs, force): &'ast TupExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        match (&exprs[..], force) {
+            ([], _) => None,
+            ([expr], false) => self.visit_expr(expr, extra),
+            _ => {
+                let intern = self.analyzer.get_expr_type(&extra.self_id);
+                let ty = self.transform_interned_ty_faithfully(intern);
+                let p = self.builder.build_alloca(ty.clone(), None);
+                for (i, expr) in exprs.iter().enumerate() {
+                    let expr_value = self.visit_expr(&expr, extra)?;
+                    let gep = self.builder.build_getelementptr(
+                        ty.clone(),
+                        p.clone().into(),
+                        vec![
+                            self.context.get_i32(0).into(),
+                            self.context.get_i32(i as u32).into(),
+                        ],
+                        None,
+                    );
+                    self.store_to_ptr(gep.into(), expr_value);
+                }
+
+                Some(ValuePtrContainer {
+                    value_ptr: p.into(),
+                    kind: ContainerKind::Ptr(ty),
+                })
+            }
+        }
     }
 
     fn visit_binary_expr<'tmp>(
         &mut self,
-        expr: &'ast BinaryExpr,
+        BinaryExpr(bin_op, expr1, expr2): &'ast BinaryExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        match bin_op {
+            BinOp::Add
+            | BinOp::Sub
+            | BinOp::Mul
+            | BinOp::Div
+            | BinOp::Rem
+            | BinOp::BitXor
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::Shl
+            | BinOp::Shr => self.visit_binary(*bin_op, expr1, expr2, extra),
+
+            BinOp::And | BinOp::Or => self.visit_logic(*bin_op, expr1, expr2, extra),
+
+            BinOp::Eq | BinOp::Lt | BinOp::Le | BinOp::Ne | BinOp::Ge | BinOp::Gt => {
+                self.visit_compare(*bin_op, expr1, expr2, extra)
+            }
+        }
     }
 
     fn visit_unary_expr<'tmp>(
@@ -662,31 +710,13 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
     fn visit_ref_pat<'tmp>(
         &mut self,
         RefPat(pat, _): &'ast RefPat,
-        PatExtra {
-            ptr: value,
-            self_id: _,
-        }: Self::PatExtra<'tmp>,
+        PatExtra { value, self_id: _ }: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
-        let new_value = match value.kind {
-            ContainerKind::Raw => ValuePtrContainer {
-                kind: ContainerKind::Ptr,
-                ..value
-            },
-            ContainerKind::Ptr => {
-                let v = self
-                    .builder
-                    .build_load(self.context.ptr_type().into(), value.ptr, None);
-                ValuePtrContainer {
-                    kind: ContainerKind::Ptr,
-                    ptr: v.into(),
-                }
-            }
-            ContainerKind::WrapedPtr => impossible!(),
-        };
+        let new_value = self.get_value_ptr(value);
         self.visit_pat(
             pat,
             PatExtra {
-                ptr: new_value,
+                value: new_value,
                 self_id: 0,
             },
         )

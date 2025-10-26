@@ -7,6 +7,6 @@ pub(crate) struct ExprExtra {
 }
 
 pub(crate) struct PatExtra {
-    pub(crate) ptr: ValuePtrContainer,
+    pub(crate) value: ValuePtrContainer,
     pub(crate) self_id: NodeId,
 }
