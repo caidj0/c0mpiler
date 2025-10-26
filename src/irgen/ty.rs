@@ -1,6 +1,6 @@
 use crate::{
     impossible,
-    ir::ir_type::TypePtr,
+    ir::ir_type::{StructTypePtr, TypePtr},
     irgen::IRGenerator,
     semantics::resolved_ty::{AnyTyKind, BuiltInTyKind, ResolvedTy, ResolvedTyKind, TypeIntern},
 };
@@ -38,16 +38,14 @@ impl<'analyzer> IRGenerator<'analyzer> {
         )
     }
 
-    pub(crate) fn wraped_ptr_type(&self) -> TypePtr {
-        self.context
-            .struct_type(
-                vec![
-                    self.context.i32_type().into(),
-                    self.context.ptr_type().into(),
-                ],
-                false,
-            )
-            .into()
+    pub(crate) fn wraped_ptr_type(&self) -> StructTypePtr {
+        self.context.struct_type(
+            vec![
+                self.context.i32_type().into(),
+                self.context.ptr_type().into(),
+            ],
+            false,
+        )
     }
 
     pub(crate) fn transform_interned_ty_faithfully(&self, intern: TypeIntern) -> TypePtr {
@@ -93,7 +91,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
             Ref(inner, _) => {
                 let inner_ty = self.analyzer.probe_type(*inner).unwrap();
                 if inner_ty.is_str_type() {
-                    self.wraped_ptr_type()
+                    self.wraped_ptr_type().into()
                 } else {
                     self.context.ptr_type().into()
                 }

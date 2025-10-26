@@ -3,7 +3,10 @@ use std::iter::zip;
 use crate::{
     ast::{BindingMode, Crate, Mutability, expr::*, item::*, pat::*, stmt::*},
     impossible,
-    ir::{globalxxx::FunctionPtr, ir_value::GlobalObjectPtr},
+    ir::{
+        globalxxx::FunctionPtr,
+        ir_value::{GlobalObjectPtr, ValuePtr},
+    },
     irgen::{
         IRGenerator,
         extra::{ExprExtra, PatExtra},
@@ -473,10 +476,64 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_lit_expr<'tmp>(
         &mut self,
-        expr: &'ast LitExpr,
+        LitExpr {
+            kind,
+            symbol: _,
+            suffix: _,
+        }: &'ast LitExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let expr_result = self.analyzer.get_expr_result(&extra.self_id);
+        let expr_value = self.analyzer.get_value_by_index(&expr_result.value_index);
+        let constant = expr_value.kind.as_constant().unwrap();
+
+        let value: ValuePtr = match kind {
+            LitKind::Bool => self
+                .context
+                .get_i1(*constant.as_constant_int().unwrap() != 0)
+                .into(),
+            LitKind::Char => self
+                .context
+                .get_i8(*constant.as_constant_int().unwrap() as u8)
+                .into(),
+            LitKind::Integer => self
+                .context
+                .get_i32(*constant.as_constant_int().unwrap() as u32)
+                .into(),
+            LitKind::Str | LitKind::StrRaw(_) => {
+                let string = constant.as_constant_string().unwrap();
+                let constant = self.context.get_string(string);
+                let global = self.module.add_global_variable(
+                    true,
+                    constant.into(),
+                    &format!(".{}.str", extra.self_id),
+                );
+
+                let wraped_ptr_type = self.wraped_ptr_type();
+                let wraped_ptr = self.builder.build_alloca(wraped_ptr_type.into(), None);
+                self.builder.build_store(
+                    self.context.get_i32(string.len() as u32).into(),
+                    wraped_ptr.clone().into(),
+                );
+                self.builder
+                    .build_store(global.into(), wraped_ptr.clone().into());
+
+                wraped_ptr.into()
+            }
+
+            _ => impossible!(),
+        };
+
+        let kind = if matches!(kind, LitKind::Str | LitKind::StrRaw(..)) {
+            ContainerKind::ToUnsizedPtr
+        } else {
+            ContainerKind::Raw
+        };
+
+        Some(ValuePtrContainer {
+            value_ptr: value,
+            kind,
+        })
     }
 
     fn visit_cast_expr<'tmp>(
