@@ -1,3 +1,5 @@
+use enum_as_inner::EnumAsInner;
+
 use crate::{
     impossible,
     ir::{ir_type::TypePtr, ir_value::ValuePtr},
@@ -10,7 +12,7 @@ pub(crate) struct ValuePtrContainer {
     pub(crate) kind: ContainerKind,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, EnumAsInner)]
 pub(crate) enum ContainerKind {
     Raw,
     Ptr(TypePtr),

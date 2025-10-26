@@ -2,6 +2,7 @@ pub mod globalxxx;
 pub mod ir_output;
 pub mod ir_type;
 pub mod ir_value;
+pub mod destructor;
 
 use std::{
     cell::RefCell,

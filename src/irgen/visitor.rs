@@ -792,10 +792,12 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_assign_expr<'tmp>(
         &mut self,
-        expr: &'ast AssignExpr,
+        AssignExpr(left, right): &'ast AssignExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let right_value = self.visit_expr(&right, extra)?;
+        self.destructing_assign(&left, extra, right_value)?;
+        None
     }
 
     fn visit_assign_op_expr<'tmp>(
