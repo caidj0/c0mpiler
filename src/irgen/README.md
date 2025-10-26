@@ -78,7 +78,8 @@ br label next
 next:
 %loopresult = phi <ty> [{break1val}, {where_break1_is}], [{break2val}, where_break2_is] ; 如果 loop 类型不为 void 
 ...
-```
+``` 
+load & store 应该更好吧？
 
 `while cond {block}` 可以翻译为 
 ```llvm 

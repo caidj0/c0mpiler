@@ -166,6 +166,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         self.builder.locate(current_fn.clone(), right_bb.clone());
         let value2 = self.visit_expr(expr2, extra)?;
         let raw2 = self.get_raw_value(value2);
+        self.builder.build_branch(next_bb.clone());
 
         self.builder.locate(current_fn.clone(), next_bb.clone());
         let value = self.builder.build_phi(

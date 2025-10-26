@@ -9,7 +9,7 @@ use crate::{
     },
     irgen::{
         IRGenerator,
-        extra::{ExprExtra, PatExtra},
+        extra::{CycleInfo, ExprExtra, PatExtra},
         value::{ContainerKind, ValuePtrContainer},
     },
     semantics::{analyzer::SemanticAnalyzer, value::PlaceValueIndex, visitor::Visitor},
@@ -38,11 +38,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     type CrateExtra<'tmp> = ();
 
-    type ItemExtra<'tmp> = ExprExtra;
+    type ItemExtra<'tmp> = ExprExtra<'tmp>;
 
-    type StmtExtra<'tmp> = ExprExtra;
+    type StmtExtra<'tmp> = ExprExtra<'tmp>;
 
-    type ExprExtra<'tmp> = ExprExtra;
+    type ExprExtra<'tmp> = ExprExtra<'tmp>;
 
     type PatExtra<'tmp> = PatExtra;
 
@@ -57,6 +57,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 ExprExtra {
                     scope_id: *id,
                     self_id: 0,
+                    cycle_info: None,
                 },
             );
         }
@@ -135,7 +136,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             body.as_ref().unwrap(),
             ExprExtra {
                 scope_id: extra.self_id,
-                self_id: 0,
+                self_id: body.as_ref().unwrap().id,
+                cycle_info: None,
             },
         );
         self.builder.build_return(if let Some(value) = value {
@@ -571,40 +573,196 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_if_expr<'tmp>(
         &mut self,
-        expr: &'ast IfExpr,
+        IfExpr(cond, body, else_expr): &'ast IfExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let cond_value = self.visit_expr(&cond, extra)?;
+        let cond_raw = self.get_raw_value(cond_value);
+
+        let current_function = self.builder.get_current_function().clone();
+        let current_bb = self.builder.get_current_basic_block().clone();
+
+        let take_bb = self.context.append_basic_block(&current_function, ".take");
+        let next_bb = self.context.append_basic_block(&current_function, ".next");
+
+        self.builder
+            .locate(current_function.clone(), take_bb.clone());
+        let take_value = self.visit_block_expr(
+            &body,
+            ExprExtra {
+                self_id: body.id,
+                ..extra
+            },
+        );
+
+        if let Some(else_expr) = else_expr {
+            let else_bb = self.context.append_basic_block(&current_function, ".else");
+            self.builder.locate(current_function.clone(), current_bb);
+            self.builder
+                .build_conditional_branch(cond_raw, take_bb.clone(), else_bb.clone());
+            self.builder
+                .locate(current_function.clone(), else_bb.clone());
+            let else_value = self.visit_expr(&else_expr, extra);
+            self.builder.build_branch(next_bb.clone());
+            self.builder
+                .locate(current_function.clone(), next_bb.clone());
+            match (take_value, else_value) {
+                (None, None) => None,
+                (None, Some(else_value)) => Some(else_value),
+                (Some(take_value), None) => Some(take_value),
+                (Some(take_value), Some(else_value)) => {
+                    let v1 = self.get_value_presentation(take_value);
+                    let v2 = self.get_value_presentation(else_value);
+                    debug_assert_eq!(v1.value_ptr.get_type(), v2.value_ptr.get_type());
+                    debug_assert_eq!(v1.kind, v2.kind);
+
+                    let v = self.builder.build_phi(
+                        v1.value_ptr.get_type().clone(),
+                        vec![
+                            (v1.value_ptr, take_bb.clone()),
+                            (v2.value_ptr, else_bb.clone()),
+                        ],
+                        None,
+                    );
+
+                    Some(ValuePtrContainer {
+                        value_ptr: v.into(),
+                        kind: v1.kind,
+                    })
+                }
+            }
+        } else {
+            self.builder.locate(current_function.clone(), current_bb);
+            self.builder
+                .build_conditional_branch(cond_raw, take_bb, next_bb.clone());
+            self.builder
+                .locate(current_function.clone(), next_bb.clone());
+            None
+        }
     }
 
     fn visit_while_expr<'tmp>(
         &mut self,
-        expr: &'ast WhileExpr,
+        WhileExpr(cond, body): &'ast WhileExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let current_function = self.builder.get_current_function().clone();
+
+        let cond_bb = self.context.append_basic_block(&current_function, ".cond");
+        let body_bb = self.context.append_basic_block(&current_function, ".body");
+        let next_bb = self.context.append_basic_block(&current_function, ".next");
+
+        self.builder.build_branch(cond_bb.clone());
+        self.builder
+            .locate(current_function.clone(), cond_bb.clone());
+        let cond_value = self.visit_expr(&cond, extra)?;
+        self.builder.build_conditional_branch(
+            self.get_raw_value(cond_value),
+            body_bb.clone(),
+            next_bb.clone(),
+        );
+
+        self.builder.locate(current_function.clone(), body_bb);
+        let body_value = self.visit_block_expr(
+            &body,
+            ExprExtra {
+                self_id: body.id,
+                cycle_info: Some(CycleInfo {
+                    continue_bb: &cond_bb,
+                    next_bb: &next_bb,
+                    value: None,
+                }),
+                ..extra
+            },
+        );
+        debug_assert!(body_value.is_none());
+        self.builder.build_branch(cond_bb.clone());
+
+        self.builder.locate(current_function, next_bb.clone());
+
+        None
     }
 
     fn visit_for_loop_expr<'tmp>(
         &mut self,
-        expr: &'ast ForLoopExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast ForLoopExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         impossible!()
     }
 
     fn visit_loop_expr<'tmp>(
         &mut self,
-        expr: &'ast LoopExpr,
+        LoopExpr(body): &'ast LoopExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let current_function = self.builder.get_current_function().clone();
+
+        let loop_bb = self.context.append_basic_block(&current_function, ".loop");
+        let next_bb = self.context.append_basic_block(&current_function, ".next");
+
+        let ty = self.transform_interned_ty_impl(
+            self.analyzer.get_expr_type(&extra.self_id),
+            crate::irgen::ty::TransfromTypeConfig::FirstClassNoUnit,
+        );
+        let loop_value: Option<ValuePtr> = if ty.is_void() {
+            None
+        } else {
+            Some(
+                self.builder
+                    .build_alloca(self.context.ptr_type().into(), None)
+                    .into(),
+            )
+        };
+
+        self.builder.build_branch(loop_bb.clone());
+
+        self.builder
+            .locate(current_function.clone(), loop_bb.clone());
+        self.visit_block_expr(
+            &body,
+            ExprExtra {
+                scope_id: extra.scope_id,
+                self_id: body.id,
+                cycle_info: Some(CycleInfo {
+                    continue_bb: &loop_bb,
+                    next_bb: &next_bb,
+                    value: loop_value.as_ref(),
+                }),
+            },
+        );
+
+        self.builder
+            .locate(current_function.clone(), next_bb.clone());
+
+        match loop_value {
+            Some(loop_value) => {
+                let (value_ptr, kind) = if ty.is_aggregate_type() {
+                    (
+                        self.builder
+                            .build_load(self.context.ptr_type().into(), loop_value, None),
+                        ContainerKind::Ptr(ty),
+                    )
+                } else {
+                    (
+                        self.builder.build_load(ty, loop_value, None),
+                        ContainerKind::Raw,
+                    )
+                };
+
+                Some(ValuePtrContainer {
+                    value_ptr: value_ptr.into(),
+                    kind,
+                })
+            }
+            None => None,
+        }
     }
 
     fn visit_match_expr<'tmp>(
         &mut self,
-        expr: &'ast MatchExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast MatchExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         impossible!()
     }
@@ -612,7 +770,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
     fn visit_block_expr<'tmp>(
         &mut self,
         BlockExpr { stmts, id, span: _ }: &'ast BlockExpr,
-        _extra: Self::ExprExtra<'tmp>,
+        extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         let mut v = None;
 
@@ -621,11 +779,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 stmt,
                 ExprExtra {
                     scope_id: *id,
-                    self_id: 0,
+                    ..extra
                 },
             );
             if let Some(i) = t {
-                v.insert(i);
+                let _ = v.insert(i);
             }
         }
 

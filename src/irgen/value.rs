@@ -18,20 +18,23 @@ pub(crate) enum ContainerKind {
 }
 
 impl<'analyzer> IRGenerator<'analyzer> {
-    pub(crate) fn get_value_presentation(&self, value: ValuePtrContainer) -> ValuePtr {
+    pub(crate) fn get_value_presentation(&self, value: ValuePtrContainer) -> ValuePtrContainer {
         match &value.kind {
             ContainerKind::Raw => {
                 if value.value_ptr.get_type().is_aggregate_type() {
-                    self.get_value_ptr(value).value_ptr
+                    self.get_value_ptr(value)
                 } else {
-                    value.value_ptr
+                    value
                 }
             }
             ContainerKind::Ptr(ty) => {
                 if ty.is_aggregate_type() {
-                    value.value_ptr
+                    value
                 } else {
-                    self.get_raw_value(value)
+                    ValuePtrContainer {
+                        value_ptr: self.get_raw_value(value),
+                        kind: ContainerKind::Raw,
+                    }
                 }
             }
             ContainerKind::ToUnsizedPtr => todo!(),
@@ -39,9 +42,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
     }
 
     pub(crate) fn raw_value_to_ptr(&self, raw: ValuePtrContainer) -> ValuePtrContainer {
-        let allocaed = self.builder.build_alloca(raw.value_ptr.get_type().clone(), None);
+        let allocaed = self
+            .builder
+            .build_alloca(raw.value_ptr.get_type().clone(), None);
         let inner_type = raw.value_ptr.get_type().clone();
-        self.builder.build_store(raw.value_ptr, allocaed.clone().into());
+        self.builder
+            .build_store(raw.value_ptr, allocaed.clone().into());
         ValuePtrContainer {
             value_ptr: allocaed.into(),
             kind: ContainerKind::Ptr(inner_type),
