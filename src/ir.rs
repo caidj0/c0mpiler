@@ -804,6 +804,22 @@ impl LLVMBuilder {
             None,
         )
     }
+
+    pub fn build_bitwise_not(&self, operant: ValuePtr) -> InstructionPtr {
+        let ty = operant.get_type();
+        let bits = ty.as_int().unwrap().0;
+        let mut ctx = self.ctx_impl.borrow_mut();
+        let mask = ctx.get_int(1u32.unbounded_shl(bits as u32).overflowing_sub(1).0, bits);
+        self.build_binary(BinaryOpcode::Xor, ty.clone(), operant, mask.into(), None)
+    }
+
+    pub fn build_neg(&self, operant: ValuePtr) -> InstructionPtr {
+        let ty = operant.get_type();
+        let bits = ty.as_int().unwrap().0;
+        let mut ctx = self.ctx_impl.borrow_mut();
+        let zero = ctx.get_int(0, bits);
+        self.build_binary(BinaryOpcode::Sub, ty.clone(), zero.into(), operant, None)
+    }
 }
 
 #[derive(Debug)]

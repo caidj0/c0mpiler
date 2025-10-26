@@ -436,10 +436,39 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_unary_expr<'tmp>(
         &mut self,
-        expr: &'ast UnaryExpr,
+        UnaryExpr(un_op, expr): &'ast UnaryExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let expr_value = self.visit_expr(expr, extra)?;
+        let raw = self.get_raw_value(expr_value);
+
+        match un_op {
+            UnOp::Deref => {
+                // 此时 expr_value 的 raw 必定为指针类型
+                let ty = self
+                    .transform_interned_ty_faithfully(self.analyzer.get_expr_type(&extra.self_id));
+                Some(ValuePtrContainer {
+                    value_ptr: raw,
+                    kind: ContainerKind::Ptr(ty),
+                })
+            }
+            UnOp::Not => {
+                let value = self.builder.build_bitwise_not(raw);
+
+                Some(ValuePtrContainer {
+                    value_ptr: value.into(),
+                    kind: ContainerKind::Raw,
+                })
+            }
+            UnOp::Neg => {
+                let value = self.builder.build_neg(raw);
+
+                Some(ValuePtrContainer {
+                    value_ptr: value.into(),
+                    kind: ContainerKind::Raw,
+                })
+            }
+        }
     }
 
     fn visit_lit_expr<'tmp>(
