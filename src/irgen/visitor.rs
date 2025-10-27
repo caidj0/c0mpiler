@@ -192,23 +192,33 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_impl_item<'tmp>(
         &mut self,
-        ImplItem {
-            generics,
-            of_trait,
-            self_ty,
-            items,
-        }: &'ast ImplItem,
+        ImplItem { items, .. }: &'ast ImplItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        todo!()
+        for item in items {
+            self.visit_associate_item(
+                item,
+                ExprExtra {
+                    cycle_info: None,
+                    ..extra
+                },
+            );
+        }
     }
 
     fn visit_associate_item<'tmp>(
         &mut self,
-        item: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
+        Item { kind, id, span: _ }: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        todo!()
+        let new_extra = ExprExtra {
+            self_id: *id,
+            ..extra
+        };
+        match kind {
+            AssocItemKind::Const(const_item) => self.visit_const_item(const_item, new_extra),
+            AssocItemKind::Fn(fn_item) => self.visit_fn_item(fn_item, new_extra),
+        }
     }
 
     fn visit_stmt<'tmp>(
