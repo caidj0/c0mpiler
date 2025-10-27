@@ -1123,7 +1123,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let receiver_type = self.new_any_type();
             self.visit_expr(receiver, extra.replace_target(receiver_type))?;
             let symbol = &seg.ident.symbol;
-            let (level, index) = self
+            let (level, derefed_ty, index) = self
                 .search_value_in_impl_recursively(&receiver_type, symbol)?
                 .ok_or(make_semantic_error!(UnkonwnMethod))?;
             let value = self.get_place_value_by_index(&index);
@@ -1174,7 +1174,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 extra.self_id,
                 Value {
                     ty: *ret_ty,
-                    kind: ValueKind::MethodCall { level, index },
+                    kind: ValueKind::MethodCall {
+                        level,
+                        index,
+                        derefed_ty,
+                    },
                 },
                 AssigneeKind::Value,
                 interrupt,

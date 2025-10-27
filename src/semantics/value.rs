@@ -38,6 +38,7 @@ pub enum ValueKind {
     Binding(ByRef),
     MethodCall {
         level: DerefLevel,
+        derefed_ty: TypeIntern,
         index: PlaceValueIndex,
     },
     ExtractElement {
@@ -188,11 +189,10 @@ impl SemanticAnalyzer {
         &mut self,
         intern: &TypeIntern,
         symbol: &Symbol,
-    ) -> Result<Option<(DerefLevel, PlaceValueIndex)>, SemanticError> {
+    ) -> Result<Option<(DerefLevel, TypeIntern, PlaceValueIndex)>, SemanticError> {
         self.auto_deref(*intern, |analyzer, intern| {
             analyzer.search_value_in_impl(&intern, symbol)
         })
-        .map(|x| x.map(|(level, _, index)| (level, index)))
     }
 
     pub fn get_place_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {

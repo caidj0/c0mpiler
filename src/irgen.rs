@@ -1,9 +1,9 @@
+pub mod expr;
 pub mod extra;
 pub mod pat;
 pub mod ty;
 pub mod value;
 pub mod visitor;
-pub mod expr;
 
 use std::collections::{HashMap, HashSet};
 
@@ -13,14 +13,14 @@ use crate::{
     ir::{
         LLVMBuilder, LLVMContext, LLVMModule,
         ir_type::{FunctionTypePtr, TypePtr},
-        ir_value::ValuePtr,
+        ir_value::{ConstantPtr, ValuePtr},
     },
     irgen::value::ValuePtrContainer,
     semantics::{
         analyzer::SemanticAnalyzer,
         resolved_ty::{ResolvedTy, TypeKey},
         utils::FullName,
-        value::{PlaceValue, ValueIndex},
+        value::{PlaceValue, PlaceValueIndex, ValueIndex},
     },
 };
 
@@ -52,7 +52,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         };
 
         generator.add_struct_type();
-        generator.absorb_analyzer_function(0);
+        generator.absorb_analyzer_global_values(0);
 
         generator
     }
@@ -106,12 +106,44 @@ impl<'analyzer> IRGenerator<'analyzer> {
         }
     }
 
-    fn absorb_analyzer_function(&mut self, scope_id: NodeId) {
+    fn absorb_analyzer_global_values(&mut self, scope_id: NodeId) {
         let scope = self.analyzer.get_scope(scope_id);
         for (s, PlaceValue { value, .. }) in &scope.values {
+            let full_name = SemanticAnalyzer::get_full_name(scope_id, s.clone());
+
             use crate::semantics::value::ValueKind::*;
-            match &value.kind {
-                Constant(..) => {}
+            let v = match &value.kind {
+                Constant(inner) => {
+                    let probe = self.analyzer.probe_type(value.ty).unwrap();
+                    use crate::semantics::value::ConstantValue::*;
+                    let init: ConstantPtr = match inner {
+                        ConstantInt(i) => {
+                            let builtin = probe.kind.as_built_in().unwrap();
+                            use crate::semantics::resolved_ty::BuiltInTyKind::*;
+                            match builtin {
+                                Bool => self.context.get_i1(*i != 0),
+                                Char => self.context.get_i8(*i as u8),
+                                I32 | ISize | U32 | USize => self.context.get_i32(*i as u32),
+                                Str => impossible!(),
+                            }
+                            .into()
+                        }
+                        ConstantString(string) => self.context.get_string(string).into(),
+                        ConstantArray(..) => todo!(),
+                        Unit | UnitStruct => self
+                            .context
+                            .get_struct(self.context.struct_type(vec![], false), vec![])
+                            .into(),
+                        UnEval(_) | Placeholder => impossible!(),
+                    };
+                    let var_ptr =
+                        self.module
+                            .add_global_variable(true, init.into(), &full_name.to_string());
+                    ValuePtrContainer {
+                        value_ptr: var_ptr.into(),
+                        kind: value::ContainerKind::Raw,
+                    }
+                }
                 Fn { .. } => {
                     let fn_resloved_ty = self.analyzer.probe_type(value.ty).unwrap();
                     let f = {
@@ -124,18 +156,28 @@ impl<'analyzer> IRGenerator<'analyzer> {
                         )
                     };
                     let fn_ty = self.transform_ty_faithfully(&fn_resloved_ty);
-                    let full_name = SemanticAnalyzer::get_full_name(scope_id, s.clone());
-                    let _ = self
-                        .module
-                        .add_function(fn_ty.into(), &full_name.to_string(), None);
+                    let fn_ptr =
+                        self.module
+                            .add_function(fn_ty.into(), &full_name.to_string(), None);
                     self.functions.insert(full_name.to_string(), f);
+                    ValuePtrContainer {
+                        value_ptr: fn_ptr.into(),
+                        kind: value::ContainerKind::Raw,
+                    }
                 }
                 _ => impossible!(),
-            }
+            };
+            self.value_indexes.insert(
+                ValueIndex::Place(PlaceValueIndex {
+                    name: s.clone(),
+                    kind: crate::semantics::value::ValueIndexKind::Global { scope_id },
+                }),
+                v,
+            );
         }
 
         for id in &scope.children {
-            self.absorb_analyzer_function(*id);
+            self.absorb_analyzer_global_values(*id);
         }
     }
 }

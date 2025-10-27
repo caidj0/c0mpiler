@@ -1,4 +1,4 @@
-use std::iter::zip;
+use std::iter::{once, zip};
 
 use crate::{
     ast::{BindingMode, Crate, Mutability, expr::*, item::*, pat::*, stmt::*},
@@ -13,7 +13,11 @@ use crate::{
         extra::{CycleInfo, ExprExtra, PatExtra},
         value::{ContainerKind, ValuePtrContainer},
     },
-    semantics::{analyzer::SemanticAnalyzer, value::PlaceValueIndex, visitor::Visitor},
+    semantics::{
+        analyzer::SemanticAnalyzer,
+        value::{PlaceValueIndex, ValueIndex},
+        visitor::Visitor,
+    },
 };
 
 impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
@@ -375,10 +379,44 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_method_call_expr<'tmp>(
         &mut self,
-        expr: &'ast MethodCallExpr,
+        MethodCallExpr { receiver, args, .. }: &'ast MethodCallExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        todo!()
+        let receiver_value = self.visit_expr(&receiver, extra)?;
+        let arg_values = args
+            .iter()
+            .map(|x| self.visit_expr(&x, extra))
+            .collect::<Option<Vec<_>>>()?;
+
+        let analyzer_value = self.analyzer.get_expr_value(&extra.self_id);
+        let (level, derefed_ty, index) = analyzer_value.kind.as_method_call().unwrap();
+        let receiver_ty = self.transform_interned_ty_faithfully(*derefed_ty);
+
+        let derefed_value = self.deref(receiver_value, level, &receiver_ty);
+        let func = self
+            .get_value_index(&ValueIndex::Place(index.clone()))
+            .unwrap();
+        debug_assert!(func.value_ptr.is_function_type());
+        let func = FunctionPtr(GlobalObjectPtr(func.value_ptr.clone()));
+        let ret_ty = func.get_type_as_function().unwrap().0.clone();
+
+        let v = self.builder.build_call(
+            func,
+            once(derefed_value)
+                .chain(arg_values)
+                .map(|x| self.get_value_presentation(x).value_ptr)
+                .collect(),
+            None,
+        );
+
+        Some(ValuePtrContainer {
+            value_ptr: v.into(),
+            kind: if ret_ty.is_aggregate_type() {
+                ContainerKind::Ptr(ret_ty.clone())
+            } else {
+                ContainerKind::Raw
+            },
+        })
     }
 
     fn visit_tup_expr<'tmp>(
