@@ -1947,7 +1947,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             let receiver_ty = self.new_any_type();
             self.visit_expr(receiver_expr, extra.replace_target(receiver_ty))?;
             self.no_assignee(receiver_expr.id)?;
-            let (level, _, receiver_probe) = self
+            let (level, derefed_ty, receiver_probe) = self
                 .auto_deref(receiver_ty, |analyzer, intern| {
                     let Some(probe) = analyzer.probe_type(intern) else {
                         return Ok(None);
@@ -1988,7 +1988,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 extra.self_id,
                 Value {
                     ty: *field_ty,
-                    kind: ValueKind::ExtractElement { level, index },
+                    kind: ValueKind::ExtractElement {
+                        level,
+                        index: Some(index),
+                        derefed_ty,
+                    },
                 },
                 AssigneeKind::Place(mutbl),
                 interrupt,
@@ -2011,7 +2015,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             self.visit_expr(array_expr, extra.replace_target(array_intern))?;
             self.visit_expr(index_expr, extra.replace_target(self.usize_type()))?;
 
-            let (level, _, probe) = self
+            let (level, derefed_ty, probe) = self
                 .auto_deref(array_intern, |analyzer, intern| {
                     let Some(probe) = analyzer.probe_type(intern) else {
                         return Ok(None);
@@ -2037,7 +2041,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 extra.self_id,
                 Value {
                     ty: inner_ty,
-                    kind: ValueKind::Anon,
+                    kind: ValueKind::ExtractElement {
+                        level,
+                        derefed_ty,
+                        index: None,
+                    },
                 },
                 AssigneeKind::Place(mutbl),
                 interrupt,
@@ -2275,8 +2283,13 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .ok_or(make_semantic_error!(NotStructType).set_span(&path.span))?
                 .clone();
             let field_names = probe.names.as_ref().unwrap().1.as_ref().unwrap().clone();
-            let mut map: HashMap<Symbol, TypeIntern> =
-                HashMap::from_iter(field_names.into_iter().zip(field_tys));
+            let mut map: HashMap<Symbol, (usize, TypeIntern)> = HashMap::from_iter(
+                field_names
+                    .into_iter()
+                    .zip(field_tys.into_iter().enumerate()),
+            );
+
+            let mut indexes = Vec::new();
 
             for ExprField {
                 ident, expr, span, ..
@@ -2285,7 +2298,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 let target = map
                     .remove(&ident.symbol)
                     .ok_or(make_semantic_error!(UnknownField).set_span(span))?;
-                self.visit_expr(expr, extra.replace_target(target))?;
+                self.visit_expr(expr, extra.replace_target(target.1))?;
+                indexes.push(target.0);
             }
 
             if !map.is_empty() {
@@ -2298,7 +2312,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 extra.self_id,
                 Value {
                     ty: struct_type,
-                    kind: ValueKind::Anon,
+                    kind: ValueKind::Struct { indexes },
                 },
                 assignee,
                 interrupt,

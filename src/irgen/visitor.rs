@@ -5,6 +5,7 @@ use crate::{
     impossible,
     ir::{
         globalxxx::FunctionPtr,
+        ir_type::ArrayType,
         ir_value::{GlobalObjectPtr, ValuePtr},
     },
     irgen::{
@@ -833,90 +834,216 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_field_expr<'tmp>(
         &mut self,
-        expr: &'ast FieldExpr,
+        FieldExpr(expr, ..): &'ast FieldExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let expr_value = self.visit_expr(expr, extra)?;
+
+        let analyzer_value = self.analyzer.get_expr_value(&extra.self_id);
+        let (deref_level, struct_intern, pos) = analyzer_value.kind.as_extract_element().unwrap();
+        let struct_ty = self.transform_interned_ty_faithfully(*struct_intern);
+        let derefed_value = self.deref(expr_value, deref_level, &struct_ty);
+
+        let v = self.builder.build_getelementptr(
+            struct_ty,
+            derefed_value.value_ptr,
+            vec![
+                self.context.get_i32(0).into(),
+                self.context.get_i32(pos.unwrap() as u32).into(),
+            ],
+            None,
+        );
+
+        let ty = self.transform_interned_ty_faithfully(self.analyzer.get_expr_type(&extra.self_id));
+
+        Some(ValuePtrContainer {
+            value_ptr: v.into(),
+            kind: ContainerKind::Ptr(ty),
+        })
     }
 
     fn visit_index_expr<'tmp>(
         &mut self,
-        expr: &'ast IndexExpr,
+        IndexExpr(array_expr, index_expr): &'ast IndexExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let array_value = self.visit_expr(&array_expr, extra)?;
+        let index_value = self.visit_expr(&index_expr, extra)?;
+        let index_raw = self.get_raw_value(index_value);
+
+        let analyzer_value = self.analyzer.get_expr_value(&extra.self_id);
+        let (deref_level, intern, _) = analyzer_value.kind.as_extract_element().unwrap();
+        let array_ty = self.transform_interned_ty_faithfully(*intern);
+        let inner_ty = array_ty.as_array().unwrap().0.clone();
+        let derefed_value = self.deref(array_value, deref_level, &array_ty);
+
+        let v = self.builder.build_getelementptr(
+            array_ty,
+            derefed_value.value_ptr,
+            vec![self.context.get_i32(0).into(), index_raw],
+            None,
+        );
+
+        Some(ValuePtrContainer {
+            value_ptr: v.into(),
+            kind: ContainerKind::Ptr(inner_ty),
+        })
     }
 
     fn visit_range_expr<'tmp>(
         &mut self,
-        expr: &'ast RangeExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast RangeExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         impossible!()
     }
 
     fn visit_underscore_expr<'tmp>(
         &mut self,
-        expr: &'ast UnderscoreExpr,
-        extra: Self::ExprExtra<'tmp>,
+        _expr: &'ast UnderscoreExpr,
+        _extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
         impossible!()
     }
 
     fn visit_path_expr<'tmp>(
         &mut self,
-        expr: &'ast PathExpr,
+        _expr: &'ast PathExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let result = self.analyzer.get_expr_result(&extra.self_id);
+        let index = &result.value_index;
+        Some(self.get_value_index(index).unwrap().clone())
     }
 
     fn visit_addr_of_expr<'tmp>(
         &mut self,
-        expr: &'ast AddrOfExpr,
+        AddrOfExpr(_, inner_expr): &'ast AddrOfExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let v = self.visit_expr(&inner_expr, extra)?;
+        Some(ValuePtrContainer {
+            value_ptr: self.get_value_ptr(v).value_ptr,
+            kind: ContainerKind::Raw,
+        })
     }
 
     fn visit_break_expr<'tmp>(
         &mut self,
-        expr: &'ast BreakExpr,
+        BreakExpr(inner_expr): &'ast BreakExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let v = if let Some(e) = inner_expr {
+            self.visit_expr(e, extra)
+        } else {
+            None
+        };
+
+        let CycleInfo {
+            continue_bb: _,
+            next_bb,
+            value,
+        } = extra.cycle_info.unwrap();
+
+        if let Some(v) = v {
+            self.store_to_ptr(value.unwrap().clone(), v);
+        };
+
+        self.builder.build_branch(next_bb.clone());
+
+        None
     }
 
     fn visit_continue_expr<'tmp>(
         &mut self,
-        expr: &'ast ContinueExpr,
+        ContinueExpr: &'ast ContinueExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let CycleInfo { continue_bb, .. } = extra.cycle_info.unwrap();
+
+        self.builder.build_branch(continue_bb.clone());
+
+        None
     }
 
     fn visit_ret_expr<'tmp>(
         &mut self,
-        expr: &'ast RetExpr,
+        RetExpr(inner_expr): &'ast RetExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let v = if let Some(e) = inner_expr {
+            self.visit_expr(e, extra)
+        } else {
+            None
+        };
+
+        self.builder
+            .build_return(v.map(|x| self.get_value_presentation(x).value_ptr));
+        None
     }
 
     fn visit_struct_expr<'tmp>(
         &mut self,
-        expr: &'ast StructExpr,
+        StructExpr { fields, .. }: &'ast StructExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let intern = self.analyzer.get_expr_type(&extra.self_id);
+        let ty = self.transform_interned_ty_faithfully(intern);
+
+        let value = self.builder.build_alloca(ty.clone(), None);
+        let indexes = self
+            .analyzer
+            .get_expr_value(&extra.self_id)
+            .kind
+            .as_struct()
+            .unwrap();
+
+        for (ExprField { expr, .. }, index) in zip(fields, indexes) {
+            let v = self.visit_expr(expr, extra)?;
+            let ith = self.builder.build_getelementptr(
+                ty.clone(),
+                value.clone().into(),
+                vec![
+                    self.context.get_i32(0).into(),
+                    self.context.get_i32(*index as u32).into(),
+                ],
+                None,
+            );
+            self.store_to_ptr(ith.into(), v);
+        }
+
+        Some(ValuePtrContainer {
+            value_ptr: value.into(),
+            kind: ContainerKind::Ptr(ty),
+        })
     }
 
     fn visit_repeat_expr<'tmp>(
         &mut self,
-        expr: &'ast RepeatExpr,
+        RepeatExpr(inner_expr, _): &'ast RepeatExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        impossible!()
+        let intern = self.analyzer.get_expr_type(&extra.self_id);
+        let ty = self.transform_interned_ty_faithfully(intern);
+        let ArrayType(inner_ty, repeat_num) = ty.as_array().unwrap().clone();
+        let value = self.builder.build_alloca(ty.clone(), None);
+
+        let inner_value = self.visit_expr(inner_expr, extra)?;
+
+        for i in 0..repeat_num {
+            let ith = self.builder.build_getelementptr(
+                inner_ty.clone(),
+                value.clone().into(),
+                vec![self.context.get_i32(i).into()],
+                None,
+            );
+            self.store_to_ptr(ith.into(), inner_value.clone());
+        }
+
+        Some(ValuePtrContainer {
+            value_ptr: value.into(),
+            kind: ContainerKind::Ptr(ty),
+        })
     }
 
     fn visit_pat<'tmp>(

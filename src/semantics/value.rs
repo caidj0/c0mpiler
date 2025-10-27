@@ -42,7 +42,11 @@ pub enum ValueKind {
     },
     ExtractElement {
         level: DerefLevel,
-        index: usize,
+        derefed_ty: TypeIntern,
+        index: Option<usize>,
+    },
+    Struct {
+        indexes: Vec<usize>,
     },
 }
 

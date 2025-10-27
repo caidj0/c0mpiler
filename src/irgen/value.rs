@@ -4,7 +4,7 @@ use crate::{
     impossible,
     ir::{ir_type::TypePtr, ir_value::ValuePtr},
     irgen::IRGenerator,
-    semantics::{resolved_ty::TypeIntern, value::ValueIndex},
+    semantics::{impls::DerefLevel, resolved_ty::TypeIntern, value::ValueIndex},
 };
 
 #[derive(Debug, Clone)]
@@ -77,6 +77,10 @@ impl<'analyzer> IRGenerator<'analyzer> {
         debug_assert!(replacer.is_none());
     }
 
+    pub(crate) fn get_value_index(&mut self, index: &ValueIndex) -> Option<&ValuePtrContainer> {
+        self.value_indexes.get(index)
+    }
+
     pub(crate) fn store_to_ptr(&mut self, dest: ValuePtr, src: ValuePtrContainer) {
         match src.kind {
             ContainerKind::Raw => self.builder.build_store(src.value_ptr, dest),
@@ -86,5 +90,45 @@ impl<'analyzer> IRGenerator<'analyzer> {
             }
             ContainerKind::ToUnsizedPtr => impossible!(),
         };
+    }
+
+    // let a: Struct;  PtrType, Ptr(Struct)
+    // a.i32;          PtrType, Ptr(i32)
+    // &a;             PtrType, Raw
+    // (&a).i32;       PtrType, Ptr(i32)
+    // let b = &a;     PtrType, Ptr(Ptr)
+    // b.i32;
+    pub(crate) fn deref(
+        &mut self,
+        value: ValuePtrContainer,
+        level: &DerefLevel,
+        ty: &TypePtr,
+    ) -> ValuePtrContainer {
+        match level {
+            DerefLevel::Not => value,
+            DerefLevel::Deref(deref_level, ..) => {
+                debug_assert!(value.kind.as_ptr().map_or(false, |x| x.is_ptr()));
+                let value = self.get_raw_value(value);
+
+                if deref_level.is_not() {
+                    ValuePtrContainer {
+                        value_ptr: value,
+                        kind: ContainerKind::Ptr(ty.clone()),
+                    }
+                } else {
+                    let new_value =
+                        self.builder
+                            .build_load(self.context.ptr_type().into(), value, None);
+                    self.deref(
+                        ValuePtrContainer {
+                            value_ptr: new_value.into(),
+                            kind: ContainerKind::Ptr(self.context.ptr_type().into()),
+                        },
+                        &deref_level,
+                        ty,
+                    )
+                }
+            }
+        }
     }
 }
