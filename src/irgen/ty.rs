@@ -77,8 +77,19 @@ impl<'analyzer> IRGenerator<'analyzer> {
             return self.context.ptr_type().into();
         }
         use crate::semantics::resolved_ty::ResolvedTyKind::*;
+        if matches!(ty.kind, Placeholder | Tup(..))
+            && let Some((name, _)) = &ty.names
+        {
+            return self
+                .context
+                .get_named_struct_type(&name.to_string())
+                .unwrap()
+                .into();
+        }
         match &ty.kind {
-            Placeholder => todo!(),
+            Placeholder => {
+                todo!()
+            }
             BuiltIn(built_in_ty_kind) => match built_in_ty_kind {
                 BuiltInTyKind::Bool => self.context.i1_type().into(),
                 BuiltInTyKind::Char => self.context.i8_type().into(),

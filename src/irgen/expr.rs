@@ -187,4 +187,15 @@ impl<'analyzer> IRGenerator<'analyzer> {
             kind: ContainerKind::Raw,
         })
     }
+
+    pub(crate) fn visit_ret_expr_impl(&mut self, inner_expr: Option<&Expr>, extra: ExprExtra) {
+        let v = if let Some(e) = inner_expr {
+            self.visit_expr(e, extra)
+        } else {
+            None
+        };
+
+        self.builder
+            .build_return(v.map(|x| self.get_value_presentation(x).value_ptr));
+    }
 }

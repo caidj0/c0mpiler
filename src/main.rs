@@ -10,7 +10,7 @@ use c0mpiler::{
 
 fn main() {
     let test_str =
-        fs::read_to_string("RCompiler-Testcases/IR-1/src/comprehensive1/comprehensive1.rx").unwrap();
+        fs::read_to_string("RCompiler-Testcases/semantic-1/src/basic1/basic1.rx").unwrap();
 
     let lexer = Lexer::new(&test_str);
     let buffer = TokenBuffer::new(lexer).unwrap();
@@ -20,5 +20,7 @@ fn main() {
     result.unwrap();
 
     let mut generator = IRGenerator::new(&analyzer);
-    
+    generator.visit(&krate);
+    let ir = generator.print();
+    println!("{ir}");
 }

@@ -132,8 +132,12 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn get_full_name(scope: NodeId, name: Symbol) -> FullName {
-        FullName(vec![Symbol(scope.to_string()), name])
+    pub fn get_full_name(&self, scope: NodeId, name: Symbol) -> FullName {
+        if scope == 0 || self.is_main_function(&name, scope) {
+            FullName(vec![name])
+        } else {
+            FullName(vec![Symbol(scope.to_string()), name])
+        }
     }
 
     pub fn add_type_placeholder(
@@ -142,7 +146,7 @@ impl SemanticAnalyzer {
         name: Symbol,
         subnames: Option<Vec<Symbol>>,
     ) -> Result<TypeKey, SemanticError> {
-        let fullname = Self::get_full_name(scope, name.clone());
+        let fullname = self.get_full_name(scope, name.clone());
 
         let ty = ResolvedTy {
             names: Some((fullname, subnames)),
@@ -195,6 +199,10 @@ impl SemanticAnalyzer {
 
     pub fn get_stage(&self) -> AnalyzeStage {
         self.stage
+    }
+
+    pub(crate)  fn is_main_function(&self, symbol: &Symbol, father: usize) -> bool {
+        self.get_scope(father).kind.is_crate() && symbol.0 == "main"
     }
 }
 
@@ -360,8 +368,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::DefaultRes<'_> {
         match self.stage {
             AnalyzeStage::SymbolCollect => {
-                let is_main_function =
-                    self.get_scope(father).kind.is_crate() && ident.symbol.0 == "main";
+                let is_main_function = self.is_main_function(&ident.symbol, father);
                 self.add_scope(
                     self_id,
                     father,
@@ -1088,6 +1095,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         return Err(make_semantic_error!(MainFunctionDoubleExit));
                     }
                 }
+                interrupt = interrupt + ControlFlowInterruptKind::Return;
             }
 
             self.set_expr_value_and_result(

@@ -8,7 +8,7 @@ pub mod visitor;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    ast::NodeId,
+    ast::{Crate, NodeId},
     impossible,
     ir::{
         LLVMBuilder, LLVMContext, LLVMModule,
@@ -21,6 +21,7 @@ use crate::{
         resolved_ty::{ResolvedTy, TypeKey},
         utils::FullName,
         value::{PlaceValue, PlaceValueIndex, ValueIndex},
+        visitor::Visitor,
     },
 };
 
@@ -42,6 +43,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
         let builder = context.create_builder();
         let module = context.create_module("crate");
 
+        let string_type = context.create_opaque_struct_type("String");
+        string_type.set_body(
+            vec![context.i32_type().into(), context.ptr_type().into()],
+            false,
+        );
+
         let mut generator = Self {
             context,
             builder,
@@ -55,6 +62,14 @@ impl<'analyzer> IRGenerator<'analyzer> {
         generator.absorb_analyzer_global_values(0);
 
         generator
+    }
+
+    pub fn visit(&mut self, krate: &Crate) {
+        self.visit_crate(krate, ());
+    }
+
+    pub fn print(&self) -> String {
+        self.module.print()
     }
 
     fn absorb_analyzer_struct(&self, structs: &mut HashMap<TypeKey, ResolvedTy>) {
@@ -109,7 +124,10 @@ impl<'analyzer> IRGenerator<'analyzer> {
     fn absorb_analyzer_global_values(&mut self, scope_id: NodeId) {
         let scope = self.analyzer.get_scope(scope_id);
         for (s, PlaceValue { value, .. }) in &scope.values {
-            let full_name = SemanticAnalyzer::get_full_name(scope_id, s.clone());
+            if s.0 == "exit" && scope_id == 0 {
+                continue;
+            }
+            let full_name = self.analyzer.get_full_name(scope_id, s.clone());
 
             use crate::semantics::value::ValueKind::*;
             let v = match &value.kind {
@@ -145,7 +163,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     }
                 }
                 Fn { .. } => {
-                    let fn_resloved_ty = self.analyzer.probe_type(value.ty).unwrap();
+                    let mut fn_resloved_ty = self.analyzer.probe_type(value.ty).unwrap();
+
+                    if self.analyzer.is_main_function(s, scope_id) {
+                        *fn_resloved_ty.kind.as_fn_mut().unwrap().0 = self.analyzer.i32_type();
+                    }
+
                     let f = {
                         let (r, a) = fn_resloved_ty.kind.as_fn().unwrap();
                         (

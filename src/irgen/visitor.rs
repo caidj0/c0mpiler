@@ -1,5 +1,7 @@
 use std::iter::{once, zip};
 
+use serde::de::value;
+
 use crate::{
     ast::{BindingMode, Crate, Mutability, expr::*, item::*, pat::*, stmt::*},
     impossible,
@@ -106,7 +108,9 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         }: &'ast FnItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let full_name = SemanticAnalyzer::get_full_name(extra.scope_id, ident.symbol.clone());
+        let full_name = self
+            .analyzer
+            .get_full_name(extra.scope_id, ident.symbol.clone());
         let name_string = full_name.to_string();
         let fn_ptr = self.module.get_function(&name_string).unwrap();
 
@@ -145,15 +149,19 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 cycle_info: None,
             },
         );
-        self.builder.build_return(if let Some(value) = value {
-            Some(if ret_type.is_aggregate_type() {
-                self.get_value_ptr(value).value_ptr
-            } else {
-                self.get_raw_value(value)
-            })
-        } else {
-            None
-        });
+
+        let block_result = self.analyzer.get_expr_result(&body.as_ref().unwrap().id);
+
+        if let Some(value) = value {
+            self.builder
+                .build_return(Some(if ret_type.is_aggregate_type() {
+                    self.get_value_ptr(value).value_ptr
+                } else {
+                    self.get_raw_value(value)
+                }));
+        } else if block_result.interrupt.is_not() {
+            self.builder.build_return(None);
+        }
 
         self.builder.set_location(loc);
     }
@@ -349,8 +357,27 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         CallExpr(fn_expr, args_expr): &'ast CallExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
+        let result = self.analyzer.get_expr_result(&fn_expr.id);
+        if result.value_index
+            == ValueIndex::Place(PlaceValueIndex {
+                name: "exit".into(),
+                kind: crate::semantics::value::ValueIndexKind::Global { scope_id: 0 },
+            })
+        {
+            self.visit_ret_expr_impl(Some(args_expr.get(0).unwrap()), extra);
+            return None;
+        };
+
         let fn_value = self.visit_expr(fn_expr, extra)?;
-        debug_assert!(fn_value.value_ptr.is_function_type());
+        debug_assert!(
+            fn_value
+                .value_ptr
+                .kind
+                .as_global_object()
+                .map_or(false, |x| x.kind.is_function()),
+            "{:?}",
+            fn_value
+        );
         let args = args_expr
             .iter()
             .map(|x| self.visit_expr(&x, extra))
@@ -1019,14 +1046,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         RetExpr(inner_expr): &'ast RetExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let v = if let Some(e) = inner_expr {
-            self.visit_expr(e, extra)
-        } else {
-            None
-        };
-
-        self.builder
-            .build_return(v.map(|x| self.get_value_presentation(x).value_ptr));
+        self.visit_ret_expr_impl(inner_expr.as_ref().map(|x| x.as_ref()), extra);
         None
     }
 
