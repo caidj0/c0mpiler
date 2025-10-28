@@ -107,11 +107,6 @@ impl<'analyzer> IRGenerator<'analyzer> {
         match level {
             DerefLevel::Not => value,
             DerefLevel::Deref(deref_level, ..) => {
-                debug_assert!(
-                    value.kind.as_ptr().map_or(false, |x| x.is_ptr()),
-                    "{:?}",
-                    value
-                );
                 let value = self.get_raw_value(value);
 
                 if deref_level.is_not() {
