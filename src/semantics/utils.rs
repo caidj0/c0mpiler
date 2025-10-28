@@ -16,15 +16,19 @@ impl FullName {
 
 impl Display for FullName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.0
+        write!(f, "{}", {
+            let s: String = self
+                .0
                 .iter()
                 .map(|x| x.0.clone())
                 .collect::<Vec<_>>()
-                .join(".")
-        )
+                .join(".");
+            if s.starts_with(|x: char| x.is_ascii_digit()) {
+                "$".to_owned() + &s
+            } else {
+                s
+            }
+        })
     }
 }
 

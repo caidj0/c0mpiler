@@ -38,6 +38,13 @@ impl<'analyzer> IRGenerator<'analyzer> {
         )
     }
 
+    pub(crate) fn is_zero_length_type(&self, x: &ResolvedTy) -> bool {
+        match &x.kind {
+            ResolvedTyKind::Tup(items) => items.is_empty(),
+            _ => false,
+        }
+    }
+
     pub(crate) fn wraped_ptr_type(&self) -> StructTypePtr {
         self.context.struct_type(
             vec![
@@ -73,6 +80,9 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
     // 空长度类型怎么办？
     pub(crate) fn transform_ty_impl(&self, ty: &ResolvedTy, cfg: TransfromTypeConfig) -> TypePtr {
+        if cfg.no_unit() && self.is_zero_length_type(ty) {
+            return self.context.void_type().into();
+        }
         if cfg.no_aggregate_type() && self.is_aggregate_type(ty) {
             return self.context.ptr_type().into();
         }
