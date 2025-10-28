@@ -60,6 +60,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
         generator.add_struct_type();
         generator.absorb_analyzer_global_values(0);
+        generator.absorb_analyzer_methods();
 
         generator
     }
@@ -127,69 +128,10 @@ impl<'analyzer> IRGenerator<'analyzer> {
             if s.0 == "exit" && scope_id == 0 {
                 continue;
             }
+            let is_main_function = self.analyzer.is_main_function(s, scope_id);
             let full_name = self.analyzer.get_full_name(scope_id, s.clone());
 
-            use crate::semantics::value::ValueKind::*;
-            let v = match &value.kind {
-                Constant(inner) => {
-                    let probe = self.analyzer.probe_type(value.ty).unwrap();
-                    use crate::semantics::value::ConstantValue::*;
-                    let init: ConstantPtr = match inner {
-                        ConstantInt(i) => {
-                            let builtin = probe.kind.as_built_in().unwrap();
-                            use crate::semantics::resolved_ty::BuiltInTyKind::*;
-                            match builtin {
-                                Bool => self.context.get_i1(*i != 0),
-                                Char => self.context.get_i8(*i as u8),
-                                I32 | ISize | U32 | USize => self.context.get_i32(*i as u32),
-                                Str => impossible!(),
-                            }
-                            .into()
-                        }
-                        ConstantString(string) => self.context.get_string(string).into(),
-                        ConstantArray(..) => todo!(),
-                        Unit | UnitStruct => self
-                            .context
-                            .get_struct(self.context.struct_type(vec![], false), vec![])
-                            .into(),
-                        UnEval(_) | Placeholder => impossible!(),
-                    };
-                    let var_ptr =
-                        self.module
-                            .add_global_variable(true, init.into(), &full_name.to_string());
-                    ValuePtrContainer {
-                        value_ptr: var_ptr.into(),
-                        kind: value::ContainerKind::Raw,
-                    }
-                }
-                Fn { .. } => {
-                    let mut fn_resloved_ty = self.analyzer.probe_type(value.ty).unwrap();
-
-                    if self.analyzer.is_main_function(s, scope_id) {
-                        *fn_resloved_ty.kind.as_fn_mut().unwrap().0 = self.analyzer.i32_type();
-                    }
-
-                    let f = {
-                        let (r, a) = fn_resloved_ty.kind.as_fn().unwrap();
-                        (
-                            self.transform_interned_ty_faithfully(*r),
-                            a.iter()
-                                .map(|x| self.transform_interned_ty_faithfully(*x))
-                                .collect(),
-                        )
-                    };
-                    let fn_ty = self.transform_ty_faithfully(&fn_resloved_ty);
-                    let fn_ptr =
-                        self.module
-                            .add_function(fn_ty.into(), &full_name.to_string(), None);
-                    self.functions.insert(full_name.to_string(), f);
-                    ValuePtrContainer {
-                        value_ptr: fn_ptr.into(),
-                        kind: value::ContainerKind::Raw,
-                    }
-                }
-                _ => impossible!(),
-            };
+            let v = self.absorb_analyzer_global_value(value, is_main_function, full_name);
             self.value_indexes.insert(
                 ValueIndex::Place(PlaceValueIndex {
                     name: s.clone(),
@@ -201,6 +143,101 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
         for id in &scope.children {
             self.absorb_analyzer_global_values(*id);
+        }
+    }
+
+    fn absorb_analyzer_global_value(
+        &mut self,
+        value: &crate::semantics::value::Value,
+        is_main_function: bool,
+        full_name: FullName,
+    ) -> ValuePtrContainer {
+        use crate::semantics::value::ValueKind::*;
+        let v = match &value.kind {
+            Constant(inner) => {
+                let probe = self.analyzer.probe_type(value.ty).unwrap();
+                use crate::semantics::value::ConstantValue::*;
+                let init: ConstantPtr = match inner {
+                    ConstantInt(i) => {
+                        let builtin = probe.kind.as_built_in().unwrap();
+                        use crate::semantics::resolved_ty::BuiltInTyKind::*;
+                        match builtin {
+                            Bool => self.context.get_i1(*i != 0),
+                            Char => self.context.get_i8(*i as u8),
+                            I32 | ISize | U32 | USize => self.context.get_i32(*i as u32),
+                            Str => impossible!(),
+                        }
+                        .into()
+                    }
+                    ConstantString(string) => self.context.get_string(string).into(),
+                    ConstantArray(..) => todo!(),
+                    Unit | UnitStruct => self
+                        .context
+                        .get_struct(self.context.struct_type(vec![], false), vec![])
+                        .into(),
+                    UnEval(_) | Placeholder => impossible!(),
+                };
+                let var_ptr =
+                    self.module
+                        .add_global_variable(true, init.into(), &full_name.to_string());
+                ValuePtrContainer {
+                    value_ptr: var_ptr.into(),
+                    kind: value::ContainerKind::Raw,
+                }
+            }
+            Fn { .. } => {
+                let mut fn_resloved_ty = self.analyzer.probe_type(value.ty).unwrap();
+
+                if is_main_function {
+                    *fn_resloved_ty.kind.as_fn_mut().unwrap().0 = self.analyzer.i32_type();
+                }
+
+                let f = {
+                    let (r, a) = fn_resloved_ty.kind.as_fn().unwrap();
+                    (
+                        self.transform_interned_ty_faithfully(*r),
+                        a.iter()
+                            .map(|x| self.transform_interned_ty_faithfully(*x))
+                            .collect(),
+                    )
+                };
+                let fn_ty = self.transform_ty_faithfully(&fn_resloved_ty);
+                let fn_ptr = self
+                    .module
+                    .add_function(fn_ty.into(), &full_name.to_string(), None);
+                self.functions.insert(full_name.to_string(), f);
+                ValuePtrContainer {
+                    value_ptr: fn_ptr.into(),
+                    kind: value::ContainerKind::Raw,
+                }
+            }
+            _ => impossible!(),
+        };
+        v
+    }
+
+    fn absorb_analyzer_methods(&mut self) {
+        for (resolved_ty, impls) in &self.analyzer.impls {
+            if resolved_ty.kind.is_trait() {
+                continue;
+            }
+            let Some((name, _)) = &resolved_ty.names else {
+                continue;
+            };
+            for (s, PlaceValue { value, .. }) in &impls.inherent.values {
+                let v =
+                    self.absorb_analyzer_global_value(value, false, name.clone().concat(s.clone()));
+                self.value_indexes.insert(
+                    ValueIndex::Place(PlaceValueIndex {
+                        name: s.clone(),
+                        kind: crate::semantics::value::ValueIndexKind::Impl {
+                            ty: resolved_ty.clone(),
+                            for_trait: None,
+                        },
+                    }),
+                    v,
+                );
+            }
         }
     }
 }

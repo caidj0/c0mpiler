@@ -109,7 +109,7 @@ pub enum ValueIndexKind {
         scope_id: NodeId,
     },
     Impl {
-        ty: TypeKey,
+        ty: ResolvedTyInstance,
         for_trait: Option<Rc<ResolvedTyInstance>>,
     },
 }
@@ -154,11 +154,12 @@ impl SemanticAnalyzer {
         ty: &TypeIntern,
         symbol: &Symbol,
     ) -> Result<Option<PlaceValueIndex>, SemanticError> {
-        let impls = self.get_impls_mut(&ty.to_key());
+        let instance = self.probe_type_instance(*ty).unwrap();
+        let impls = self.get_impls_by_instance_mut(&instance);
         if impls.inherent.values.contains_key(symbol) {
             return Ok(Some(PlaceValueIndex {
                 kind: ValueIndexKind::Impl {
-                    ty: ty.to_key(),
+                    ty: instance.clone(),
                     for_trait: None,
                 },
                 name: symbol.clone(),
@@ -174,7 +175,7 @@ impl SemanticAnalyzer {
                 }
                 ret = Some(PlaceValueIndex {
                     kind: ValueIndexKind::Impl {
-                        ty: ty.to_key(),
+                        ty: instance.clone(),
                         for_trait: Some(t.clone()),
                     },
                     name: symbol.clone(),
@@ -202,7 +203,7 @@ impl SemanticAnalyzer {
                 self.get_scope(*scope_id).values.get(&index.name).unwrap()
             }
             ValueIndexKind::Impl { ty, for_trait } => {
-                let impls = self.get_impls(ty).unwrap();
+                let impls = self.get_impls_by_instance(ty).unwrap();
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get(i).unwrap()
                 } else {
@@ -224,7 +225,7 @@ impl SemanticAnalyzer {
                 .get_mut(&index.name)
                 .unwrap(),
             ValueIndexKind::Impl { ty, for_trait } => {
-                let impls = self.get_impls_mut(ty);
+                let impls = self.get_impls_by_instance_mut(ty);
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get_mut(i).unwrap()
                 } else {

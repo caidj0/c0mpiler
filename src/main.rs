@@ -10,7 +10,7 @@ use c0mpiler::{
 
 fn main() {
     let test_str =
-        fs::read_to_string("RCompiler-Testcases/semantic-1/src/basic1/basic1.rx").unwrap();
+        fs::read_to_string("RCompiler-Testcases/semantic-1/src/basic4/basic4.rx").unwrap();
 
     let lexer = Lexer::new(&test_str);
     let buffer = TokenBuffer::new(lexer).unwrap();

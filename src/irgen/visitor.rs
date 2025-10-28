@@ -431,8 +431,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         let derefed_value = self.deref(receiver_value, level, &receiver_ty);
         let func = self
-            .get_value_index(&ValueIndex::Place(index.clone()))
-            .unwrap();
+            .get_value_by_index(&ValueIndex::Place(index.clone()))
+            .expect(&format!("{:?}", index));
         debug_assert!(func.value_ptr.is_function_type());
         let func = FunctionPtr(GlobalObjectPtr(func.value_ptr.clone()));
         let ret_ty = func.get_type_as_function().unwrap().0.clone();
@@ -988,7 +988,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
     ) -> Self::ExprRes<'_> {
         let result = self.analyzer.get_expr_result(&extra.self_id);
         let index = &result.value_index;
-        Some(self.get_value_index(index).unwrap().clone())
+        Some(self.get_value_by_index(index).unwrap().clone())
     }
 
     fn visit_addr_of_expr<'tmp>(

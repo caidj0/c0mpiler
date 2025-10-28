@@ -77,7 +77,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         debug_assert!(replacer.is_none());
     }
 
-    pub(crate) fn get_value_index(&mut self, index: &ValueIndex) -> Option<&ValuePtrContainer> {
+    pub(crate) fn get_value_by_index(&mut self, index: &ValueIndex) -> Option<&ValuePtrContainer> {
         self.value_indexes.get(index)
     }
 

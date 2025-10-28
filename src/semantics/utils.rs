@@ -7,6 +7,13 @@ use crate::{ast::Symbol, semantics::analyzer::SemanticAnalyzer};
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FullName(pub Vec<Symbol>);
 
+impl FullName {
+    pub(crate) fn concat(mut self, s: Symbol) -> Self {
+        self.0.push(s);
+        self
+    }
+}
+
 impl Display for FullName {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(

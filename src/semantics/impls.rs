@@ -29,16 +29,24 @@ pub struct ImplInfo {
 impl SemanticAnalyzer {
     pub fn get_impls(&self, ty: &TypeKey) -> Option<&Impls> {
         let instance = self.probe_type_instance((*ty).into()).unwrap();
-        self.impls.get(&instance)
+        self.get_impls_by_instance(&instance)
+    }
+
+    pub fn get_impls_by_instance(&self, instance: &ResolvedTyInstance) -> Option<&Impls> {
+        self.impls.get(instance)
     }
 
     pub fn get_impls_mut(&mut self, ty: &TypeKey) -> &mut Impls {
         let instance = self.probe_type_instance((*ty).into()).unwrap();
+        self.get_impls_by_instance_mut(&instance)
+    }
+
+    pub fn get_impls_by_instance_mut(&mut self, instance: &ResolvedTyInstance) -> &mut Impls {
         if !self.impls.contains_key(&instance) {
             let mut inherent = ImplInfo::default();
             if instance.kind.is_array() {
-                let ref_ty =
-                    self.intern_type(ResolvedTy::ref_type((*ty).into(), RefMutability::Not));
+                let inner_ty = self.new_any_type();
+                let ref_ty = self.intern_type(ResolvedTy::ref_type(inner_ty, RefMutability::Not));
                 let len_ty =
                     self.intern_type(ResolvedTy::fn_type(self.usize_type(), vec![ref_ty.into()]));
                 inherent.values.insert(

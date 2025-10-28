@@ -1,8 +1,8 @@
+pub mod destructor;
 pub mod globalxxx;
 pub mod ir_output;
 pub mod ir_type;
 pub mod ir_value;
-pub mod destructor;
 
 use std::{
     cell::RefCell,
@@ -727,19 +727,14 @@ impl LLVMBuilder {
 
     // TODO: 完成 typelayout, 这个也太抽象了🫡
     pub fn build_get_size(&self, ty: TypePtr) -> ValuePtr {
-        let value: ConstantPtr = self.ctx_impl.borrow_mut().get_null().into();
-        let p = self.build_getelementptr(
-            ty,
-            value.into(),
-            vec![self.ctx_impl.borrow_mut().get_i32(1).into()],
-            None,
-        );
-        self.build_ptr_to_int(
-            p.into(),
-            self.ctx_impl.borrow_mut().i32_type(),
-            Some("size"),
-        )
-        .into()
+        let mut ctx = self.ctx_impl.borrow_mut();
+        let value: ConstantPtr = ctx.get_null().into();
+        let one = ctx.get_i32(1);
+        let i32_type = ctx.i32_type();
+        drop(ctx);
+        let p = self.build_getelementptr(ty, value.into(), vec![one.into()], None);
+        self.build_ptr_to_int(p.into(), i32_type, Some("size"))
+            .into()
     }
 
     pub fn build_memcpy(
@@ -789,6 +784,7 @@ impl LLVMBuilder {
                     i1_type.into(),
                 ],
             );
+            drop(ctx);
             module.add_function(t, name, None)
         };
 
