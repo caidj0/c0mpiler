@@ -177,12 +177,14 @@ impl<'analyzer> IRGenerator<'analyzer> {
                         .into(),
                     UnEval(_) | Placeholder => impossible!(),
                 };
+                let ty = init.get_type().clone();
                 let var_ptr =
                     self.module
                         .add_global_variable(true, init.into(), &full_name.to_string());
+
                 ValuePtrContainer {
                     value_ptr: var_ptr.into(),
-                    kind: value::ContainerKind::Raw,
+                    kind: value::ContainerKind::Ptr(ty),
                 }
             }
             Fn { .. } => {
@@ -202,13 +204,13 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     )
                 };
                 let fn_ty = self.transform_ty_faithfully(&fn_resloved_ty);
-                let fn_ptr = self
-                    .module
-                    .add_function(fn_ty.into(), &full_name.to_string(), None);
+                let fn_ptr =
+                    self.module
+                        .add_function(fn_ty.clone().into(), &full_name.to_string(), None);
                 self.functions.insert(full_name.to_string(), f);
                 ValuePtrContainer {
                     value_ptr: fn_ptr.into(),
-                    kind: value::ContainerKind::Raw,
+                    kind: value::ContainerKind::Ptr(fn_ty),
                 }
             }
             _ => impossible!(),

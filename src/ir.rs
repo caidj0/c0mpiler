@@ -588,7 +588,12 @@ impl LLVMBuilder {
         value2: ValuePtr,
         name: Option<&str>,
     ) -> InstructionPtr {
-        debug_assert!(value1.get_type() == value2.get_type());
+        debug_assert!(
+            value1.get_type() == value2.get_type(),
+            "{:?}\n{:?}",
+            value1,
+            value2
+        );
 
         let bool_type = self.ctx_impl.borrow_mut().i1_type();
 
