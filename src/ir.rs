@@ -616,14 +616,19 @@ impl LLVMBuilder {
             .as_function()
             .unwrap();
 
-        debug_assert!({
-            let target_tys = &func_type.1;
-            target_tys.len() == args.len()
-                && target_tys
-                    .iter()
-                    .zip(args.iter())
-                    .all(|(x, y)| x == y.get_type())
-        });
+        debug_assert!(
+            {
+                let target_tys = &func_type.1;
+                target_tys.len() == args.len()
+                    && target_tys
+                        .iter()
+                        .zip(args.iter())
+                        .all(|(x, y)| x == y.get_type())
+            },
+            "func:{:#?}\nargs:{:#?}",
+            func,
+            args
+        );
 
         let ret_ty = func_type.0.clone();
 

@@ -12,11 +12,12 @@ use crate::{
     },
     irgen::{
         IRGenerator,
-        extra::{CycleInfo, ExprExtra, PatExtra},
+        extra::{CycleInfo, ExprExtra, ItemExtra, PatExtra},
         value::{ContainerKind, ValuePtrContainer},
     },
     semantics::{
         analyzer::SemanticAnalyzer,
+        item::AssociatedInfo,
         value::{PlaceValueIndex, ValueIndex},
         visitor::Visitor,
     },
@@ -45,7 +46,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     type CrateExtra<'tmp> = ();
 
-    type ItemExtra<'tmp> = ExprExtra<'tmp>;
+    type ItemExtra<'tmp> = ItemExtra;
 
     type StmtExtra<'tmp> = ExprExtra<'tmp>;
 
@@ -61,10 +62,10 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         for item in items {
             self.visit_item(
                 item,
-                ExprExtra {
+                ItemExtra {
                     scope_id: *id,
                     self_id: 0,
-                    cycle_info: None,
+                    associated_info: None,
                 },
             );
         }
@@ -75,7 +76,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         Item { kind, id, span: _ }: &'ast Item,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let new_extra = ExprExtra {
+        let new_extra = ItemExtra {
             self_id: *id,
             ..extra
         };
@@ -108,9 +109,13 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         }: &'ast FnItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let full_name = self
-            .analyzer
-            .get_full_name(extra.scope_id, ident.symbol.clone());
+        let full_name = if let Some(info) = extra.associated_info {
+            let probe = self.analyzer.probe_type(info.ty.into()).unwrap();
+            probe.names.unwrap().0.concat(ident.symbol.clone())
+        } else {
+            self.analyzer
+                .get_full_name(extra.scope_id, ident.symbol.clone())
+        };
         let name_string = full_name.to_string();
         let fn_ptr = self.module.get_function(&name_string).unwrap();
 
@@ -179,7 +184,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         _item: &'ast EnumItem,
         _extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        impossible!()
     }
 
     fn visit_struct_item<'tmp>(
@@ -187,7 +191,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         _item: &'ast StructItem,
         _extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        impossible!()
     }
 
     fn visit_trait_item<'tmp>(
@@ -195,7 +198,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         _item: &'ast TraitItem,
         _extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        impossible!()
     }
 
     fn visit_impl_item<'tmp>(
@@ -203,12 +205,19 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         ImplItem { items, .. }: &'ast ImplItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
+        let scope = self.analyzer.get_scope(extra.self_id);
+        let (ty, for_trait) = scope.kind.as_impl().unwrap();
         for item in items {
             self.visit_associate_item(
                 item,
-                ExprExtra {
-                    cycle_info: None,
-                    ..extra
+                ItemExtra {
+                    scope_id: extra.scope_id,
+                    self_id: 0,
+                    associated_info: Some(AssociatedInfo {
+                        is_trait: false,
+                        ty: *ty,
+                        for_trait: *for_trait,
+                    }),
                 },
             );
         }
@@ -219,7 +228,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         Item { kind, id, span: _ }: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let new_extra = ExprExtra {
+        let new_extra = ItemExtra {
             self_id: *id,
             ..extra
         };
@@ -241,7 +250,14 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         match &kind {
             StmtKind::Let(local_stmt) => self.visit_local_stmt(local_stmt, new_extra),
             StmtKind::Item(item) => {
-                self.visit_item(item, new_extra);
+                self.visit_item(
+                    item,
+                    ItemExtra {
+                        scope_id: extra.scope_id,
+                        self_id: extra.self_id,
+                        associated_info: None,
+                    },
+                );
                 None
             }
             StmtKind::Expr(expr) => self.visit_expr(expr, new_extra),
@@ -393,13 +409,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             args.into_iter()
                 .zip(arg_tys)
                 .into_iter()
-                .map(|(x, ty)| {
-                    if ty.is_aggregate_type() {
-                        self.get_value_ptr(x).value_ptr
-                    } else {
-                        self.get_raw_value(x)
-                    }
-                })
+                .map(|(x, _)| self.get_value_presentation(x).value_ptr)
                 .collect(),
             None,
         );
@@ -430,18 +440,28 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let receiver_ty = self.transform_interned_ty_faithfully(*derefed_ty);
 
         let derefed_value = self.deref(receiver_value, level, &receiver_ty);
-        let func = self
+        let fn_value = self
             .get_value_by_index(&ValueIndex::Place(index.clone()))
-            .expect(&format!("{:?}", index));
-        debug_assert!(func.value_ptr.is_function_type());
-        let func = FunctionPtr(GlobalObjectPtr(func.value_ptr.clone()));
-        let ret_ty = func.get_type_as_function().unwrap().0.clone();
+            .expect(&format!("{:?}", index))
+            .clone();
+        debug_assert!(
+            fn_value
+                .value_ptr
+                .kind
+                .as_global_object()
+                .map_or(false, |x| x.kind.is_function()),
+            "{:?}",
+            fn_value
+        );
+        let (ret_ty, arg_tys) = self
+            .functions
+            .get(fn_value.value_ptr.get_name().as_ref().unwrap())
+            .unwrap();
 
         let v = self.builder.build_call(
-            func,
-            once(derefed_value)
-                .chain(arg_values)
-                .map(|x| self.get_value_presentation(x).value_ptr)
+            FunctionPtr(GlobalObjectPtr(fn_value.value_ptr)),
+            zip(once(derefed_value).chain(arg_values), arg_tys)
+                .map(|(x, _)| self.get_value_presentation(x).value_ptr)
                 .collect(),
             None,
         );
