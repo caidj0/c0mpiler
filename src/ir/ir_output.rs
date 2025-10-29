@@ -372,6 +372,7 @@ impl IRPrint for InstructionPtr {
                 helper.append_white("to");
                 self.get_type().ir_print(helper);
             }
+            Unreachable => {}
         }
     }
 }

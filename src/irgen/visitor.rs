@@ -703,6 +703,14 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             self.try_build_branch(next_bb.clone(), &else_expr.id);
             self.builder
                 .locate(current_function.clone(), next_bb.clone());
+            if !self
+                .analyzer
+                .get_expr_result(&extra.self_id)
+                .interrupt
+                .is_not()
+            {
+                self.builder.build_unreachable();
+            }
             match (take_value, else_value) {
                 (None, None) => None,
                 (None, Some(else_value)) => Some(else_value),

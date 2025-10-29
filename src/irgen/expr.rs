@@ -100,7 +100,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
             BinOp::Eq => ICmpCode::Eq,
             BinOp::Lt => {
                 if is_signed {
-                    ICmpCode::Sle
+                    ICmpCode::Slt
                 } else {
                     ICmpCode::Ult
                 }

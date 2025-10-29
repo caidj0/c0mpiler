@@ -563,6 +563,21 @@ impl LLVMBuilder {
         ))
     }
 
+    pub fn build_unreachable(&self) -> InstructionPtr {
+        let void_type = self.ctx_impl.borrow_mut().void_type();
+
+        self.insert(InstructionPtr(
+            Value {
+                base: ValueBase::new(void_type.into(), None),
+                kind: ir_value::ValueKind::Instruction(Instruction {
+                    kind: ir_value::InstructionKind::Unreachable,
+                    operands: vec![],
+                }),
+            }
+            .into(),
+        ))
+    }
+
     pub fn build_getelementptr(
         &self,
         base_ty: TypePtr,

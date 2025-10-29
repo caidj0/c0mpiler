@@ -128,13 +128,16 @@ impl Instruction {
             InstructionKind::Trunc => "trunc",
             InstructionKind::Zext => "zext",
             InstructionKind::Sext => "sext",
+            InstructionKind::Unreachable => "unreachable",
         }
     }
 
     pub fn is_terminate(&self) -> bool {
         matches!(
             self.kind,
-            InstructionKind::Branch { .. } | InstructionKind::Ret { .. }
+            InstructionKind::Branch { .. }
+                | InstructionKind::Ret { .. }
+                | InstructionKind::Unreachable
         )
     }
 }
@@ -156,6 +159,7 @@ pub enum InstructionKind {
     Trunc,
     Zext,
     Sext,
+    Unreachable,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
