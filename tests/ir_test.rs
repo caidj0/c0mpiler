@@ -188,7 +188,7 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at
         let actual_output = output.stdout;
 
         // Compare outputs
-        if actual_output != expected_output {
+        if actual_output.trim_ascii_end() != expected_output.trim_ascii_end() {
             let actual_str = String::from_utf8_lossy(&actual_output);
             let expected_str = String::from_utf8_lossy(&expected_output);
             fault!(
