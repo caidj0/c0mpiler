@@ -1141,22 +1141,37 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         RepeatExpr(inner_expr, _): &'ast RepeatExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
+        let inner_value = self.visit_expr(inner_expr, extra)?;
+
         let intern = self.analyzer.get_expr_type(&extra.self_id);
         let ty = self.transform_interned_ty_faithfully(intern);
         let ArrayType(inner_ty, repeat_num) = ty.as_array().unwrap().clone();
         let value = self.builder.build_alloca(ty.clone(), None);
 
-        let inner_value = self.visit_expr(inner_expr, extra)?;
+        let current_function = self.builder.get_current_function().clone();
+        let repeat_loop_header_bb = self.context.append_basic_block(&current_function, ".repeat_loop_header");
+        let repeat_loop_body_bb = self.context.append_basic_block(&current_function, ".repeat_loop_body");
+        let repeat_loop_next_bb = self.context.append_basic_block(&current_function, ".repeat_loop_next");
+        let repeat_counter = self.builder.build_alloca(self.context.i32_type().into(), Some(".repeat_counter"));
+        self.builder.build_store(self.context.get_i32(0).into(), repeat_counter.clone().into());
+        self.builder.build_branch(repeat_loop_header_bb.clone());
 
-        for i in 0..repeat_num {
-            let ith = self.builder.build_getelementptr(
-                inner_ty.clone(),
-                value.clone().into(),
-                vec![self.context.get_i32(i).into()],
-                None,
-            );
-            self.store_to_ptr(ith.into(), inner_value.clone());
-        }
+        // header
+        self.builder.locate(current_function.clone(), repeat_loop_header_bb.clone());
+        let repeat_counter_v = self.builder.build_load(self.context.i32_type().into(), repeat_counter.clone().into(), None);
+        let cond = self.builder.build_icmp(crate::ir::ir_value::ICmpCode::Eq, repeat_counter_v.clone().into(), self.context.get_i32(repeat_num).into(), None);
+        self.builder.build_conditional_branch(cond.into(), repeat_loop_next_bb.clone(), repeat_loop_body_bb.clone());
+        
+        // body
+        self.builder.locate(current_function.clone(), repeat_loop_body_bb.clone());
+        let ith_ptr = self.builder.build_getelementptr(inner_ty, value.clone().into(), vec![repeat_counter_v.clone().into()], None);
+        self.store_to_ptr(ith_ptr.into(), inner_value.clone());
+        let new_counter_v = self.builder.build_binary(crate::ir::ir_value::BinaryOpcode::Add, self.context.i32_type().into(), repeat_counter_v.into(), self.context.get_i32(1).into(), None);
+        self.builder.build_store(new_counter_v.into(), repeat_counter.into());
+        self.builder.build_branch(repeat_loop_header_bb.clone());
+
+        // next
+        self.builder.locate(current_function, repeat_loop_next_bb);
 
         Some(ValuePtrContainer {
             value_ptr: value.into(),
