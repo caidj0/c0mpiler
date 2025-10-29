@@ -1,0 +1,76 @@
+fn main() {
+    printlnInt(complexNestedLoops(2));
+    exit(0);
+}
+
+fn complexNestedLoops(limit: i32) -> i32 {
+    let mut total: i32 = 0;
+    let mut i: i32 = 0;
+
+    while (i < limit) {
+        let mut j: i32 = 0;
+        let mut inner_sum: i32 = 0;
+
+        while (j < limit) {
+            let mut k: i32 = 0;
+
+            // Triple nested loop with complex conditions
+            while (k < 50) {
+                // Multiple branching conditions
+                if ((i + j + k) % 3 == 0) {
+                    if ((i * j) % 5 == 0) {
+                        inner_sum += k;
+                        if (inner_sum > 1000) {
+                            break; // Early exit from innermost loop
+                        }
+                    } else {
+                        k += 2; // Skip ahead
+                        continue;
+                    }
+                } else if ((i + j + k) % 7 == 0) {
+                    inner_sum -= k / 2;
+                    if (inner_sum < 0) {
+                        inner_sum = 0;
+                    }
+                }
+
+                // Complex conditional increment
+                if (k % 2 == 0) {
+                    k += 1;
+                } else {
+                    k += 3;
+                }
+            }
+
+            total += inner_sum;
+
+            // Conditional increment for j
+            if (j % 3 == 0) {
+                j += 2;
+            } else {
+                j += 1;
+            }
+
+            // Early exit condition for middle loop
+            if (total > 50000) {
+                break;
+            }
+        }
+
+        // Complex increment pattern for outer loop
+        if (i % 10 == 0) {
+            i += 5;
+        } else if (i % 5 == 0) {
+            i += 3;
+        } else {
+            i += 1;
+        }
+
+        // Global early exit condition
+        if (total > 100000) {
+            break;
+        }
+    }
+
+    total % 10000
+}

@@ -1,0 +1,15 @@
+fn main() {
+    let mut i: i32 = 0;
+    let a: [i32; 6] = foo();
+    while (i < 6) {
+        printlnInt(a[i as usize]);
+        i += 1;
+    }
+    exit(0)
+}
+
+fn foo() -> [i32; 6] {
+    [
+        1,2,3,4,5,6
+    ]
+}

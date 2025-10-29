@@ -9,7 +9,7 @@ gener 需要能够翻译 item，包括 struct, enum, constant 和 function. Item
 
 path expression 怎么找到对应的变量？method expression 怎么找到对应的方法？如何处理为 trait 实现的函数，特别是 Default 函数？
 
-
+💀💀💀对于返回聚合类型的函数，翻译为 ir 时它的实际返回值为 void，并且需要添加一个指针类型的参数，调用时调用函数先在栈上开出空间，将指针传给被调用函数，被调用函数直接往指针里写。💀💀💀
 
 Let Stmt 直接翻译为 alloca + store.
 
