@@ -4,13 +4,23 @@ use crate::{
     impossible,
     ir::{ir_type::TypePtr, ir_value::ValuePtr},
     irgen::IRGenerator,
-    semantics::{impls::DerefLevel, resolved_ty::TypeIntern, value::ValueIndex},
+    semantics::{impls::DerefLevel, value::ValueIndex},
 };
 
 #[derive(Debug, Clone)]
 pub(crate) struct ValuePtrContainer {
     pub(crate) value_ptr: ValuePtr,
     pub(crate) kind: ContainerKind,
+}
+
+impl ValuePtrContainer {
+    pub(crate) fn get_type(&self) -> &TypePtr {
+        match &self.kind {
+            ContainerKind::Raw => self.value_ptr.get_type(),
+            ContainerKind::Ptr(ty) => ty,
+            ContainerKind::ToUnsizedPtr => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, EnumAsInner, Clone)]

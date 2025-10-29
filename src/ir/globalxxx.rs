@@ -37,7 +37,7 @@ pub enum GlobalObjectKind {
 #[derive(Debug)]
 pub struct Function {
     pub params: Vec<ArgumentPtr>,
-    pub blocks: RefCell<HashMap<String, (BasicBlockPtr, usize)>>,
+    pub blocks: RefCell<Vec<BasicBlockPtr>>,
 }
 
 impl Function {

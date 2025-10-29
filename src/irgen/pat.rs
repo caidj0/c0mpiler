@@ -1,6 +1,6 @@
 use crate::{
     ast::{BindingMode, ByRef},
-    irgen::{IRGenerator, extra::PatExtra},
+    irgen::{IRGenerator, extra::PatExtra, value::ValuePtrContainer},
     semantics::value::{PlaceValueIndex, ValueIndex, ValueIndexKind},
 };
 
@@ -9,7 +9,10 @@ impl<'analyzer> IRGenerator<'analyzer> {
         &mut self,
         BindingMode(by_ref, _): &BindingMode,
         ident: &crate::ast::Ident,
-        PatExtra { value: ptr, self_id }: PatExtra,
+        PatExtra {
+            value: right_ptr,
+            self_id,
+        }: PatExtra,
     ) {
         let index = ValueIndex::Place(PlaceValueIndex {
             name: ident.symbol.clone(),
@@ -17,10 +20,24 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 binding_id: self_id,
             },
         });
+        let ty = right_ptr.get_type().clone();
         let value = if matches!(by_ref, ByRef::Yes(_)) {
-            self.get_value_ptr(ptr)
+            let ptr = self
+                .builder
+                .build_alloca(self.context.ptr_type().into(), Some(&ident.symbol.0));
+            self.builder
+                .build_store(self.get_value_ptr(right_ptr).value_ptr, ptr.clone().into());
+            ValuePtrContainer {
+                value_ptr: ptr.into(),
+                kind: crate::irgen::value::ContainerKind::Ptr(self.context.ptr_type().into()),
+            }
         } else {
-            ptr
+            let ptr = self.builder.build_alloca(ty.clone(), Some(&ident.symbol.0));
+            self.store_to_ptr(ptr.clone().into(), right_ptr);
+            ValuePtrContainer {
+                value_ptr: ptr.into(),
+                kind: crate::irgen::value::ContainerKind::Ptr(ty.clone()),
+            }
         };
         self.add_value_index(index, value);
     }

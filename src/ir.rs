@@ -199,8 +199,7 @@ impl LLVMContext {
             .into(),
         );
 
-        let len = blocks.len();
-        blocks.insert(name.to_string(), (block.clone(), len));
+        blocks.push(block.clone());
 
         block
     }
@@ -1017,6 +1016,29 @@ fn foo() {
     builder.build_call(foo, vec![sum.into()], None);
 
     builder.build_return(Some(context.get_i32(0).into()));
+
+    let result = module.print();
+    println!("{result}");
+}
+
+#[test]
+fn goo() {
+    let mut context = LLVMContext::default();
+    let mut builder = context.create_builder();
+    let mut module = context.create_module("module");
+
+    let i32_type = context.i32_type();
+
+    let function_type = context.function_type(i32_type.clone().into(), vec![]);
+
+    let func = module.add_function(function_type, "main", None);
+
+    let bb = context.append_basic_block(&func, "entry");
+    let bb = context.append_basic_block(&func, "entry");
+    let bb = context.append_basic_block(&func, "entry");
+    let bb = context.append_basic_block(&func, "entry");
+    let bb = context.append_basic_block(&func, "entry");
+    let bb = context.append_basic_block(&func, "entry");
 
     let result = module.print();
     println!("{result}");

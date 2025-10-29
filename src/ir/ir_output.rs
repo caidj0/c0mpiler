@@ -219,9 +219,7 @@ impl IRPrint for FunctionPtr {
             helper.increase_indent();
             helper.appendln("{");
 
-            let mut blocks = blocks.values().clone().collect::<Vec<_>>();
-            blocks.sort_by_key(|x| x.1);
-            blocks.iter().for_each(|(block, _)| block.ir_print(helper));
+            blocks.iter().for_each(|block| block.ir_print(helper));
 
             helper.decrease_indent();
             helper.appendln("}");
@@ -256,7 +254,8 @@ impl IRPrint for ArgumentPtr {
 
 impl IRPrint for BasicBlockPtr {
     fn ir_print(&self, helper: &mut PrintHelper) {
-        helper.appendln(&format!("{}:", self.get_name().unwrap()));
+        let name = helper.intern_local_name(self);
+        helper.appendln(&format!("{}:", name));
 
         let ins_ref = self.as_basic_block().instructions.borrow();
         for ins in ins_ref.iter() {

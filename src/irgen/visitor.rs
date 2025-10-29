@@ -690,6 +690,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 ..extra
             },
         );
+        // TODO: branch 前进行检查：是否会终止控制流，因为如果出现多余的 terminator，clang 会认为那是一个匿名基本块，从而破坏编号排名
+        self.builder.build_branch(next_bb.clone());
 
         if let Some(else_expr) = else_expr {
             let else_bb = self.context.append_basic_block(&current_function, ".else");
