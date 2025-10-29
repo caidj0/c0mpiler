@@ -1,0 +1,25 @@
+struct Struct {
+    a: i32
+}
+
+impl Struct {
+    fn print(&self) {
+        printlnInt(self.a);
+    }
+
+    fn change(&mut self, a: i32) {
+        self.a = a;
+    }
+}
+
+fn main() {
+    let mut a: i32 = getInt();
+    let mut s: [Struct; 2] = [Struct {
+        a
+    }; 2];
+    s[0].print();
+    a = getInt();
+    s[1].change(a);
+    s[1].print();
+    exit(0);
+}

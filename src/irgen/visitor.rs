@@ -8,7 +8,7 @@ use crate::{
     ir::{
         globalxxx::FunctionPtr,
         ir_type::ArrayType,
-        ir_value::{GlobalObjectPtr, ValuePtr},
+        ir_value::{BasicBlockPtr, GlobalObjectPtr, ValuePtr},
     },
     irgen::{
         IRGenerator,
@@ -677,7 +677,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let current_bb = self.builder.get_current_basic_block().clone();
 
         let take_bb = self.context.append_basic_block(&current_function, ".take");
-        let next_bb = self.context.append_basic_block(&current_function, ".next");
+        let next_bb: BasicBlockPtr;
 
         self.builder
             .locate(current_function.clone(), take_bb.clone());
@@ -688,16 +688,18 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 ..extra
             },
         );
-
-        self.try_build_branch(next_bb.clone(), &body.id);
+        let new_take_bb = self.builder.get_current_basic_block().clone();
 
         if let Some(else_expr) = else_expr {
             let else_bb = self.context.append_basic_block(&current_function, ".else");
+            next_bb = self.context.append_basic_block(&current_function, ".next");
+            self.try_build_branch(next_bb.clone(), &body.id);
             self.builder.locate(current_function.clone(), current_bb);
             self.try_build_conditional_branch(cond_raw, take_bb.clone(), else_bb.clone(), &cond.id);
             self.builder
                 .locate(current_function.clone(), else_bb.clone());
             let else_value = self.visit_expr(&else_expr, extra);
+            let new_else_bb = self.builder.get_current_basic_block().clone();
             self.try_build_branch(next_bb.clone(), &else_expr.id);
             self.builder
                 .locate(current_function.clone(), next_bb.clone());
@@ -714,8 +716,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                     let v = self.builder.build_phi(
                         v1.value_ptr.get_type().clone(),
                         vec![
-                            (v1.value_ptr, take_bb.clone()),
-                            (v2.value_ptr, else_bb.clone()),
+                            (v1.value_ptr, new_take_bb.clone()),
+                            (v2.value_ptr, new_else_bb.clone()),
                         ],
                         None,
                     );
@@ -727,6 +729,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 }
             }
         } else {
+            next_bb = self.context.append_basic_block(&current_function, ".next");
+            self.try_build_branch(next_bb.clone(), &body.id);
             self.builder.locate(current_function.clone(), current_bb);
             self.try_build_conditional_branch(cond_raw, take_bb, next_bb.clone(), &cond.id);
             self.builder
@@ -878,7 +882,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                     ..extra
                 },
             );
-            let result = self.analyzer.get_stmt_result(id);
+            let result = self.analyzer.get_stmt_result(&stmt.id);
             let interrupt = match result {
                 crate::semantics::stmt::StmtResult::Expr(expr_id) => {
                     self.analyzer.get_expr_result(expr_id).interrupt

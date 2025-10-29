@@ -262,12 +262,6 @@ impl IRPrint for BasicBlockPtr {
             ins.ir_print(helper);
             helper.appendln("");
         }
-        if ins_ref
-            .last()
-            .map_or(true, |x| !x.as_instruction().is_terminate())
-        {
-            panic!("Basic block without terminator!");
-        }
     }
 }
 

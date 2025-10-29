@@ -178,12 +178,13 @@ impl<'analyzer> IRGenerator<'analyzer> {
         self.builder.locate(current_fn.clone(), right_bb.clone());
         let value2 = self.visit_expr(expr2, extra)?;
         let raw2 = self.get_raw_value(value2);
+        let new_right_bb = self.builder.get_current_basic_block().clone();
         self.try_build_branch(next_bb.clone(), &expr2.id);
 
         self.builder.locate(current_fn.clone(), next_bb.clone());
         let value = self.builder.build_phi(
             self.context.i1_type().into(),
-            vec![(raw1, current_bb), (raw2, right_bb)],
+            vec![(raw1, current_bb), (raw2, new_right_bb)],
             None,
         );
 

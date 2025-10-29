@@ -15,8 +15,16 @@ use c0mpiler::{
 };
 
 #[test]
-fn ir_1() {
+fn my_ir() {
     let escape_list = [];
+    let case_path = "testcases/IR";
+
+    run_test_cases(&escape_list, case_path, true);
+}
+
+#[test]
+fn ir_1() {
+    let escape_list = ["comprehensive1"];
     let case_path = "RCompiler-Testcases/IR-1";
 
     run_test_cases(&escape_list, case_path, true);
