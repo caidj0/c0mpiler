@@ -52,8 +52,14 @@ impl PartialEq for StructType {
 
 impl Hash for StructType {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let ptr = self.kind.borrow();
-        ptr.as_body().unwrap().hash(state);
+        if let Some(name) = self.name.borrow().as_ref() {
+            name.hash(state);
+        } else {
+            let ptr = self.kind.borrow();
+            ptr.as_body()
+                .expect(&format!("StructType has no body!\n {:?}", self))
+                .hash(state);
+        }
     }
 }
 
