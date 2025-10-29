@@ -681,13 +681,15 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         self.builder
             .locate(current_function.clone(), take_bb.clone());
-        let take_value = self.visit_block_expr(
-            &body,
-            ExprExtra {
-                self_id: body.id,
-                ..extra
-            },
-        );
+        let take_value = self
+            .visit_block_expr(
+                &body,
+                ExprExtra {
+                    self_id: body.id,
+                    ..extra
+                },
+            )
+            .map(|x| self.get_value_presentation(x));
         let new_take_bb = self.builder.get_current_basic_block().clone();
 
         if let Some(else_expr) = else_expr {
@@ -698,7 +700,9 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             self.try_build_conditional_branch(cond_raw, take_bb.clone(), else_bb.clone(), &cond.id);
             self.builder
                 .locate(current_function.clone(), else_bb.clone());
-            let else_value = self.visit_expr(&else_expr, extra);
+            let else_value = self
+                .visit_expr(&else_expr, extra)
+                .map(|x| self.get_value_presentation(x));
             let new_else_bb = self.builder.get_current_basic_block().clone();
             self.try_build_branch(next_bb.clone(), &else_expr.id);
             self.builder
@@ -715,12 +719,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 (None, None) => None,
                 (None, Some(else_value)) => Some(else_value),
                 (Some(take_value), None) => Some(take_value),
-                (Some(take_value), Some(else_value)) => {
-                    let v1 = self.get_value_presentation(take_value);
-                    let v2 = self.get_value_presentation(else_value);
+                (Some(v1), Some(v2)) => {
                     debug_assert_eq!(v1.value_ptr.get_type(), v2.value_ptr.get_type());
                     debug_assert_eq!(v1.kind, v2.kind);
 
+                    // phi 指令必须位于基本块的开头
                     let v = self.builder.build_phi(
                         v1.value_ptr.get_type().clone(),
                         vec![

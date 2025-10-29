@@ -151,13 +151,13 @@ impl<'analyzer> IRGenerator<'analyzer> {
         extra: ExprExtra,
     ) -> Option<ValuePtrContainer> {
         let value1 = self.visit_expr(expr1, extra)?;
+        let raw1 = self.get_raw_value(value1);
 
         let current_fn = self.builder.get_current_function().clone();
         let current_bb = self.builder.get_current_basic_block().clone();
         let right_bb = self.context.append_basic_block(&current_fn, ".right");
         let next_bb = self.context.append_basic_block(&current_fn, ".next");
 
-        let raw1 = self.get_raw_value(value1);
 
         match bin_op {
             BinOp::And => self.try_build_conditional_branch(
