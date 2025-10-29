@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::hash::Hash;
 use std::ops::Deref;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use enum_as_inner::EnumAsInner;
 
@@ -32,12 +32,21 @@ impl Value {
     pub fn get_type(&self) -> &TypePtr {
         &self.base.ty
     }
+
+    pub fn add_user(&self, user: &ValuePtr) {
+        self.base.users.borrow_mut().push(Rc::downgrade(user));
+    }
+
+    pub fn is_used(&self) -> bool {
+        !self.base.users.borrow().is_empty()
+    }
 }
 
 #[derive(Debug)]
 pub struct ValueBase {
     pub name: RefCell<Option<String>>,
     pub ty: TypePtr,
+    pub users: RefCell<Vec<Weak<Value>>>,
 }
 
 impl ValueBase {
@@ -45,6 +54,7 @@ impl ValueBase {
         Self {
             name: RefCell::new(name.map(|x| x.to_string())),
             ty,
+            users: vec![].into(),
         }
     }
 }

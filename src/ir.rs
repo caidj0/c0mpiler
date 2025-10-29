@@ -455,6 +455,9 @@ impl LLVMBuilder {
             panic!("The basic block has been terminated!");
         }
         borrow_mut.push(ins.clone());
+        for x in &ins.as_instruction().operands {
+            x.add_user(&ins);
+        }
         ins
     }
 

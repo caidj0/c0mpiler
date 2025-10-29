@@ -219,6 +219,7 @@ impl IRPrint for FunctionPtr {
             helper.increase_indent();
             helper.appendln("{");
 
+            blocks.iter().for_each(|block| block.pre_intern(helper));
             blocks.iter().for_each(|block| block.ir_print(helper));
 
             helper.decrease_indent();
@@ -262,6 +263,17 @@ impl IRPrint for BasicBlockPtr {
             ins.ir_print(helper);
             helper.appendln("");
         }
+    }
+}
+
+impl BasicBlockPtr {
+    fn pre_intern(&self, helper: &mut PrintHelper) {
+        let instructions = self.as_basic_block().instructions.borrow();
+        instructions.iter().for_each(|x| {
+            if x.is_used() {
+                helper.intern_local_name(&x);
+            }
+        });
     }
 }
 
