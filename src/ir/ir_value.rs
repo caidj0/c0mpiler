@@ -130,6 +130,13 @@ impl Instruction {
             InstructionKind::Sext => "sext",
         }
     }
+
+    pub fn is_terminate(&self) -> bool {
+        matches!(
+            self.kind,
+            InstructionKind::Branch { .. } | InstructionKind::Ret { .. }
+        )
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]

@@ -448,7 +448,13 @@ impl LLVMBuilder {
 
     fn insert(&self, ins: InstructionPtr) -> InstructionPtr {
         let bb = self.target_block.as_ref().unwrap().1.as_basic_block();
-        bb.instructions.borrow_mut().push(ins.clone());
+        let mut borrow_mut = bb.instructions.borrow_mut();
+        if let Some(last) = borrow_mut.last()
+            && last.as_instruction().is_terminate()
+        {
+            panic!("The basic block has been terminated!");
+        }
+        borrow_mut.push(ins.clone());
         ins
     }
 

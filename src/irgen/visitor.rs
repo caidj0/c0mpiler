@@ -155,8 +155,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             },
         );
 
-        let block_result = self.analyzer.get_expr_result(&body.as_ref().unwrap().id);
-
         if let Some(value) = value {
             self.builder
                 .build_return(Some(if ret_type.is_aggregate_type() {
@@ -164,8 +162,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 } else {
                     self.get_raw_value(value)
                 }));
-        } else if block_result.interrupt.is_not() {
-            self.builder.build_return(None);
+        } else {
+            self.try_build_return(None, &body.as_ref().unwrap().id);
         }
 
         self.builder.set_location(loc);
@@ -690,18 +688,17 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 ..extra
             },
         );
-        // TODO: branch 前进行检查：是否会终止控制流，因为如果出现多余的 terminator，clang 会认为那是一个匿名基本块，从而破坏编号排名
-        self.builder.build_branch(next_bb.clone());
+
+        self.try_build_branch(next_bb.clone(), &body.id);
 
         if let Some(else_expr) = else_expr {
             let else_bb = self.context.append_basic_block(&current_function, ".else");
             self.builder.locate(current_function.clone(), current_bb);
-            self.builder
-                .build_conditional_branch(cond_raw, take_bb.clone(), else_bb.clone());
+            self.try_build_conditional_branch(cond_raw, take_bb.clone(), else_bb.clone(), &cond.id);
             self.builder
                 .locate(current_function.clone(), else_bb.clone());
             let else_value = self.visit_expr(&else_expr, extra);
-            self.builder.build_branch(next_bb.clone());
+            self.try_build_branch(next_bb.clone(), &else_expr.id);
             self.builder
                 .locate(current_function.clone(), next_bb.clone());
             match (take_value, else_value) {
@@ -731,8 +728,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             }
         } else {
             self.builder.locate(current_function.clone(), current_bb);
-            self.builder
-                .build_conditional_branch(cond_raw, take_bb, next_bb.clone());
+            self.try_build_conditional_branch(cond_raw, take_bb, next_bb.clone(), &cond.id);
             self.builder
                 .locate(current_function.clone(), next_bb.clone());
             None
@@ -754,10 +750,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         self.builder
             .locate(current_function.clone(), cond_bb.clone());
         let cond_value = self.visit_expr(&cond, extra)?;
-        self.builder.build_conditional_branch(
+        self.try_build_conditional_branch(
             self.get_raw_value(cond_value),
             body_bb.clone(),
             next_bb.clone(),
+            &cond.id,
         );
 
         self.builder.locate(current_function.clone(), body_bb);
@@ -774,7 +771,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             },
         );
         debug_assert!(body_value.is_none());
-        self.builder.build_branch(cond_bb.clone());
+        self.try_build_branch(cond_bb.clone(), &body.id);
 
         self.builder.locate(current_function, next_bb.clone());
 
@@ -829,6 +826,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 }),
             },
         );
+        self.try_build_branch(loop_bb.clone(), &body.id);
 
         self.builder
             .locate(current_function.clone(), next_bb.clone());
@@ -880,8 +878,19 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                     ..extra
                 },
             );
-            if let Some(i) = t {
-                let _ = v.insert(i);
+            let result = self.analyzer.get_stmt_result(id);
+            let interrupt = match result {
+                crate::semantics::stmt::StmtResult::Expr(expr_id) => {
+                    self.analyzer.get_expr_result(expr_id).interrupt
+                }
+                crate::semantics::stmt::StmtResult::Else { interrupt } => *interrupt,
+            };
+            if interrupt.is_not() {
+                if let Some(i) = t {
+                    let _ = v.insert(i);
+                }
+            } else {
+                return None;
             }
         }
 
@@ -1046,7 +1055,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             self.store_to_ptr(value.unwrap().clone(), v);
         };
 
-        self.builder.build_branch(next_bb.clone());
+        if let Some(e) = inner_expr {
+            self.try_build_branch(next_bb.clone(), &e.id);
+        } else {
+            self.builder.build_branch(next_bb.clone());
+        }
 
         None
     }

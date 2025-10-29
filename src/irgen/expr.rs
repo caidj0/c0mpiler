@@ -1,7 +1,10 @@
 use crate::{
-    ast::expr::{BinOp, Expr},
+    ast::{
+        NodeId,
+        expr::{BinOp, Expr},
+    },
     impossible,
-    ir::ir_value::{BinaryOpcode, ICmpCode},
+    ir::ir_value::{BasicBlockPtr, BinaryOpcode, ICmpCode, ValuePtr},
     irgen::{
         IRGenerator,
         extra::ExprExtra,
@@ -157,15 +160,17 @@ impl<'analyzer> IRGenerator<'analyzer> {
         let raw1 = self.get_raw_value(value1);
 
         match bin_op {
-            BinOp::And => self.builder.build_conditional_branch(
+            BinOp::And => self.try_build_conditional_branch(
                 raw1.clone(),
                 right_bb.clone(),
                 next_bb.clone(),
+                &expr1.id,
             ),
-            BinOp::Or => self.builder.build_conditional_branch(
+            BinOp::Or => self.try_build_conditional_branch(
                 raw1.clone(),
                 next_bb.clone(),
                 right_bb.clone(),
+                &expr1.id,
             ),
             _ => impossible!(),
         };
@@ -173,7 +178,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         self.builder.locate(current_fn.clone(), right_bb.clone());
         let value2 = self.visit_expr(expr2, extra)?;
         let raw2 = self.get_raw_value(value2);
-        self.builder.build_branch(next_bb.clone());
+        self.try_build_branch(next_bb.clone(), &expr2.id);
 
         self.builder.locate(current_fn.clone(), next_bb.clone());
         let value = self.builder.build_phi(
@@ -189,13 +194,41 @@ impl<'analyzer> IRGenerator<'analyzer> {
     }
 
     pub(crate) fn visit_ret_expr_impl(&mut self, inner_expr: Option<&Expr>, extra: ExprExtra) {
-        let v = if let Some(e) = inner_expr {
-            self.visit_expr(e, extra)
+        if let Some(e) = inner_expr {
+            let v = self.visit_expr(e, extra);
+            if let Some(v) = v {
+                self.try_build_return(Some(self.get_value_presentation(v).value_ptr), &e.id);
+            }
         } else {
-            None
+            self.builder.build_return(None);
         };
+    }
 
-        self.builder
-            .build_return(v.map(|x| self.get_value_presentation(x).value_ptr));
+    // 用于 branch 前检查是否会终止控制流，因为如果出现多余的 terminator，clang 会认为那是一个匿名基本块，从而破坏编号排名
+    pub fn try_build_return(&self, value: Option<ValuePtr>, expr_id: &NodeId) {
+        let result = self.analyzer.get_expr_result(expr_id);
+        if result.interrupt.is_not() {
+            self.builder.build_return(value);
+        }
+    }
+
+    pub fn try_build_branch(&self, dest: BasicBlockPtr, expr_id: &NodeId) {
+        let result = self.analyzer.get_expr_result(expr_id);
+        if result.interrupt.is_not() {
+            self.builder.build_branch(dest);
+        }
+    }
+
+    pub fn try_build_conditional_branch(
+        &self,
+        cond: crate::ir::ir_value::ValuePtr,
+        iftrue: BasicBlockPtr,
+        ifelse: BasicBlockPtr,
+        expr_id: &NodeId,
+    ) {
+        let result = self.analyzer.get_expr_result(expr_id);
+        if result.interrupt.is_not() {
+            self.builder.build_conditional_branch(cond, iftrue, ifelse);
+        }
     }
 }
