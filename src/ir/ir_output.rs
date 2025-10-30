@@ -270,7 +270,7 @@ impl BasicBlockPtr {
     fn pre_intern(&self, helper: &mut PrintHelper) {
         let instructions = self.as_basic_block().instructions.borrow();
         instructions.iter().for_each(|x| {
-            if x.is_used() {
+            if !x.get_type().is_void() {
                 helper.intern_local_name(&x);
             }
         });
