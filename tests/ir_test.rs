@@ -24,10 +24,7 @@ fn my_ir() {
 
 #[test]
 fn ir_1() {
-    let escape_list = [
-        "comprehensive19",
-        "comprehensive50", // testcase 答案错误
-    ];
+    let escape_list = [];
     let case_path = "RCompiler-Testcases/IR-1";
 
     run_test_cases(&escape_list, case_path, true);

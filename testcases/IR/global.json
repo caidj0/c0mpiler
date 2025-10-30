@@ -18,5 +18,9 @@
     {
         "name": "array1",
         "compileexitcode": 0
+    },
+    {
+        "name": "hello1",
+        "compileexitcode": 0
     }
 ]
