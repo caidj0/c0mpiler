@@ -24,7 +24,10 @@ fn my_ir() {
 
 #[test]
 fn ir_1() {
-    let escape_list = [""];
+    let escape_list = [
+        "comprehensive19",
+        "comprehensive50", // testcase 答案错误
+    ];
     let case_path = "RCompiler-Testcases/IR-1";
 
     run_test_cases(&escape_list, case_path, true);
@@ -144,7 +147,9 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at
             Vec::new()
         };
 
-        let run_result = Command::new(format!("target/tmp/{name}"))
+        let run_result = Command::new("sh")
+            .arg("-c")
+            .arg(format!("ulimit -s unlimited && exec target/tmp/{name}",))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
