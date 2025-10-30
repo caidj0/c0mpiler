@@ -12,6 +12,7 @@ use crate::{
     impossible,
     ir::{
         LLVMBuilder, LLVMContext, LLVMModule,
+        attribute::Attribute,
         ir_type::{FunctionTypePtr, TypePtr},
         ir_value::{ConstantPtr, ValuePtr},
     },
@@ -194,7 +195,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     *fn_resloved_ty.kind.as_fn_mut().unwrap().0 = self.analyzer.i32_type();
                 }
 
-                let f = {
+                let function = {
                     let (r, a) = fn_resloved_ty.kind.as_fn().unwrap();
                     (
                         self.transform_interned_ty_faithfully(*r),
@@ -203,11 +204,27 @@ impl<'analyzer> IRGenerator<'analyzer> {
                             .collect(),
                     )
                 };
+
+                let is_ret_aggregate_type =
+                    !function.0.is_zero_length_type() && function.0.is_aggregate_type();
+                if is_ret_aggregate_type {
+                    let (r, a) = fn_resloved_ty.kind.as_fn_mut().unwrap();
+                    a.insert(0, *r);
+                    *r = self.analyzer.unit_type();
+                }
+
                 let fn_ty = self.transform_ty_faithfully(&fn_resloved_ty);
                 let fn_ptr =
                     self.module
                         .add_function(fn_ty.clone().into(), &full_name.to_string(), None);
-                self.functions.insert(full_name.to_string(), f);
+
+                if is_ret_aggregate_type {
+                    fn_ptr
+                        .as_function()
+                        .add_param_attr(0, Attribute::StructReturn(function.0.clone()));
+                }
+
+                self.functions.insert(full_name.to_string(), function);
                 ValuePtrContainer {
                     value_ptr: fn_ptr.into(),
                     kind: value::ContainerKind::Ptr(fn_ty),

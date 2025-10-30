@@ -9,8 +9,7 @@ use c0mpiler::{
 };
 
 fn main() {
-    let test_str =
-        fs::read_to_string("RCompiler-Testcases/IR-1/src/comprehensive9/comprehensive9.rx").unwrap();
+    let test_str = fs::read_to_string("testcases/IR/src/array1/array1.rx").unwrap();
 
     let lexer = Lexer::new(&test_str);
     let buffer = TokenBuffer::new(lexer).unwrap();

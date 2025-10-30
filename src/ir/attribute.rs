@@ -1,10 +1,11 @@
 use std::iter::repeat_with;
 
+use enum_as_inner::EnumAsInner;
 use strum::{EnumCount, EnumDiscriminants};
 
 use crate::ir::ir_type::TypePtr;
 
-#[derive(Debug, EnumCount, EnumDiscriminants, Clone)]
+#[derive(Debug, EnumCount, EnumDiscriminants, Clone, EnumAsInner)]
 pub enum Attribute {
     StructReturn(TypePtr),
 }

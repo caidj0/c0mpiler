@@ -158,7 +158,6 @@ impl<'analyzer> IRGenerator<'analyzer> {
         let right_bb = self.context.append_basic_block(&current_fn, ".right");
         let next_bb = self.context.append_basic_block(&current_fn, ".next");
 
-
         match bin_op {
             BinOp::And => self.try_build_conditional_branch(
                 raw1.clone(),
@@ -198,7 +197,13 @@ impl<'analyzer> IRGenerator<'analyzer> {
         if let Some(e) = inner_expr {
             let v = self.visit_expr(e, extra);
             if let Some(v) = v {
-                self.try_build_return(Some(self.get_value_presentation(v).value_ptr), &e.id);
+                let v = if let Some(ret_ptr) = extra.ret_ptr {
+                    self.store_to_ptr(ret_ptr.clone().into(), v);
+                    None
+                } else {
+                    Some(self.get_value_presentation(v).value_ptr)
+                };
+                self.builder.build_return(v);
             }
         } else {
             self.builder.build_return(None);

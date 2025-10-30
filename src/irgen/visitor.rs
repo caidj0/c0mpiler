@@ -6,6 +6,7 @@ use crate::{
     ast::{BindingMode, Crate, Mutability, expr::*, item::*, pat::*, stmt::*},
     impossible,
     ir::{
+        attribute::AttributeDiscriminants,
         globalxxx::FunctionPtr,
         ir_type::ArrayType,
         ir_value::{BasicBlockPtr, GlobalObjectPtr, ValuePtr},
@@ -123,9 +124,18 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let loc = self.builder.get_location();
         self.builder.locate(fn_ptr.clone(), bb);
 
-        let (ret_type, arg_types) = self.functions.get(&name_string).unwrap().clone();
+        let (_, arg_types) = self.functions.get(&name_string).unwrap().clone();
 
+        let is_aggregate = fn_ptr
+            .as_function()
+            .get_param_attr(0, AttributeDiscriminants::StructReturn);
         let args = fn_ptr.as_function().args();
+        let (ret_ptr, args) = if is_aggregate.is_some() {
+            let (ret_ptr, args) = args.split_first().unwrap();
+            (Some(ret_ptr), args)
+        } else {
+            (None, args)
+        };
 
         zip(args, arg_types)
             .zip(&decl.inputs)
@@ -152,16 +162,17 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 scope_id: extra.self_id,
                 self_id: body.as_ref().unwrap().id,
                 cycle_info: None,
+                ret_ptr,
             },
         );
 
         if let Some(value) = value {
-            self.builder
-                .build_return(Some(if ret_type.is_aggregate_type() {
-                    self.get_value_ptr(value).value_ptr
-                } else {
-                    self.get_raw_value(value)
-                }));
+            if let Some(ret_ptr) = ret_ptr {
+                self.store_to_ptr(ret_ptr.clone().into(), value);
+                self.builder.build_return(None);
+            } else {
+                self.builder.build_return(Some(self.get_raw_value(value)));
+            }
         } else {
             self.try_build_return(None, &body.as_ref().unwrap().id);
         }
@@ -397,29 +408,44 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             .map(|x| self.visit_expr(&x, extra))
             .collect::<Option<Vec<_>>>()?;
 
-        let (ret_ty, arg_tys) = self
+        let (_, arg_tys) = self
             .functions
             .get(fn_value.value_ptr.get_name().as_ref().unwrap())
             .unwrap();
 
-        let ins = self.builder.build_call(
-            FunctionPtr(GlobalObjectPtr(fn_value.value_ptr)),
-            args.into_iter()
-                .zip(arg_tys)
-                .into_iter()
-                .map(|(x, _)| self.get_value_presentation(x).value_ptr)
-                .collect(),
-            None,
-        );
+        let func_ptr = FunctionPtr(GlobalObjectPtr(fn_value.value_ptr));
+        let is_aggregate = func_ptr
+            .as_function()
+            .get_param_attr(0, AttributeDiscriminants::StructReturn);
 
-        Some(ValuePtrContainer {
-            value_ptr: ins.into(),
-            kind: if ret_ty.is_aggregate_type() {
-                ContainerKind::Ptr(ret_ty.clone())
-            } else {
-                ContainerKind::Raw
-            },
-        })
+        let calling_args = args
+            .into_iter()
+            .zip(arg_tys)
+            .into_iter()
+            .map(|(x, _)| self.get_value_presentation(x).value_ptr);
+
+        if let Some(attr) = is_aggregate {
+            let ty = attr.into_struct_return().unwrap();
+            let ptr = self.builder.build_alloca(ty.clone(), None);
+            self.builder.build_call(
+                func_ptr,
+                once(ptr.clone().into()).chain(calling_args).collect(),
+                None,
+            );
+            Some(ValuePtrContainer {
+                value_ptr: ptr.into(),
+                kind: ContainerKind::Ptr(ty.clone()),
+            })
+        } else {
+            let ins = self
+                .builder
+                .build_call(func_ptr, calling_args.collect(), None);
+
+            Some(ValuePtrContainer {
+                value_ptr: ins.into(),
+                kind: ContainerKind::Raw,
+            })
+        }
     }
 
     fn visit_method_call_expr<'tmp>(
@@ -451,27 +477,40 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             "{:?}",
             fn_value
         );
-        let (ret_ty, arg_tys) = self
+        let (_, arg_tys) = self
             .functions
             .get(fn_value.value_ptr.get_name().as_ref().unwrap())
             .unwrap();
+        let func_ptr = FunctionPtr(GlobalObjectPtr(fn_value.value_ptr));
+        let is_aggregate = func_ptr
+            .as_function()
+            .get_param_attr(0, AttributeDiscriminants::StructReturn);
 
-        let v = self.builder.build_call(
-            FunctionPtr(GlobalObjectPtr(fn_value.value_ptr)),
-            zip(once(derefed_value).chain(arg_values), arg_tys)
-                .map(|(x, _)| self.get_value_presentation(x).value_ptr)
-                .collect(),
-            None,
-        );
+        let calling_args = zip(once(derefed_value).chain(arg_values), arg_tys)
+            .map(|(x, _)| self.get_value_presentation(x).value_ptr);
 
-        Some(ValuePtrContainer {
-            value_ptr: v.into(),
-            kind: if ret_ty.is_aggregate_type() {
-                ContainerKind::Ptr(ret_ty.clone())
-            } else {
-                ContainerKind::Raw
-            },
-        })
+        if let Some(attr) = is_aggregate {
+            let ty = attr.into_struct_return().unwrap();
+            let ptr = self.builder.build_alloca(ty.clone(), None);
+            self.builder.build_call(
+                func_ptr,
+                once(ptr.clone().into()).chain(calling_args).collect(),
+                None,
+            );
+            Some(ValuePtrContainer {
+                value_ptr: ptr.into(),
+                kind: ContainerKind::Ptr(ty.clone()),
+            })
+        } else {
+            let ins = self
+                .builder
+                .build_call(func_ptr, calling_args.collect(), None);
+
+            Some(ValuePtrContainer {
+                value_ptr: ins.into(),
+                kind: ContainerKind::Raw,
+            })
+        }
     }
 
     fn visit_tup_expr<'tmp>(
@@ -839,6 +878,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                     next_bb: &next_bb,
                     value: loop_value.as_ref(),
                 }),
+                ..extra
             },
         );
         self.try_build_branch(loop_bb.clone(), &body.id);
@@ -1149,25 +1189,63 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let value = self.builder.build_alloca(ty.clone(), None);
 
         let current_function = self.builder.get_current_function().clone();
-        let repeat_loop_header_bb = self.context.append_basic_block(&current_function, ".repeat_loop_header");
-        let repeat_loop_body_bb = self.context.append_basic_block(&current_function, ".repeat_loop_body");
-        let repeat_loop_next_bb = self.context.append_basic_block(&current_function, ".repeat_loop_next");
-        let repeat_counter = self.builder.build_alloca(self.context.i32_type().into(), Some(".repeat_counter"));
-        self.builder.build_store(self.context.get_i32(0).into(), repeat_counter.clone().into());
+        let repeat_loop_header_bb = self
+            .context
+            .append_basic_block(&current_function, ".repeat_loop_header");
+        let repeat_loop_body_bb = self
+            .context
+            .append_basic_block(&current_function, ".repeat_loop_body");
+        let repeat_loop_next_bb = self
+            .context
+            .append_basic_block(&current_function, ".repeat_loop_next");
+        let repeat_counter = self
+            .builder
+            .build_alloca(self.context.i32_type().into(), Some(".repeat_counter"));
+        self.builder.build_store(
+            self.context.get_i32(0).into(),
+            repeat_counter.clone().into(),
+        );
         self.builder.build_branch(repeat_loop_header_bb.clone());
 
         // header
-        self.builder.locate(current_function.clone(), repeat_loop_header_bb.clone());
-        let repeat_counter_v = self.builder.build_load(self.context.i32_type().into(), repeat_counter.clone().into(), None);
-        let cond = self.builder.build_icmp(crate::ir::ir_value::ICmpCode::Eq, repeat_counter_v.clone().into(), self.context.get_i32(repeat_num).into(), None);
-        self.builder.build_conditional_branch(cond.into(), repeat_loop_next_bb.clone(), repeat_loop_body_bb.clone());
-        
+        self.builder
+            .locate(current_function.clone(), repeat_loop_header_bb.clone());
+        let repeat_counter_v = self.builder.build_load(
+            self.context.i32_type().into(),
+            repeat_counter.clone().into(),
+            None,
+        );
+        let cond = self.builder.build_icmp(
+            crate::ir::ir_value::ICmpCode::Eq,
+            repeat_counter_v.clone().into(),
+            self.context.get_i32(repeat_num).into(),
+            None,
+        );
+        self.builder.build_conditional_branch(
+            cond.into(),
+            repeat_loop_next_bb.clone(),
+            repeat_loop_body_bb.clone(),
+        );
+
         // body
-        self.builder.locate(current_function.clone(), repeat_loop_body_bb.clone());
-        let ith_ptr = self.builder.build_getelementptr(inner_ty, value.clone().into(), vec![repeat_counter_v.clone().into()], None);
+        self.builder
+            .locate(current_function.clone(), repeat_loop_body_bb.clone());
+        let ith_ptr = self.builder.build_getelementptr(
+            inner_ty,
+            value.clone().into(),
+            vec![repeat_counter_v.clone().into()],
+            None,
+        );
         self.store_to_ptr(ith_ptr.into(), inner_value.clone());
-        let new_counter_v = self.builder.build_binary(crate::ir::ir_value::BinaryOpcode::Add, self.context.i32_type().into(), repeat_counter_v.into(), self.context.get_i32(1).into(), None);
-        self.builder.build_store(new_counter_v.into(), repeat_counter.into());
+        let new_counter_v = self.builder.build_binary(
+            crate::ir::ir_value::BinaryOpcode::Add,
+            self.context.i32_type().into(),
+            repeat_counter_v.into(),
+            self.context.get_i32(1).into(),
+            None,
+        );
+        self.builder
+            .build_store(new_counter_v.into(), repeat_counter.into());
         self.builder.build_branch(repeat_loop_header_bb.clone());
 
         // next
