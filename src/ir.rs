@@ -1,3 +1,4 @@
+pub mod attribute;
 pub mod destructor;
 pub mod globalxxx;
 pub mod ir_output;
@@ -13,6 +14,7 @@ use std::{
 };
 
 use crate::ir::{
+    attribute::FunctionAttribute,
     globalxxx::{FunctionPtr, GlobalObject, GlobalVariable, GlobalVariablePtr},
     ir_type::{
         ArrayType, ArrayTypePtr, FunctionType, FunctionTypePtr, IntType, IntTypePtr, LabelType,
@@ -931,6 +933,7 @@ impl LLVMModule {
                 .for_each(|(param, name)| param.set_name(name));
         }
 
+        let param_num = params.len();
         let func = FunctionPtr(GlobalObjectPtr(
             Value {
                 base: ValueBase::new(self.ctx_impl.borrow_mut().ptr_type().into(), Some(name)),
@@ -939,6 +942,7 @@ impl LLVMModule {
                     kind: globalxxx::GlobalObjectKind::Function(globalxxx::Function {
                         params,
                         blocks: RefCell::default(),
+                        attr: FunctionAttribute::new(param_num).into(),
                     }),
                 }),
             }

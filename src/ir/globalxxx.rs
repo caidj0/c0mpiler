@@ -3,9 +3,12 @@ use std::ops::Deref;
 
 use crate::{
     into_extend,
-    ir::ir_value::{GlobalObjectPtr, ValuePtr},
+    ir::{
+        attribute::{Attribute, AttributeDiscriminants, FunctionAttribute},
+        ir_value::{GlobalObjectPtr, ValuePtr},
+    },
 };
-use std::{cell::RefCell, collections::HashMap};
+use std::cell::RefCell;
 
 use crate::{
     define_extension,
@@ -38,6 +41,8 @@ pub enum GlobalObjectKind {
 pub struct Function {
     pub params: Vec<ArgumentPtr>,
     pub blocks: RefCell<Vec<BasicBlockPtr>>,
+
+    pub attr: RefCell<FunctionAttribute>,
 }
 
 impl Function {
@@ -47,6 +52,41 @@ impl Function {
 
     pub fn args(&self) -> &[ArgumentPtr] {
         &self.params
+    }
+
+    pub fn add_fn_attr(&self, attr: Attribute) {
+        self.attr.borrow_mut().fn_attr.set_attr(attr);
+    }
+
+    pub fn get_fn_attr(&self, attr: AttributeDiscriminants) -> Option<Attribute> {
+        self.attr.borrow().fn_attr.get_attr(attr).cloned()
+    }
+
+    pub fn add_ret_attr(&self, attr: Attribute) {
+        self.attr.borrow_mut().ret_attr.set_attr(attr);
+    }
+
+    pub fn get_ret_attr(&self, attr: AttributeDiscriminants) -> Option<Attribute> {
+        self.attr.borrow().ret_attr.get_attr(attr).cloned()
+    }
+
+    pub fn add_param_attr(&self, index: usize, attr: Attribute) {
+        self.attr
+            .borrow_mut()
+            .params_attr
+            .get_mut(index)
+            .unwrap()
+            .set_attr(attr);
+    }
+
+    pub fn get_param_attr(&self, index: usize, attr: AttributeDiscriminants) -> Option<Attribute> {
+        self.attr
+            .borrow()
+            .params_attr
+            .get(index)
+            .unwrap()
+            .get_attr(attr)
+            .cloned()
     }
 }
 
