@@ -26,9 +26,9 @@ impl Type {
 
     pub fn is_zero_length_type(&self) -> bool {
         self.is_void()
-            || self.as_struct().map_or(false, |x| {
-                x.kind.borrow().as_body().map_or(false, |y| y.0.is_empty())
-            })
+            || self
+                .as_struct()
+                .is_some_and(|x| x.kind.borrow().as_body().is_some_and(|y| y.0.is_empty()))
     }
 }
 
@@ -57,7 +57,7 @@ impl Hash for StructType {
         } else {
             let ptr = self.kind.borrow();
             ptr.as_body()
-                .expect(&format!("StructType has no body!\n {:?}", self))
+                .unwrap_or_else(|| panic!("StructType has no body!\n {:?}", self))
                 .hash(state);
         }
     }

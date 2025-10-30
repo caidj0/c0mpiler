@@ -271,7 +271,7 @@ impl BasicBlockPtr {
         let instructions = self.as_basic_block().instructions.borrow();
         instructions.iter().for_each(|x| {
             if !x.get_type().is_void() {
-                helper.intern_local_name(&x);
+                helper.intern_local_name(x);
             }
         });
     }

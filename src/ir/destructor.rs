@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::ast::{Crate, Symbol, expr::*, item::*, pat::*, stmt::*};
+use crate::ast::{Symbol, expr::*};
 use crate::irgen::extra::ExprExtra;
 use crate::irgen::value::{ContainerKind, ValuePtrContainer};
 use crate::{irgen::IRGenerator, semantics::visitor::Visitor};
@@ -34,7 +34,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                             None,
                         );
                         self.destructing_assign(
-                            &expr,
+                            expr,
                             extra,
                             ValuePtrContainer {
                                 value_ptr: v.into(),
@@ -46,7 +46,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
             }
             ExprKind::Tup(TupExpr(exprs, force)) => match (&exprs[..], force) {
                 ([], false) => Some(()),
-                ([expr], false) => self.destructing_assign(&expr, extra, right_value),
+                ([expr], false) => self.destructing_assign(expr, extra, right_value),
                 _ => {
                     let struct_type = right_value.kind.as_ptr().unwrap();
                     let inner_tys = struct_type.as_struct().unwrap().get_body().unwrap();
@@ -65,7 +65,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                                 None,
                             );
                             self.destructing_assign(
-                                &expr,
+                                expr,
                                 extra,
                                 ValuePtrContainer {
                                     value_ptr: v.into(),

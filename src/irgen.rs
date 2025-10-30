@@ -5,16 +5,14 @@ pub mod ty;
 pub mod value;
 pub mod visitor;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     ast::{Crate, NodeId},
     impossible,
     ir::{
-        LLVMBuilder, LLVMContext, LLVMModule,
-        attribute::Attribute,
-        ir_type::{FunctionTypePtr, TypePtr},
-        ir_value::{ConstantPtr, ValuePtr},
+        LLVMBuilder, LLVMContext, LLVMModule, attribute::Attribute, ir_type::TypePtr,
+        ir_value::ConstantPtr,
     },
     irgen::value::ValuePtrContainer,
     semantics::{
@@ -80,15 +78,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
     fn absorb_scope_struct(&self, scope_id: NodeId, structs: &mut HashMap<TypeKey, ResolvedTy>) {
         let scope = self.analyzer.get_scope(scope_id);
-        for (_, key) in &scope.types {
+        for key in scope.types.values() {
             let ty = self.analyzer.probe_type((*key).into()).unwrap();
 
             use crate::semantics::resolved_ty::ResolvedTyKind::*;
-            match ty.kind {
-                Tup(_) => {
-                    structs.insert(*key, ty);
-                }
-                _ => {}
+            if let Tup(_) = ty.kind {
+                structs.insert(*key, ty);
             }
         }
 
@@ -101,12 +96,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
         let mut map = HashMap::new();
         self.absorb_analyzer_struct(&mut map);
 
-        for (_, ty) in &map {
+        for ty in map.values() {
             self.context
                 .create_opaque_struct_type(&ty.names.as_ref().unwrap().0.to_string());
         }
 
-        for (_, ty) in &map {
+        for ty in map.values() {
             let struct_ty = self
                 .context
                 .get_named_struct_type(&ty.names.as_ref().unwrap().0.to_string())
@@ -154,7 +149,8 @@ impl<'analyzer> IRGenerator<'analyzer> {
         full_name: FullName,
     ) -> ValuePtrContainer {
         use crate::semantics::value::ValueKind::*;
-        let v = match &value.kind {
+
+        match &value.kind {
             Constant(inner) => {
                 let probe = self.analyzer.probe_type(value.ty).unwrap();
                 use crate::semantics::value::ConstantValue::*;
@@ -165,7 +161,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                         match builtin {
                             Bool => self.context.get_i1(*i != 0),
                             Char => self.context.get_i8(*i as u8),
-                            I32 | ISize | U32 | USize => self.context.get_i32(*i as u32),
+                            I32 | ISize | U32 | USize => self.context.get_i32(*i),
                             Str => impossible!(),
                         }
                         .into()
@@ -179,9 +175,9 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     UnEval(_) | Placeholder => impossible!(),
                 };
                 let ty = init.get_type().clone();
-                let var_ptr =
-                    self.module
-                        .add_global_variable(true, init.into(), &full_name.to_string());
+                let var_ptr = self
+                    .module
+                    .add_global_variable(true, init, &full_name.to_string());
 
                 ValuePtrContainer {
                     value_ptr: var_ptr.into(),
@@ -231,8 +227,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 }
             }
             _ => impossible!(),
-        };
-        v
+        }
     }
 
     fn absorb_analyzer_methods(&mut self) {

@@ -59,10 +59,6 @@ impl<'analyzer> IRGenerator<'analyzer> {
         self.transform_interned_ty_impl(intern, TransfromTypeConfig::Faithful)
     }
 
-    pub(crate) fn transform_interned_ty_for_reg(&self, intern: TypeIntern) -> TypePtr {
-        self.transform_interned_ty_impl(intern, TransfromTypeConfig::FirstClass)
-    }
-
     pub(crate) fn transform_ty_faithfully(&self, ty: &ResolvedTy) -> TypePtr {
         self.transform_ty_impl(ty, TransfromTypeConfig::Faithful)
     }
@@ -123,25 +119,23 @@ impl<'analyzer> IRGenerator<'analyzer> {
                         .get_named_struct_type(&name.to_string())
                         .unwrap()
                         .into()
+                } else if items.is_empty() && cfg.no_unit() {
+                    self.context.void_type().into()
                 } else {
-                    if items.len() == 0 && cfg.no_unit() {
-                        self.context.void_type().into()
-                    } else {
-                        self.context
-                            .struct_type(
-                                items
-                                    .iter()
-                                    .map(|x| {
-                                        self.transform_interned_ty_impl(
-                                            *x,
-                                            TransfromTypeConfig::Faithful,
-                                        )
-                                    })
-                                    .collect(),
-                                false,
-                            )
-                            .into()
-                    }
+                    self.context
+                        .struct_type(
+                            items
+                                .iter()
+                                .map(|x| {
+                                    self.transform_interned_ty_impl(
+                                        *x,
+                                        TransfromTypeConfig::Faithful,
+                                    )
+                                })
+                                .collect(),
+                            false,
+                        )
+                        .into()
                 }
             }
             Enum => self.context.i32_type().into(),

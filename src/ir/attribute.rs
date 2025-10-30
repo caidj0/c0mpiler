@@ -38,7 +38,7 @@ impl FunctionAttribute {
         Self {
             fn_attr: AttributeList::default(),
             ret_attr: AttributeList::default(),
-            params_attr: repeat_with(|| AttributeList::default())
+            params_attr: repeat_with(AttributeList::default)
                 .take(param_num)
                 .collect(),
         }

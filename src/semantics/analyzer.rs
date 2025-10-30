@@ -201,7 +201,7 @@ impl SemanticAnalyzer {
         self.stage
     }
 
-    pub(crate)  fn is_main_function(&self, symbol: &Symbol, father: usize) -> bool {
+    pub(crate) fn is_main_function(&self, symbol: &Symbol, father: usize) -> bool {
         self.get_scope(father).kind.is_crate() && symbol.0 == "main"
     }
 }

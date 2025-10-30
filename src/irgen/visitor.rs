@@ -1,7 +1,5 @@
 use std::iter::{once, zip};
 
-use serde::de::value;
-
 use crate::{
     ast::{BindingMode, Crate, Mutability, expr::*, item::*, pat::*, stmt::*},
     impossible,
@@ -17,7 +15,6 @@ use crate::{
         value::{ContainerKind, ValuePtrContainer},
     },
     semantics::{
-        analyzer::SemanticAnalyzer,
         item::AssociatedInfo,
         value::{PlaceValueIndex, ValueIndex},
         visitor::Visitor,
@@ -291,7 +288,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
     ) -> Self::StmtRes<'_> {
         let value = match kind {
             LocalKind::Decl => impossible!(),
-            LocalKind::Init(expr) => self.visit_expr(&expr, extra).unwrap(),
+            LocalKind::Init(expr) => self.visit_expr(expr, extra).unwrap(),
         };
 
         self.visit_pat(pat, PatExtra { value, self_id: 0 });
@@ -389,7 +386,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 kind: crate::semantics::value::ValueIndexKind::Global { scope_id: 0 },
             })
         {
-            self.visit_ret_expr_impl(Some(args_expr.get(0).unwrap()), extra);
+            self.visit_ret_expr_impl(Some(args_expr.first().unwrap()), extra);
             return None;
         };
 
@@ -399,13 +396,13 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 .value_ptr
                 .kind
                 .as_global_object()
-                .map_or(false, |x| x.kind.is_function()),
+                .is_some_and(|x| x.kind.is_function()),
             "{:?}",
             fn_value
         );
         let args = args_expr
             .iter()
-            .map(|x| self.visit_expr(&x, extra))
+            .map(|x| self.visit_expr(x, extra))
             .collect::<Option<Vec<_>>>()?;
 
         let (_, arg_tys) = self
@@ -421,7 +418,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let calling_args = args
             .into_iter()
             .zip(arg_tys)
-            .into_iter()
             .map(|(x, _)| self.get_value_presentation(x).value_ptr);
 
         if let Some(attr) = is_aggregate {
@@ -453,10 +449,10 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         MethodCallExpr { receiver, args, .. }: &'ast MethodCallExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let receiver_value = self.visit_expr(&receiver, extra)?;
+        let receiver_value = self.visit_expr(receiver, extra)?;
         let arg_values = args
             .iter()
-            .map(|x| self.visit_expr(&x, extra))
+            .map(|x| self.visit_expr(x, extra))
             .collect::<Option<Vec<_>>>()?;
 
         let analyzer_value = self.analyzer.get_expr_value(&extra.self_id);
@@ -466,14 +462,14 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let derefed_value = self.deref(receiver_value, level, &receiver_ty);
         let fn_value = self
             .get_value_by_index(&ValueIndex::Place(index.clone()))
-            .expect(&format!("{:?}", index))
+            .unwrap_or_else(|| panic!("{:?}", index))
             .clone();
         debug_assert!(
             fn_value
                 .value_ptr
                 .kind
                 .as_global_object()
-                .map_or(false, |x| x.kind.is_function()),
+                .is_some_and(|x| x.kind.is_function()),
             "{:?}",
             fn_value
         );
@@ -526,7 +522,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 let ty = self.transform_interned_ty_faithfully(intern);
                 let p = self.builder.build_alloca(ty.clone(), None);
                 for (i, expr) in exprs.iter().enumerate() {
-                    let expr_value = self.visit_expr(&expr, extra)?;
+                    let expr_value = self.visit_expr(expr, extra)?;
                     let gep = self.builder.build_getelementptr(
                         ty.clone(),
                         p.clone().into(),
@@ -633,7 +629,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 .into(),
             LitKind::Integer => self
                 .context
-                .get_i32(*constant.as_constant_int().unwrap() as u32)
+                .get_i32(*constant.as_constant_int().unwrap())
                 .into(),
             LitKind::Str | LitKind::StrRaw(_) => {
                 let string = constant.as_constant_string().unwrap();
@@ -709,7 +705,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         IfExpr(cond, body, else_expr): &'ast IfExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let cond_value = self.visit_expr(&cond, extra)?;
+        let cond_value = self.visit_expr(cond, extra)?;
         let cond_raw = self.get_raw_value(cond_value);
 
         let current_function = self.builder.get_current_function().clone();
@@ -722,7 +718,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             .locate(current_function.clone(), take_bb.clone());
         let take_value = self
             .visit_block_expr(
-                &body,
+                body,
                 ExprExtra {
                     self_id: body.id,
                     ..extra
@@ -740,7 +736,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             self.builder
                 .locate(current_function.clone(), else_bb.clone());
             let else_value = self
-                .visit_expr(&else_expr, extra)
+                .visit_expr(else_expr, extra)
                 .map(|x| self.get_value_presentation(x));
             let new_else_bb = self.builder.get_current_basic_block().clone();
             self.try_build_branch(next_bb.clone(), &else_expr.id);
@@ -803,7 +799,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         self.builder.build_branch(cond_bb.clone());
         self.builder
             .locate(current_function.clone(), cond_bb.clone());
-        let cond_value = self.visit_expr(&cond, extra)?;
+        let cond_value = self.visit_expr(cond, extra)?;
         self.try_build_conditional_branch(
             self.get_raw_value(cond_value),
             body_bb.clone(),
@@ -813,7 +809,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         self.builder.locate(current_function.clone(), body_bb);
         let body_value = self.visit_block_expr(
-            &body,
+            body,
             ExprExtra {
                 self_id: body.id,
                 cycle_info: Some(CycleInfo {
@@ -869,7 +865,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         self.builder
             .locate(current_function.clone(), loop_bb.clone());
         self.visit_block_expr(
-            &body,
+            body,
             ExprExtra {
                 scope_id: extra.scope_id,
                 self_id: body.id,
@@ -957,8 +953,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         AssignExpr(left, right): &'ast AssignExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let right_value = self.visit_expr(&right, extra)?;
-        self.destructing_assign(&left, extra, right_value)?;
+        let right_value = self.visit_expr(right, extra)?;
+        self.destructing_assign(left, extra, right_value)?;
         None
     }
 
@@ -967,8 +963,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         AssignOpExpr(op, left, right): &'ast AssignOpExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let left_value = self.visit_expr(&left, extra)?;
-        let right_value = self.visit_expr(&right, extra)?;
+        let left_value = self.visit_expr(left, extra)?;
+        let right_value = self.visit_expr(right, extra)?;
         let left_raw = self.get_raw_value(left_value.clone());
         let right_raw = self.get_raw_value(right_value);
         let intern = self.analyzer.get_expr_type(&left.id);
@@ -1028,8 +1024,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         IndexExpr(array_expr, index_expr): &'ast IndexExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let array_value = self.visit_expr(&array_expr, extra)?;
-        let index_value = self.visit_expr(&index_expr, extra)?;
+        let array_value = self.visit_expr(array_expr, extra)?;
+        let index_value = self.visit_expr(index_expr, extra)?;
         let index_raw = self.get_raw_value(index_value);
 
         let analyzer_value = self.analyzer.get_expr_value(&extra.self_id);
@@ -1082,7 +1078,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         AddrOfExpr(_, inner_expr): &'ast AddrOfExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let v = self.visit_expr(&inner_expr, extra)?;
+        let v = self.visit_expr(inner_expr, extra)?;
         Some(ValuePtrContainer {
             value_ptr: self.get_value_ptr(v).value_ptr,
             kind: ContainerKind::Raw,

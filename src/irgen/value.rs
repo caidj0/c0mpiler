@@ -133,7 +133,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                             value_ptr: new_value.into(),
                             kind: ContainerKind::Ptr(self.context.ptr_type().into()),
                         },
-                        &deref_level,
+                        deref_level,
                         ty,
                     )
                 }

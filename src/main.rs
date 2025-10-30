@@ -5,7 +5,6 @@ use c0mpiler::{
     irgen::IRGenerator,
     lexer::{Lexer, TokenBuffer},
     semantics::analyzer::SemanticAnalyzer,
-    utils::test,
 };
 
 fn main() {

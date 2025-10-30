@@ -14,7 +14,7 @@ use crate::{
         error::SemanticError,
         impls::DerefLevel,
         pat::Binding,
-        resolved_ty::{ResolvedTyInstance, TypeIntern, TypeKey},
+        resolved_ty::{ResolvedTyInstance, TypeIntern},
     },
 };
 

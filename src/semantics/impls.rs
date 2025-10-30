@@ -42,7 +42,7 @@ impl SemanticAnalyzer {
     }
 
     pub fn get_impls_by_instance_mut(&mut self, instance: &ResolvedTyInstance) -> &mut Impls {
-        if !self.impls.contains_key(&instance) {
+        if !self.impls.contains_key(instance) {
             let mut inherent = ImplInfo::default();
             if instance.kind.is_array() {
                 let inner_ty = self.new_any_type();
@@ -73,7 +73,7 @@ impl SemanticAnalyzer {
             );
         }
 
-        self.impls.get_mut(&instance).unwrap()
+        self.impls.get_mut(instance).unwrap()
     }
 
     pub fn get_impl_for_trait(&self, ty: &TypeKey, trait_ty: &TypeKey) -> Option<&ImplInfo> {

@@ -1,7 +1,0 @@
-fn main() {
-    let mut a: i32 = 10;
-    while (a > 5) {
-        a -= 1;
-    }
-    exit(0);
-}

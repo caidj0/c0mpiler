@@ -120,7 +120,7 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at
 
         // Compile with clang
         let compile_result = Command::new("clang")
-            .args(&[
+            .args([
                 &ir_file,
                 "tests/prelude.c",
                 "-o",

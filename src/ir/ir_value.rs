@@ -134,7 +134,7 @@ impl Instruction {
             InstructionKind::Icmp(..) => "icmp",
             InstructionKind::Phi => "phi",
             InstructionKind::Select => "select",
-            InstructionKind::PtrToInt { .. } => "ptrtoint",
+            InstructionKind::PtrToInt => "ptrtoint",
             InstructionKind::Trunc => "trunc",
             InstructionKind::Zext => "zext",
             InstructionKind::Sext => "sext",

@@ -84,8 +84,7 @@ impl Function {
             .borrow()
             .params_attr
             .get(index)
-            .map(|x| x.get_attr(attr).cloned())
-            .flatten()
+            .and_then(|x| x.get_attr(attr).cloned())
     }
 }
 
