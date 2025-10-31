@@ -316,7 +316,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
     ) -> Self::StmtRes<'_> {
         let value = match kind {
             LocalKind::Decl => impossible!(),
-            LocalKind::Init(expr) => self.visit_expr(expr, extra).unwrap(),
+            LocalKind::Init(expr) => self.visit_expr(expr, extra)?,
         };
 
         self.visit_pat(pat, PatExtra { value, self_id: 0 });

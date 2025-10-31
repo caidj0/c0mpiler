@@ -15,11 +15,19 @@ use c0mpiler::{
 };
 
 #[test]
+fn semantic_1() {
+    let escape_list = [];
+    let case_path = "RCompiler-Testcases/semantic-1";
+
+    run_test_cases(&escape_list, case_path, true, true);
+}
+
+#[test]
 fn my_ir() {
     let escape_list = [];
     let case_path = "testcases/IR";
 
-    run_test_cases(&escape_list, case_path, true);
+    run_test_cases(&escape_list, case_path, true, false);
 }
 
 #[test]
@@ -27,10 +35,15 @@ fn ir_1() {
     let escape_list = [];
     let case_path = "RCompiler-Testcases/IR-1";
 
-    run_test_cases(&escape_list, case_path, true);
+    run_test_cases(&escape_list, case_path, true, false);
 }
 
-fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at_fault: bool) {
+fn run_test_cases(
+    escape_list: &[&'static str],
+    case_path: &'static str,
+    stop_at_fault: bool,
+    dry_run: bool,
+) {
     let path = PathBuf::from_str(case_path).unwrap();
     let infos_path = path.join("global.json");
     let infos: Vec<TestCaseInfo> =
@@ -110,94 +123,96 @@ fn run_test_cases(escape_list: &[&'static str], case_path: &'static str, stop_at
             }
         };
 
-        // Write IR to temporary file
-        let ir_file = format!("target/tmp/{name}.ll");
-        fs::create_dir_all("target/tmp").unwrap();
-        fs::write(&ir_file, &ir).unwrap();
+        if !dry_run {
+            // Write IR to temporary file
+            let ir_file = format!("target/tmp/{name}.ll");
+            fs::create_dir_all("target/tmp").unwrap();
+            fs::write(&ir_file, &ir).unwrap();
 
-        // Compile with clang
-        let compile_result = Command::new("clang")
-            .args([
-                &ir_file,
-                "tests/prelude.c",
-                "-o",
-                &format!("target/tmp/{name}"),
-            ])
-            .output();
+            // Compile with clang
+            let compile_result = Command::new("clang")
+                .args([
+                    &ir_file,
+                    "tests/prelude.c",
+                    "-o",
+                    &format!("target/tmp/{name}"),
+                ])
+                .output();
 
-        let compile_output = match compile_result {
-            Ok(output) => output,
-            Err(e) => {
-                fault!("{name} failed to execute clang: {e}");
+            let compile_output = match compile_result {
+                Ok(output) => output,
+                Err(e) => {
+                    fault!("{name} failed to execute clang: {e}");
+                }
+            };
+
+            if !compile_output.status.success() {
+                let stderr = String::from_utf8_lossy(&compile_output.stderr);
+                fault!("{name} compilation failed:\n{stderr}");
             }
-        };
 
-        if !compile_output.status.success() {
-            let stderr = String::from_utf8_lossy(&compile_output.stderr);
-            fault!("{name} compilation failed:\n{stderr}");
-        }
+            // Run the compiled program
+            let input_data = if in_path.exists() {
+                fs::read(&in_path).unwrap()
+            } else {
+                Vec::new()
+            };
 
-        // Run the compiled program
-        let input_data = if in_path.exists() {
-            fs::read(&in_path).unwrap()
-        } else {
-            Vec::new()
-        };
+            let run_result = Command::new("sh")
+                .arg("-c")
+                .arg(format!("ulimit -s unlimited && exec target/tmp/{name}",))
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn();
 
-        let run_result = Command::new("sh")
-            .arg("-c")
-            .arg(format!("ulimit -s unlimited && exec target/tmp/{name}",))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn();
+            let mut child = match run_result {
+                Ok(child) => child,
+                Err(e) => {
+                    fault!("{name} failed to execute program: {e}");
+                }
+            };
 
-        let mut child = match run_result {
-            Ok(child) => child,
-            Err(e) => {
-                fault!("{name} failed to execute program: {e}");
+            // Write input to stdin
+            if !input_data.is_empty() {
+                use std::io::Write;
+                if let Some(mut stdin) = child.stdin.take() {
+                    stdin.write_all(&input_data).unwrap();
+                }
             }
-        };
 
-        // Write input to stdin
-        if !input_data.is_empty() {
-            use std::io::Write;
-            if let Some(mut stdin) = child.stdin.take() {
-                stdin.write_all(&input_data).unwrap();
+            let output = match child.wait_with_output() {
+                Ok(output) => output,
+                Err(e) => {
+                    fault!("{name} failed to wait for program: {e}");
+                }
+            };
+
+            // Check if program exited successfully
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                fault!("{name} program execution failed:\n{stderr}");
             }
-        }
 
-        let output = match child.wait_with_output() {
-            Ok(output) => output,
-            Err(e) => {
-                fault!("{name} failed to wait for program: {e}");
+            // Read expected output
+            let expected_output = if out_path.exists() {
+                fs::read(&out_path).unwrap()
+            } else {
+                Vec::new()
+            };
+
+            let actual_output = output.stdout;
+
+            // Compare outputs
+            if actual_output.trim_ascii_end() != expected_output.trim_ascii_end() {
+                let actual_str = String::from_utf8_lossy(&actual_output);
+                let expected_str = String::from_utf8_lossy(&expected_output);
+                fault!(
+                    "{name} output mismatch!\nExpected:\n{}\nActual:\n{}",
+                    expected_str,
+                    actual_str
+                );
             }
-        };
-
-        // Check if program exited successfully
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            fault!("{name} program execution failed:\n{stderr}");
-        }
-
-        // Read expected output
-        let expected_output = if out_path.exists() {
-            fs::read(&out_path).unwrap()
-        } else {
-            Vec::new()
-        };
-
-        let actual_output = output.stdout;
-
-        // Compare outputs
-        if actual_output.trim_ascii_end() != expected_output.trim_ascii_end() {
-            let actual_str = String::from_utf8_lossy(&actual_output);
-            let expected_str = String::from_utf8_lossy(&expected_output);
-            fault!(
-                "{name} output mismatch!\nExpected:\n{}\nActual:\n{}",
-                expected_str,
-                actual_str
-            );
         }
 
         println!("{name} passed!");

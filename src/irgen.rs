@@ -14,7 +14,7 @@ use crate::{
     irgen::value::ValuePtrContainer,
     semantics::{
         analyzer::SemanticAnalyzer,
-        resolved_ty::{ResolvedTy, TypeKey},
+        resolved_ty::{ResolvedTy, ResolvedTyKind, TypeKey},
         utils::FullName,
         value::{PlaceValue, PlaceValueIndex, ValueIndex},
         visitor::Visitor,
@@ -38,50 +38,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         let mut module = context.create_module("crate");
         let mut value_indexes = HashMap::default();
 
-        let string_type = context.create_opaque_struct_type("String");
-        string_type.set_body(
-            vec![context.ptr_type().into(), context.i32_type().into()],
-            false,
-        );
-        let fat_ptr_type = context.create_opaque_struct_type("fat_ptr");
-        fat_ptr_type.set_body(
-            vec![context.ptr_type().into(), context.i32_type().into()],
-            false,
-        );
-        let str_len_type = context.function_type(
-            context.i32_type().into(),
-            vec![context.ptr_type().into(), context.i32_type().into()],
-        );
-        let str_len_fn = module.add_function(str_len_type.clone(), "str.len", None);
-        let bb = context.append_basic_block(&str_len_fn, "entry");
-        builder.locate(str_len_fn.clone(), bb);
-        builder.build_return(Some(
-            str_len_fn
-                .as_function()
-                .get_nth_argument(1)
-                .unwrap()
-                .clone()
-                .into(),
-        ));
-
-        value_indexes.insert(
-            ValueIndex::Place(PlaceValueIndex {
-                name: "len".into(),
-                kind: crate::semantics::value::ValueIndexKind::Impl {
-                    ty: ResolvedTy {
-                        names: None,
-                        kind: crate::semantics::resolved_ty::ResolvedTyKind::BuiltIn(
-                            crate::semantics::resolved_ty::BuiltInTyKind::Str,
-                        ),
-                    },
-                    for_trait: None,
-                },
-            }),
-            ValuePtrContainer {
-                value_ptr: str_len_fn.into(),
-                kind: value::ContainerKind::Ptr(str_len_type.into()),
-            },
-        );
+        add_preludes(&context, &mut builder, &mut module, &mut value_indexes);
 
         let mut generator = Self {
             context,
@@ -190,15 +147,19 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 use crate::semantics::value::ConstantValue::*;
                 let init: ConstantPtr = match inner {
                     ConstantInt(i) => {
-                        let builtin = probe.kind.as_built_in().unwrap();
                         use crate::semantics::resolved_ty::BuiltInTyKind::*;
-                        match builtin {
-                            Bool => self.context.get_i1(*i != 0),
-                            Char => self.context.get_i8(*i as u8),
-                            I32 | ISize | U32 | USize => self.context.get_i32(*i),
-                            Str => impossible!(),
+
+                        match probe.kind {
+                            ResolvedTyKind::BuiltIn(builtin) => match builtin {
+                                Bool => self.context.get_i1(*i != 0),
+                                Char => self.context.get_i8(*i as u8),
+                                I32 | ISize | U32 | USize => self.context.get_i32(*i),
+                                Str => impossible!(),
+                            }
+                            .into(),
+                            ResolvedTyKind::Enum => self.context.get_i32(*i).into(),
+                            _ => impossible!(),
                         }
-                        .into()
                     }
                     ConstantString(string) => self.context.get_string(string).into(),
                     ConstantArray(..) => todo!(),
@@ -301,4 +262,102 @@ impl<'analyzer> IRGenerator<'analyzer> {
             }
         }
     }
+}
+
+fn add_preludes(
+    context: &LLVMContext,
+    builder: &mut LLVMBuilder,
+    module: &mut LLVMModule,
+    value_indexes: &mut HashMap<ValueIndex, ValuePtrContainer>,
+) {
+    let string_type = context.create_opaque_struct_type("String");
+    string_type.set_body(
+        vec![context.ptr_type().into(), context.i32_type().into()],
+        false,
+    );
+    let fat_ptr_type = context.create_opaque_struct_type("fat_ptr");
+    fat_ptr_type.set_body(
+        vec![context.ptr_type().into(), context.i32_type().into()],
+        false,
+    );
+    let str_len_type = context.function_type(
+        context.i32_type().into(),
+        vec![context.ptr_type().into(), context.i32_type().into()],
+    );
+    let str_len_fn = module.add_function(str_len_type.clone(), "str.len", None);
+    let bb = context.append_basic_block(&str_len_fn, "entry");
+    builder.locate(str_len_fn.clone(), bb);
+    builder.build_return(Some(
+        str_len_fn
+            .as_function()
+            .get_nth_argument(1)
+            .unwrap()
+            .clone()
+            .into(),
+    ));
+    let i32_to_string_type = context.function_type(
+        context.void_type().into(),
+        vec![context.ptr_type().into(), context.ptr_type().into()],
+    );
+    let u_to_string_fn = module.add_function(i32_to_string_type.clone(), "to_string", None);
+    u_to_string_fn
+        .as_function()
+        .add_param_attr(0, Attribute::StructReturn(string_type.clone().into()));
+
+    value_indexes.insert(
+        ValueIndex::Place(PlaceValueIndex {
+            name: "len".into(),
+            kind: crate::semantics::value::ValueIndexKind::Impl {
+                ty: ResolvedTy {
+                    names: None,
+                    kind: crate::semantics::resolved_ty::ResolvedTyKind::BuiltIn(
+                        crate::semantics::resolved_ty::BuiltInTyKind::Str,
+                    ),
+                },
+                for_trait: None,
+            },
+        }),
+        ValuePtrContainer {
+            value_ptr: str_len_fn.into(),
+            kind: value::ContainerKind::Ptr(str_len_type.into()),
+        },
+    );
+
+    value_indexes.insert(
+        ValueIndex::Place(PlaceValueIndex {
+            name: "to_string".into(),
+            kind: crate::semantics::value::ValueIndexKind::Impl {
+                ty: ResolvedTy {
+                    names: None,
+                    kind: crate::semantics::resolved_ty::ResolvedTyKind::BuiltIn(
+                        crate::semantics::resolved_ty::BuiltInTyKind::U32,
+                    ),
+                },
+                for_trait: None,
+            },
+        }),
+        ValuePtrContainer {
+            value_ptr: u_to_string_fn.clone().into(),
+            kind: value::ContainerKind::Ptr(i32_to_string_type.clone().into()),
+        },
+    );
+
+    value_indexes.insert(
+        ValueIndex::Place(PlaceValueIndex {
+            name: "to_string".into(),
+            kind: crate::semantics::value::ValueIndexKind::Impl {
+                ty: ResolvedTy {
+                    names: None,
+                    kind: crate::semantics::resolved_ty::ResolvedTyKind::BuiltIn(
+                        crate::semantics::resolved_ty::BuiltInTyKind::USize,
+                    ),
+                },
+                for_trait: None,
+            },
+        }),
+        ValuePtrContainer {
+            value_ptr: u_to_string_fn.clone().into(),
+            kind: value::ContainerKind::Ptr(i32_to_string_type.clone().into()),
+        },
+    );
 }

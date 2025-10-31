@@ -1,0 +1,7 @@
+fn main() {
+    let a: i32 = ((!0 >> 1) + 1i32) as i32;
+    let b: i32 = ((!0 >> 1) + 1u32) as i32;
+    printlnInt(a);
+    printlnInt(b);
+    exit(0);
+}

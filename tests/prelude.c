@@ -4,8 +4,8 @@
 #include <string.h>
 
 struct String {
-  uint32_t length;
   char *data;
+  uint32_t length;
 };
 
 typedef struct String String;
@@ -18,10 +18,10 @@ typedef struct String String;
 //     return ret;
 // }
 
-String to_string(uint32_t self) {
+String to_string(uint32_t *self) {
   char buffer[16];
-  uint32_t length = sprintf(buffer, "%d", self) - 1;
-  String ret = {length, buffer};
+  uint32_t length = sprintf(buffer, "%d", *self) - 1;
+  String ret = {buffer, length};
   return ret;
 }
 
@@ -30,7 +30,7 @@ String string_plus(String *self, char *right) {
   char *data = malloc(length + 1);
   strcpy(data, self->data);
   strcpy(data + self->length, right);
-  String ret = {length, data};
+  String ret = {data, length};
   return ret;
 }
 
@@ -51,7 +51,7 @@ String getString() {
     length--;
   }
 
-  String ret = {length, *buffer};
+  String ret = {*buffer, length};
   return ret;
 }
 

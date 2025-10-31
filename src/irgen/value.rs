@@ -172,7 +172,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
         {
             ValueKind::LenMethod(len.unwrap())
         } else {
-            ValueKind::Normal(self.value_indexes.get(index).unwrap().clone())
+            ValueKind::Normal(
+                self.value_indexes
+                    .get(index)
+                    .expect(&format!("{:?}", index))
+                    .clone(),
+            )
         }
     }
 

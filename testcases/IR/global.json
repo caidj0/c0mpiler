@@ -50,5 +50,9 @@
     {
         "name": "hello5",
         "compileexitcode": 0
+    },
+    {
+        "name": "reverse_restriction",
+        "compileexitcode": 0
     }
 ]
