@@ -260,6 +260,28 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     v,
                 );
             }
+            for (trait_ty, impl_info) in &impls.traits {
+                let name = name
+                    .clone()
+                    .append(trait_ty.names.as_ref().unwrap().0.clone());
+                for (s, PlaceValue { value, .. }) in &impl_info.values {
+                    let v = self.absorb_analyzer_global_value(
+                        value,
+                        false,
+                        name.clone().concat(s.clone()),
+                    );
+                    self.value_indexes.insert(
+                        ValueIndex::Place(PlaceValueIndex {
+                            name: s.clone(),
+                            kind: crate::semantics::value::ValueIndexKind::Impl {
+                                ty: resolved_ty.clone(),
+                                for_trait: Some(trait_ty.clone()),
+                            },
+                        }),
+                        v,
+                    );
+                }
+            }
         }
     }
 }

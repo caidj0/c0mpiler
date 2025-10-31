@@ -12,6 +12,11 @@ impl FullName {
         self.0.push(s);
         self
     }
+
+    pub(crate) fn append(mut self, mut right: FullName) -> Self {
+        self.0.append(&mut right.0);
+        self
+    }
 }
 
 impl Display for FullName {
