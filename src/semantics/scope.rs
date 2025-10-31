@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use enum_as_inner::EnumAsInner;
 
@@ -40,6 +43,7 @@ pub enum ScopeKind {
     },
     Loop {
         ret_ty: TypeKey,
+        has_break: RefCell<bool>,
     },
     CycleExceptLoop,
 }

@@ -1703,12 +1703,19 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
     ) -> Self::ExprRes<'_> {
         if self.stage.is_symbol_collect() {
             let ret_ty = self.new_any_type().to_key();
-            self.add_scope(extra.self_id, extra.scope_id, ScopeKind::Loop { ret_ty });
+            self.add_scope(
+                extra.self_id,
+                extra.scope_id,
+                ScopeKind::Loop {
+                    ret_ty,
+                    has_break: false.into(),
+                },
+            );
         }
 
         if self.is_body_stage() {
             let target_ty = extra.target_ty.unwrap();
-            let scope_ty = *self.get_scope(extra.self_id).kind.as_loop().unwrap();
+            let scope_ty = *self.get_scope(extra.self_id).kind.as_loop().unwrap().0;
             self.ty_downgrade_eq(target_ty, scope_ty.into())?;
 
             self.visit_block_expr(
@@ -1724,17 +1731,28 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
             self.no_assignee(body_expr.id)
                 .map_err(|e| e.set_span(&body_expr.span))?;
-            let interrupt = self.get_expr_result(&body_expr.id).interrupt;
+            let has_break = *self
+                .get_scope(extra.self_id)
+                .kind
+                .as_loop()
+                .unwrap()
+                .1
+                .borrow();
+            let interrupt = if has_break {
+                self.get_expr_result(&body_expr.id).interrupt
+            } else {
+                ControlFlowInterruptKind::Return
+            };
 
             self.set_expr_value_and_result(
                 extra.self_id,
-                if interrupt.is_return() || interrupt.is_not() {
-                    self.never_value()
-                } else {
+                if has_break {
                     Value {
                         ty: scope_ty.into(),
                         kind: ValueKind::Anon,
                     }
+                } else {
+                    self.never_value()
                 },
                 AssigneeKind::Value,
                 interrupt,
@@ -2209,13 +2227,15 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 (Some(_), ScopeKind::CycleExceptLoop) => {
                     return Err(make_semantic_error!(NotInLoopScope));
                 }
-                (Some(e), ScopeKind::Loop { ret_ty }) => {
+                (Some(e), ScopeKind::Loop { ret_ty, has_break }) => {
+                    *has_break.borrow_mut() = true;
                     self.visit_expr(e, extra.replace_target((*ret_ty).into()))?;
                     self.no_assignee(e.id)?;
                     let interrupt = self.get_expr_result(&e.id).interrupt;
                     interrupt + ControlFlowInterruptKind::Loop
                 }
-                (None, ScopeKind::Loop { ret_ty }) => {
+                (None, ScopeKind::Loop { ret_ty, has_break }) => {
+                    *has_break.borrow_mut() = true;
                     self.ty_intern_eq((*ret_ty).into(), self.unit_type())?;
                     ControlFlowInterruptKind::Loop
                 }

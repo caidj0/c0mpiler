@@ -16,7 +16,9 @@ use c0mpiler::{
 
 #[test]
 fn semantic_1() {
-    let escape_list = [];
+    let escape_list = [
+        "misc3", "misc4", "misc14", // main 不通过 exit 退出
+    ];
     let case_path = "RCompiler-Testcases/semantic-1";
 
     run_test_cases(&escape_list, case_path, true, true);
@@ -123,34 +125,34 @@ fn run_test_cases(
             }
         };
 
-        if !dry_run {
-            // Write IR to temporary file
-            let ir_file = format!("target/tmp/{name}.ll");
-            fs::create_dir_all("target/tmp").unwrap();
-            fs::write(&ir_file, &ir).unwrap();
+        // Write IR to temporary file
+        let ir_file = format!("target/tmp/{name}.ll");
+        fs::create_dir_all("target/tmp").unwrap();
+        fs::write(&ir_file, &ir).unwrap();
 
-            // Compile with clang
-            let compile_result = Command::new("clang")
-                .args([
-                    &ir_file,
-                    "tests/prelude.c",
-                    "-o",
-                    &format!("target/tmp/{name}"),
-                ])
-                .output();
+        // Compile with clang
+        let compile_result = Command::new("clang")
+            .args([
+                &ir_file,
+                "tests/prelude.c",
+                "-o",
+                &format!("target/tmp/{name}"),
+            ])
+            .output();
 
-            let compile_output = match compile_result {
-                Ok(output) => output,
-                Err(e) => {
-                    fault!("{name} failed to execute clang: {e}");
-                }
-            };
-
-            if !compile_output.status.success() {
-                let stderr = String::from_utf8_lossy(&compile_output.stderr);
-                fault!("{name} compilation failed:\n{stderr}");
+        let compile_output = match compile_result {
+            Ok(output) => output,
+            Err(e) => {
+                fault!("{name} failed to execute clang: {e}");
             }
+        };
 
+        if !compile_output.status.success() {
+            let stderr = String::from_utf8_lossy(&compile_output.stderr);
+            fault!("{name} compilation failed:\n{stderr}");
+        }
+
+        if !dry_run {
             // Run the compiled program
             let input_data = if in_path.exists() {
                 fs::read(&in_path).unwrap()

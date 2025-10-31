@@ -926,7 +926,18 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                     kind,
                 })
             }
-            None => None,
+            None => {
+                if !self
+                    .analyzer
+                    .get_expr_result(&extra.self_id)
+                    .interrupt
+                    .is_not()
+                {
+                    self.builder.build_unreachable();
+                }
+
+                None
+            }
         }
     }
 
