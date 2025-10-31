@@ -14,11 +14,27 @@ use c0mpiler::{
     utils::test::TestCaseInfo,
 };
 
+#[ignore]
+#[test]
+fn my_semantic() {
+    let escape_list = [
+        "copy_trait1",
+        "copy_trait2",
+        "copy_trait3", // 不清楚 Copy Trait 要实现到哪一步
+        "operator1",   // TODO: &1 == &1,
+        "autoderef1",  // 这个点在 IR 的处理非常麻烦
+        "item_order1",
+        "item_order2",
+        "type1",
+    ];
+    let case_path = "testcases/semantics";
+
+    run_test_cases(&escape_list, case_path, true, true);
+}
+
 #[test]
 fn semantic_1() {
-    let escape_list = [
-        "misc3", "misc4", "misc14", // main 不通过 exit 退出
-    ];
+    let escape_list = [];
     let case_path = "RCompiler-Testcases/semantic-1";
 
     run_test_cases(&escape_list, case_path, true, true);
