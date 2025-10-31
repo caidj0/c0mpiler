@@ -655,7 +655,7 @@ impl LLVMBuilder {
                         .zip(args.iter())
                         .all(|(x, y)| x == y.get_type())
             },
-            "func:{:#?}\nargs:{:#?}",
+            "Call argument mismatch!\nfunc:{:#?}\nargs:{:#?}",
             func,
             args
         );

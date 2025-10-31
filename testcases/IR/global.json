@@ -22,5 +22,13 @@
     {
         "name": "hello1",
         "compileexitcode": 0
+    },
+    {
+        "name": "hello2",
+        "compileexitcode": 0
+    },
+    {
+        "name": "hello3",
+        "compileexitcode": 0
     }
 ]

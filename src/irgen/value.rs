@@ -46,7 +46,34 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 }
             }
             ContainerKind::Ptr(ty) => {
-                if ty.is_aggregate_type() {
+                if ty.is_fat_ptr() {
+                    ValuePtrContainer {
+                        value_ptr: self
+                            .builder
+                            .build_load(
+                                self.context.ptr_type().into(),
+                                value.value_ptr.clone(),
+                                None,
+                            )
+                            .into(),
+                        kind: ContainerKind::Raw {
+                            fat: Some({
+                                let p = self.builder.build_getelementptr(
+                                    self.fat_ptr_type().into(),
+                                    value.value_ptr.clone(),
+                                    vec![
+                                        self.context.get_i32(0).into(),
+                                        self.context.get_i32(1).into(),
+                                    ],
+                                    None,
+                                );
+                                self.builder
+                                    .build_load(self.context.i32_type().into(), p.into(), None)
+                                    .into()
+                            }),
+                        },
+                    }
+                } else if ty.is_aggregate_type() {
                     value
                 } else {
                     ValuePtrContainer {
@@ -128,9 +155,12 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 self.builder.build_store(src.value_ptr, dest.clone());
                 if let Some(fat) = fat {
                     let second = self.builder.build_getelementptr(
-                        self.context.i8_type().into(),
+                        self.fat_ptr_type().into(),
                         dest,
-                        vec![self.context.get_i32(4).into()],
+                        vec![
+                            self.context.get_i32(0).into(),
+                            self.context.get_i32(1).into(),
+                        ],
                         None,
                     );
                     self.builder.build_store(fat, second.into());
