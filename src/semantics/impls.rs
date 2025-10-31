@@ -112,6 +112,19 @@ impl SemanticAnalyzer {
         }
     }
 
+    pub fn get_impl_value(
+        &self,
+        AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
+        name: &Symbol,
+    ) -> Option<&PlaceValue> {
+        let info = if let Some(t) = for_trait {
+            self.get_impl_for_trait(ty, t)?
+        } else {
+            &self.get_impls(ty)?.inherent
+        };
+        info.values.get(name)
+    }
+
     pub fn get_impl_value_mut(
         &mut self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,

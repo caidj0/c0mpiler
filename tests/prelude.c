@@ -34,9 +34,9 @@ String string_plus(String *self, char *right) {
   return ret;
 }
 
-void print(char *text) { printf("%s", text); }
+void print(char *text, uint32_t n) { printf("%.*s", n, text); }
 
-void println(char *text) { printf("%s\n", text); }
+void println(char *text, uint32_t n) { printf("%.*s\n", n, text); }
 
 void printInt(int32_t n) { printf("%d", n); }
 

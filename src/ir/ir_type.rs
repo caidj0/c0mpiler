@@ -30,6 +30,11 @@ impl Type {
                 .as_struct()
                 .is_some_and(|x| x.kind.borrow().as_body().is_some_and(|y| y.0.is_empty()))
     }
+
+    pub fn is_fat_ptr(&self) -> bool {
+        self.as_struct()
+            .map_or(false, |x| x.get_name().map_or(false, |x| x == "fat_ptr"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

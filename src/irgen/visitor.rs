@@ -12,6 +12,7 @@ use crate::{
     irgen::{
         IRGenerator,
         extra::{CycleInfo, ExprExtra, ItemExtra, PatExtra},
+        ty::TransfromTypeConfig,
         value::{ContainerKind, ValuePtrContainer},
     },
     semantics::{
@@ -107,21 +108,36 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         }: &'ast FnItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let full_name = if let Some(info) = extra.associated_info {
-            let probe = self.analyzer.probe_type(info.ty.into()).unwrap();
-            probe.names.unwrap().0.concat(ident.symbol.clone())
-        } else {
-            self.analyzer
-                .get_full_name(extra.scope_id, ident.symbol.clone())
+        let (fn_value, full_name) = match extra.associated_info {
+            Some(info) => {
+                let instance = self.analyzer.probe_type(info.ty.into()).unwrap();
+                (
+                    self.analyzer.get_impl_value(&info, &ident.symbol).unwrap(),
+                    instance.names.unwrap().0.concat(ident.symbol.clone()),
+                )
+            }
+            None => (
+                self.analyzer
+                    .get_scope_value(extra.scope_id, &ident.symbol)
+                    .unwrap(),
+                self.analyzer
+                    .get_full_name(extra.scope_id, ident.symbol.clone()),
+            ),
         };
+
         let name_string = full_name.to_string();
         let fn_ptr = self.module.get_function(&name_string).unwrap();
+        let fn_intern = fn_value.value.ty;
+        let fn_resolved_ty = self.analyzer.probe_type(fn_intern).unwrap();
 
-        let bb = self.context.append_basic_block(&fn_ptr, "entry");
-        let loc = self.builder.get_location();
-        self.builder.locate(fn_ptr.clone(), bb);
-
-        let (_, arg_types) = self.functions.get(&name_string).unwrap().clone();
+        let arg_types = fn_resolved_ty
+            .kind
+            .as_fn()
+            .unwrap()
+            .1
+            .iter()
+            .map(|x| self.transform_interned_ty_impl(*x, TransfromTypeConfig::FirstClass))
+            .collect::<Vec<_>>();
 
         let is_aggregate = fn_ptr
             .as_function()
@@ -134,24 +150,35 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             (None, args)
         };
 
-        zip(args, arg_types)
-            .zip(&decl.inputs)
-            .for_each(|((arg, ty), param)| {
-                self.visit_pat(
-                    &param.pat,
-                    PatExtra {
-                        value: ValuePtrContainer {
-                            value_ptr: arg.clone().into(),
-                            kind: if ty.is_aggregate_type() {
-                                ContainerKind::Ptr(ty)
-                            } else {
-                                ContainerKind::Raw
-                            },
-                        },
-                        self_id: 0,
+        let bb = self.context.append_basic_block(&fn_ptr, "entry");
+        let loc = self.builder.get_location();
+        self.builder.locate(fn_ptr.clone(), bb);
+
+        let mut args_iter = args.iter();
+        for (arg_type, param) in zip(arg_types, &decl.inputs) {
+            let arg = args_iter.next().unwrap();
+            let kind = if arg_type.is_aggregate_type() {
+                ContainerKind::Ptr(arg_type)
+            } else {
+                ContainerKind::Raw {
+                    fat: if arg_type.is_fat_ptr() {
+                        Some(args_iter.next().unwrap().clone().into())
+                    } else {
+                        None
                     },
-                )
-            });
+                }
+            };
+            self.visit_pat(
+                &param.pat,
+                PatExtra {
+                    value: ValuePtrContainer {
+                        value_ptr: arg.clone().into(),
+                        kind,
+                    },
+                    self_id: 0,
+                },
+            );
+        }
 
         let value = self.visit_block_expr(
             body.as_ref().unwrap(),
@@ -405,11 +432,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             .map(|x| self.visit_expr(x, extra))
             .collect::<Option<Vec<_>>>()?;
 
-        let (_, arg_tys) = self
-            .functions
-            .get(fn_value.value_ptr.get_name().as_ref().unwrap())
-            .unwrap();
-
         let func_ptr = FunctionPtr(GlobalObjectPtr(fn_value.value_ptr));
         let is_aggregate = func_ptr
             .as_function()
@@ -417,8 +439,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         let calling_args = args
             .into_iter()
-            .zip(arg_tys)
-            .map(|(x, _)| self.get_value_presentation(x).value_ptr);
+            .map(|x| self.get_value_presentation(x).flatten())
+            .flatten();
 
         if let Some(attr) = is_aggregate {
             let ty = attr.into_struct_return().unwrap();
@@ -439,7 +461,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
             Some(ValuePtrContainer {
                 value_ptr: ins.into(),
-                kind: ContainerKind::Raw,
+                kind: ContainerKind::Raw { fat: None },
             })
         }
     }
@@ -473,17 +495,15 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             "{:?}",
             fn_value
         );
-        let (_, arg_tys) = self
-            .functions
-            .get(fn_value.value_ptr.get_name().as_ref().unwrap())
-            .unwrap();
         let func_ptr = FunctionPtr(GlobalObjectPtr(fn_value.value_ptr));
         let is_aggregate = func_ptr
             .as_function()
             .get_param_attr(0, AttributeDiscriminants::StructReturn);
 
-        let calling_args = zip(once(derefed_value).chain(arg_values), arg_tys)
-            .map(|(x, _)| self.get_value_presentation(x).value_ptr);
+        let calling_args = once(derefed_value)
+            .chain(arg_values)
+            .map(|x| self.get_value_presentation(x).flatten())
+            .flatten();
 
         if let Some(attr) = is_aggregate {
             let ty = attr.into_struct_return().unwrap();
@@ -504,7 +524,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
             Some(ValuePtrContainer {
                 value_ptr: ins.into(),
-                kind: ContainerKind::Raw,
+                kind: ContainerKind::Raw { fat: None },
             })
         }
     }
@@ -591,7 +611,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
                 Some(ValuePtrContainer {
                     value_ptr: value.into(),
-                    kind: ContainerKind::Raw,
+                    kind: ContainerKind::Raw { fat: None },
                 })
             }
             UnOp::Neg => {
@@ -599,7 +619,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
                 Some(ValuePtrContainer {
                     value_ptr: value.into(),
-                    kind: ContainerKind::Raw,
+                    kind: ContainerKind::Raw { fat: None },
                 })
             }
         }
@@ -640,16 +660,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                     &format!(".{}.str", extra.self_id),
                 );
 
-                let wraped_ptr_type = self.wraped_ptr_type();
-                let wraped_ptr = self.builder.build_alloca(wraped_ptr_type.into(), None);
-                self.builder.build_store(
-                    self.context.get_i32(string.len() as u32).into(),
-                    wraped_ptr.clone().into(),
-                );
-                self.builder
-                    .build_store(global.into(), wraped_ptr.clone().into());
-
-                wraped_ptr.into()
+                global.into()
             }
 
             _ => impossible!(),
@@ -657,7 +668,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         Some(ValuePtrContainer {
             value_ptr: value,
-            kind: ContainerKind::Raw,
+            kind: ContainerKind::Raw {
+                fat: constant
+                    .as_constant_string()
+                    .map(|x| self.context.get_i32(x.len() as u32).into()),
+            },
         })
     }
 
@@ -682,7 +697,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         Some(ValuePtrContainer {
             value_ptr: value,
-            kind: ContainerKind::Raw,
+            kind: ContainerKind::Raw { fat: None },
         })
     }
 
@@ -750,7 +765,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 (Some(take_value), None) => Some(take_value),
                 (Some(v1), Some(v2)) => {
                     debug_assert_eq!(v1.value_ptr.get_type(), v2.value_ptr.get_type());
-                    debug_assert_eq!(v1.kind, v2.kind);
 
                     // phi 指令必须位于基本块的开头
                     let v = self.builder.build_phi(
@@ -887,7 +901,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
                 } else {
                     (
                         self.builder.build_load(ty, loop_value, None),
-                        ContainerKind::Raw,
+                        ContainerKind::Raw { fat: None },
                     )
                 };
 
@@ -1075,7 +1089,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let v = self.visit_expr(inner_expr, extra)?;
         Some(ValuePtrContainer {
             value_ptr: self.get_value_ptr(v).value_ptr,
-            kind: ContainerKind::Raw,
+            kind: ContainerKind::Raw { fat: None },
         })
     }
 

@@ -45,14 +45,8 @@ impl<'analyzer> IRGenerator<'analyzer> {
         }
     }
 
-    pub(crate) fn wraped_ptr_type(&self) -> StructTypePtr {
-        self.context.struct_type(
-            vec![
-                self.context.i32_type().into(),
-                self.context.ptr_type().into(),
-            ],
-            false,
-        )
+    pub(crate) fn fat_ptr_type(&self) -> StructTypePtr {
+        self.context.get_named_struct_type("fat_ptr").unwrap()
     }
 
     pub(crate) fn transform_interned_ty_faithfully(&self, intern: TypeIntern) -> TypePtr {
@@ -107,8 +101,8 @@ impl<'analyzer> IRGenerator<'analyzer> {
             },
             Ref(inner, _) => {
                 let inner_ty = self.analyzer.probe_type(*inner).unwrap();
-                if inner_ty.is_str_type() {
-                    self.wraped_ptr_type().into()
+                if inner_ty.is_unsized_type() {
+                    self.fat_ptr_type().into()
                 } else {
                     self.context.ptr_type().into()
                 }
@@ -147,18 +141,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     len.unwrap(),
                 )
                 .into(),
-            Fn(ret_ty, items) => self
-                .context
-                .function_type(
-                    self.transform_interned_ty_impl(*ret_ty, TransfromTypeConfig::FirstClassNoUnit),
-                    items
-                        .iter()
-                        .map(|x| {
-                            self.transform_interned_ty_impl(*x, TransfromTypeConfig::FirstClass)
-                        })
-                        .collect(),
-                )
-                .into(),
+            Fn(..) => self.context.ptr_type().into(), // 即使在数组或结构体中，function 也是个指针
             Any(AnyTyKind::Any) => impossible!(),
             Any(AnyTyKind::AnyInt) | Any(AnyTyKind::AnySignedInt) => self.context.i32_type().into(),
             ImplicitSelf(_) => impossible!(),

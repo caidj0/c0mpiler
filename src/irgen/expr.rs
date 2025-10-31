@@ -78,7 +78,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
         ValuePtrContainer {
             value_ptr: value.into(),
-            kind: ContainerKind::Raw,
+            kind: ContainerKind::Raw { fat: None },
         }
     }
 
@@ -139,7 +139,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
         Some(ValuePtrContainer {
             value_ptr: value.into(),
-            kind: ContainerKind::Raw,
+            kind: ContainerKind::Raw { fat: None },
         })
     }
 
@@ -189,7 +189,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
         Some(ValuePtrContainer {
             value_ptr: value.into(),
-            kind: ContainerKind::Raw,
+            kind: ContainerKind::Raw { fat: None },
         })
     }
 
