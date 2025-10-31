@@ -31,7 +31,7 @@ pub enum ValueKind {
     Anon,
     Constant(ConstantValue),
     Fn {
-        is_method: bool,
+        method_kind: MethodKind,
         is_placeholder: bool,
     },
 
@@ -40,6 +40,7 @@ pub enum ValueKind {
         level: DerefLevel,
         derefed_ty: TypeIntern,
         index: PlaceValueIndex,
+        self_by_ref: bool,
     },
     ExtractElement {
         level: DerefLevel,
@@ -49,6 +50,13 @@ pub enum ValueKind {
     Struct {
         indexes: Vec<usize>,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MethodKind {
+    Not,
+    ByRef,
+    ByRaw,
 }
 
 #[derive(Debug, EnumAsInner, Clone)]

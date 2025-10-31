@@ -10,7 +10,7 @@ use crate::{
         error::SemanticError,
         item::AssociatedInfo,
         resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, TypeKey},
-        value::{PlaceValue, Value, ValueKind},
+        value::{MethodKind, PlaceValue, Value, ValueKind},
     },
 };
 
@@ -55,7 +55,7 @@ impl SemanticAnalyzer {
                         value: Value {
                             ty: len_ty.into(),
                             kind: ValueKind::Fn {
-                                is_method: true,
+                                method_kind: MethodKind::ByRef,
                                 is_placeholder: false,
                             },
                         },

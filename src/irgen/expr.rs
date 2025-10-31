@@ -8,7 +8,7 @@ use crate::{
     irgen::{
         IRGenerator,
         extra::ExprExtra,
-        value::{ContainerKind, ValuePtrContainer},
+        value::{ContainerKind, ValueKind, ValuePtrContainer},
     },
     semantics::visitor::Visitor,
 };
@@ -235,6 +235,16 @@ impl<'analyzer> IRGenerator<'analyzer> {
         let result = self.analyzer.get_expr_result(expr_id);
         if result.interrupt.is_not() {
             self.builder.build_conditional_branch(cond, iftrue, ifelse);
+        }
+    }
+
+    pub(crate) fn special_method_call(&self, kind: ValueKind) -> ValuePtrContainer {
+        match kind {
+            ValueKind::Normal(..) => impossible!(),
+            ValueKind::LenMethod(len) => ValuePtrContainer {
+                value_ptr: self.context.get_i32(len).into(),
+                kind: ContainerKind::Raw { fat: None },
+            },
         }
     }
 }

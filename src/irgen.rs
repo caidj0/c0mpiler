@@ -37,8 +37,9 @@ pub struct IRGenerator<'analyzer> {
 impl<'analyzer> IRGenerator<'analyzer> {
     pub fn new(analyzer: &'analyzer SemanticAnalyzer) -> Self {
         let mut context = LLVMContext::default();
-        let builder = context.create_builder();
-        let module = context.create_module("crate");
+        let mut builder = context.create_builder();
+        let mut module = context.create_module("crate");
+        let mut value_indexes = HashMap::default();
 
         let string_type = context.create_opaque_struct_type("String");
         string_type.set_body(
@@ -50,13 +51,47 @@ impl<'analyzer> IRGenerator<'analyzer> {
             vec![context.ptr_type().into(), context.i32_type().into()],
             false,
         );
+        let str_len_type = context.function_type(
+            context.i32_type().into(),
+            vec![context.ptr_type().into(), context.i32_type().into()],
+        );
+        let str_len_fn = module.add_function(str_len_type.clone(), "str.len", None);
+        let bb = context.append_basic_block(&str_len_fn, "entry");
+        builder.locate(str_len_fn.clone(), bb);
+        builder.build_return(Some(
+            str_len_fn
+                .as_function()
+                .get_nth_argument(1)
+                .unwrap()
+                .clone()
+                .into(),
+        ));
+
+        value_indexes.insert(
+            ValueIndex::Place(PlaceValueIndex {
+                name: "len".into(),
+                kind: crate::semantics::value::ValueIndexKind::Impl {
+                    ty: ResolvedTy {
+                        names: None,
+                        kind: crate::semantics::resolved_ty::ResolvedTyKind::BuiltIn(
+                            crate::semantics::resolved_ty::BuiltInTyKind::Str,
+                        ),
+                    },
+                    for_trait: None,
+                },
+            }),
+            ValuePtrContainer {
+                value_ptr: str_len_fn.into(),
+                kind: value::ContainerKind::Ptr(str_len_type.into()),
+            },
+        );
 
         let mut generator = Self {
             context,
             builder,
             module,
             analyzer,
-            value_indexes: HashMap::default(),
+            value_indexes,
         };
 
         generator.add_struct_type();

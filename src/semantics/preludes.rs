@@ -8,6 +8,7 @@ use crate::semantics::resolved_ty::ResolvedTyKind;
 use crate::semantics::resolved_ty::TypeIntern;
 use crate::semantics::resolved_ty::TypeKey;
 use crate::semantics::utils::FullName;
+use crate::semantics::value::MethodKind;
 use crate::semantics::value::PlaceValue;
 use crate::semantics::value::Value;
 use crate::semantics::value::ValueKind;
@@ -103,18 +104,18 @@ impl SemanticAnalyzer {
         let u32_ty = self.u32_type();
         let usize_ty = self.usize_type();
 
-        let method_value = |ty, is_method| PlaceValue {
+        let method_value = |ty, method_kind| PlaceValue {
             value: Value {
                 ty,
                 kind: ValueKind::Fn {
-                    is_method,
+                    method_kind,
                     is_placeholder: false,
                 },
             },
             mutbl: Mutability::Not,
         };
 
-        let fn_value = |ty| method_value(ty, false);
+        let fn_value = |ty| method_value(ty, MethodKind::Not);
 
         let print_ty = self.intern_type(ResolvedTy::fn_type(unit_ty, vec![ref_str_ty]));
         self.add_scope_value(0, &Symbol::from("print"), fn_value(print_ty.into()))
@@ -168,7 +169,7 @@ impl SemanticAnalyzer {
                 for_trait: None,
             },
             &Symbol::from("to_string"),
-            method_value(u32_to_string_ty.into(), true),
+            method_value(u32_to_string_ty.into(), MethodKind::ByRef),
         )
         .unwrap();
 
@@ -179,7 +180,7 @@ impl SemanticAnalyzer {
                 for_trait: None,
             },
             &Symbol::from("to_string"),
-            method_value(usize_to_string_ty.into(), true),
+            method_value(usize_to_string_ty.into(), MethodKind::ByRef),
         )
         .unwrap();
 
@@ -194,7 +195,7 @@ impl SemanticAnalyzer {
                 for_trait: None,
             },
             &Symbol::from("as_str"),
-            method_value(as_str_ty.into(), true),
+            method_value(as_str_ty.into(), MethodKind::ByRef),
         )
         .unwrap();
 
@@ -208,7 +209,7 @@ impl SemanticAnalyzer {
                 for_trait: None,
             },
             &Symbol::from("len"),
-            method_value(string_len_ty.into(), true),
+            method_value(string_len_ty.into(), MethodKind::ByRef),
         )
         .unwrap();
         self.add_impl_value(
@@ -218,7 +219,7 @@ impl SemanticAnalyzer {
                 for_trait: None,
             },
             &Symbol::from("len"),
-            method_value(str_len_ty.into(), true),
+            method_value(str_len_ty.into(), MethodKind::ByRef),
         )
         .unwrap();
     }

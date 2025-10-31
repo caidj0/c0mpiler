@@ -1,9 +1,14 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
+    impossible,
     ir::{ir_type::TypePtr, ir_value::ValuePtr},
     irgen::IRGenerator,
-    semantics::{impls::DerefLevel, value::ValueIndex},
+    semantics::{
+        impls::DerefLevel,
+        resolved_ty::{ResolvedTy, ResolvedTyKind},
+        value::{PlaceValueIndex, ValueIndex, ValueIndexKind},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -25,6 +30,12 @@ impl ValuePtrContainer {
 pub(crate) enum ContainerKind {
     Raw { fat: Option<ValuePtr> },
     Ptr(TypePtr),
+}
+
+#[derive(Debug, EnumAsInner)]
+pub(crate) enum ValueKind {
+    Normal(ValuePtrContainer),
+    LenMethod(u32),
 }
 
 impl<'analyzer> IRGenerator<'analyzer> {
@@ -145,8 +156,25 @@ impl<'analyzer> IRGenerator<'analyzer> {
         debug_assert!(replacer.is_none());
     }
 
-    pub(crate) fn get_value_by_index(&mut self, index: &ValueIndex) -> Option<&ValuePtrContainer> {
-        self.value_indexes.get(index)
+    pub(crate) fn get_value_by_index(&mut self, index: &ValueIndex) -> ValueKind {
+        if let ValueIndex::Place(PlaceValueIndex {
+            name,
+            kind:
+                ValueIndexKind::Impl {
+                    ty:
+                        ResolvedTy {
+                            names: _,
+                            kind: ResolvedTyKind::Array(_, len),
+                        },
+                    for_trait: None,
+                },
+        }) = index
+            && name.0 == "len"
+        {
+            ValueKind::LenMethod(len.unwrap())
+        } else {
+            ValueKind::Normal(self.value_indexes.get(index).unwrap().clone())
+        }
     }
 
     pub(crate) fn store_to_ptr(&mut self, dest: ValuePtr, src: ValuePtrContainer) {
@@ -179,15 +207,23 @@ impl<'analyzer> IRGenerator<'analyzer> {
     // (&a).i32;       PtrType, Ptr(i32)
     // let b = &a;     PtrType, Ptr(Ptr)
     // b.i32;
-    pub(crate) fn deref(
+    pub(crate) fn deref_impl(
         &mut self,
         value: ValuePtrContainer,
         level: &DerefLevel,
         ty: &TypePtr,
+        self_by_ref: bool,
     ) -> ValuePtrContainer {
         match level {
-            DerefLevel::Not => value,
+            DerefLevel::Not => {
+                debug_assert!(!self_by_ref);
+                value
+            }
             DerefLevel::Deref(deref_level, ..) => {
+                if self_by_ref {
+                    return self.deref(value, deref_level, ty);
+                }
+
                 let value = self.get_raw_value(value);
 
                 if deref_level.is_not() {
@@ -210,5 +246,14 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 }
             }
         }
+    }
+
+    pub(crate) fn deref(
+        &mut self,
+        value: ValuePtrContainer,
+        level: &DerefLevel,
+        ty: &TypePtr,
+    ) -> ValuePtrContainer {
+        self.deref_impl(value, level, ty, false)
     }
 }

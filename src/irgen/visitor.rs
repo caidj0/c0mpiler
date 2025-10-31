@@ -13,10 +13,11 @@ use crate::{
         IRGenerator,
         extra::{CycleInfo, ExprExtra, ItemExtra, PatExtra},
         ty::TransformTypeConfig,
-        value::{ContainerKind, ValuePtrContainer},
+        value::{ContainerKind, ValueKind, ValuePtrContainer},
     },
     semantics::{
         item::AssociatedInfo,
+        resolved_ty::ResolvedTy,
         value::{PlaceValueIndex, ValueIndex},
         visitor::Visitor,
     },
@@ -471,21 +472,38 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         MethodCallExpr { receiver, args, .. }: &'ast MethodCallExpr,
         extra: Self::ExprExtra<'tmp>,
     ) -> Self::ExprRes<'_> {
-        let receiver_value = self.visit_expr(receiver, extra)?;
+        let mut receiver_value = self.visit_expr(receiver, extra)?;
         let arg_values = args
             .iter()
             .map(|x| self.visit_expr(x, extra))
             .collect::<Option<Vec<_>>>()?;
 
         let analyzer_value = self.analyzer.get_expr_value(&extra.self_id);
-        let (level, derefed_ty, index) = analyzer_value.kind.as_method_call().unwrap();
-        let receiver_ty = self.transform_interned_ty_faithfully(*derefed_ty);
+        let (level, derefed_ty, index, self_by_ref) = analyzer_value.kind.as_method_call().unwrap();
+        let mut self_by_ref = *self_by_ref;
+        let receiver_ty = if self_by_ref {
+            self.transform_ty_faithfully(&ResolvedTy::ref_type(
+                *derefed_ty,
+                crate::semantics::resolved_ty::RefMutability::Mut,
+            ))
+        } else {
+            self.transform_interned_ty_faithfully(*derefed_ty)
+        };
+        if level.is_not() && self_by_ref {
+            receiver_value = ValuePtrContainer {
+                value_ptr: self.get_value_ptr(receiver_value).value_ptr,
+                kind: ContainerKind::Raw { fat: None },
+            };
+            self_by_ref = false;
+        }
 
-        let derefed_value = self.deref(receiver_value, level, &receiver_ty);
-        let fn_value = self
-            .get_value_by_index(&ValueIndex::Place(index.clone()))
-            .unwrap_or_else(|| panic!("{:?}", index))
-            .clone();
+        let derefed_value = self.deref_impl(receiver_value, level, &receiver_ty, self_by_ref);
+
+        let query_result = self.get_value_by_index(&ValueIndex::Place(index.clone()));
+
+        let ValueKind::Normal(fn_value) = query_result else {
+            return Some(self.special_method_call(query_result));
+        };
         debug_assert!(
             fn_value
                 .value_ptr
@@ -1078,7 +1096,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
     ) -> Self::ExprRes<'_> {
         let result = self.analyzer.get_expr_result(&extra.self_id);
         let index = &result.value_index;
-        Some(self.get_value_by_index(index).unwrap().clone())
+        Some(self.get_value_by_index(index).into_normal().unwrap())
     }
 
     fn visit_addr_of_expr<'tmp>(

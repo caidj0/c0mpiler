@@ -9,7 +9,8 @@ use ena::unify::{InPlace, UnificationTable};
 
 use crate::{
     ast::{
-        BindingMode, Crate, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*, stmt::*,
+        BindingMode, Crate, Ident, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*,
+        stmt::*,
     },
     impossible, make_semantic_error,
     semantics::{
@@ -27,8 +28,8 @@ use crate::{
         stmt::StmtResult,
         utils::{AnalyzeStage, FullName, STAGES, is_all_different},
         value::{
-            ConstantValue, PlaceValue, PlaceValueIndex, UnEvalConstant, Value, ValueIndex,
-            ValueIndexKind, ValueKind,
+            ConstantValue, MethodKind, PlaceValue, PlaceValueIndex, UnEvalConstant, Value,
+            ValueIndex, ValueIndexKind, ValueKind,
         },
         visitor::Visitor,
     },
@@ -424,6 +425,17 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 if is_method && associated_info.is_none() {
                     return Err(make_semantic_error!(SelfInNotAssociateItem));
                 }
+                let method_kind = if is_method {
+                    let key = params_ty.first().unwrap();
+                    let probe = self.probe_type(*key).unwrap();
+                    if probe.kind.is_ref() {
+                        MethodKind::ByRef
+                    } else {
+                        MethodKind::ByRaw
+                    }
+                } else {
+                    MethodKind::Not
+                };
 
                 let func_ty = ResolvedTy::fn_type(ret_ty, params_ty);
 
@@ -433,7 +445,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     value: Value {
                         ty: self.intern_type(func_ty).into(),
                         kind: ValueKind::Fn {
-                            is_method,
+                            method_kind,
                             is_placeholder: body.is_none(),
                         },
                     },
@@ -754,7 +766,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         let v = trait_info.values.get(name).unwrap();
                         match &v.value.kind {
                             ValueKind::Fn {
-                                is_method: _,
+                                method_kind: _,
                                 is_placeholder: true,
                             }
                             | ValueKind::Constant(ConstantValue::Placeholder) => {
@@ -1135,14 +1147,19 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .search_value_in_impl_recursively(&receiver_type, symbol)?
                 .ok_or(make_semantic_error!(UnkonwnMethod))?;
             let value = self.get_place_value_by_index(&index);
-            if value
+            let self_by_ref = match value
                 .value
                 .kind
                 .as_fn()
-                .is_none_or(|(is_method, _)| !*is_method)
+                .ok_or(make_semantic_error!(NotMethod))?
+                .0
             {
-                return Err(make_semantic_error!(NotMethod));
-            }
+                MethodKind::Not => {
+                    return Err(make_semantic_error!(NotMethod));
+                }
+                MethodKind::ByRef => true,
+                MethodKind::ByRaw => false,
+            };
             let method_ty = value.value.ty;
             let method_probe = self.probe_type(method_ty).unwrap();
             let (ret_ty, method_args) = method_probe.kind.as_fn().unwrap();
@@ -1186,6 +1203,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         level,
                         index,
                         derefed_ty,
+                        self_by_ref,
                     },
                 },
                 AssigneeKind::Value,

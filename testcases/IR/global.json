@@ -24,6 +24,14 @@
         "compileexitcode": 0
     },
     {
+        "name": "array3",
+        "compileexitcode": 0
+    },
+    {
+        "name": "impl1",
+        "compileexitcode": 0
+    },
+    {
         "name": "hello1",
         "compileexitcode": 0
     },
@@ -33,6 +41,14 @@
     },
     {
         "name": "hello3",
+        "compileexitcode": 0
+    },
+    {
+        "name": "hello4",
+        "compileexitcode": 0
+    },
+    {
+        "name": "hello5",
         "compileexitcode": 0
     }
 ]
