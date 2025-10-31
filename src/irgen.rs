@@ -204,7 +204,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 for arg_intern in arg_interns {
                     let arg_ty = self.transform_interned_ty_impl(
                         *arg_intern,
-                        ty::TransfromTypeConfig::FirstClass,
+                        ty::TransformTypeConfig::FirstClass,
                     );
                     if let Some(s) = arg_ty.as_struct()
                         && let Some(name) = s.get_name()

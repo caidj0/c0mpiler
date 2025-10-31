@@ -12,7 +12,7 @@ use crate::{
     irgen::{
         IRGenerator,
         extra::{CycleInfo, ExprExtra, ItemExtra, PatExtra},
-        ty::TransfromTypeConfig,
+        ty::TransformTypeConfig,
         value::{ContainerKind, ValuePtrContainer},
     },
     semantics::{
@@ -136,7 +136,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             .unwrap()
             .1
             .iter()
-            .map(|x| self.transform_interned_ty_impl(*x, TransfromTypeConfig::FirstClass))
+            .map(|x| self.transform_interned_ty_impl(*x, TransformTypeConfig::Faithful))
             .collect::<Vec<_>>();
 
         let is_aggregate = fn_ptr
@@ -856,7 +856,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         let ty = self.transform_interned_ty_impl(
             self.analyzer.get_expr_type(&extra.self_id),
-            crate::irgen::ty::TransfromTypeConfig::FirstClassNoUnit,
+            crate::irgen::ty::TransformTypeConfig::FirstClassNoUnit,
         );
         let loop_value: Option<ValuePtr> = if ty.is_void() {
             None

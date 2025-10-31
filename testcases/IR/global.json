@@ -20,6 +20,10 @@
         "compileexitcode": 0
     },
     {
+        "name": "array2",
+        "compileexitcode": 0
+    },
+    {
         "name": "hello1",
         "compileexitcode": 0
     },
