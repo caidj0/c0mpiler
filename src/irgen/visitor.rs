@@ -440,8 +440,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         let calling_args = args
             .into_iter()
-            .map(|x| self.get_value_presentation(x).flatten())
-            .flatten();
+            .flat_map(|x| self.get_value_presentation(x).flatten());
 
         if let Some(attr) = is_aggregate {
             let ty = attr.into_struct_return().unwrap();
@@ -520,8 +519,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
         let calling_args = once(derefed_value)
             .chain(arg_values)
-            .map(|x| self.get_value_presentation(x).flatten())
-            .flatten();
+            .flat_map(|x| self.get_value_presentation(x).flatten());
 
         if let Some(attr) = is_aggregate {
             let ty = attr.into_struct_return().unwrap();

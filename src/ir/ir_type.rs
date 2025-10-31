@@ -33,7 +33,7 @@ impl Type {
 
     pub fn is_fat_ptr(&self) -> bool {
         self.as_struct()
-            .map_or(false, |x| x.get_name().map_or(false, |x| x == "fat_ptr"))
+            .is_some_and(|x| x.get_name().is_some_and(|x| x == "fat_ptr"))
     }
 }
 

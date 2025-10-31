@@ -9,8 +9,7 @@ use ena::unify::{InPlace, UnificationTable};
 
 use crate::{
     ast::{
-        BindingMode, Crate, Ident, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*,
-        stmt::*,
+        BindingMode, Crate, Mutability, NodeId, Span, Symbol, expr::*, item::*, pat::*, stmt::*,
     },
     impossible, make_semantic_error,
     semantics::{

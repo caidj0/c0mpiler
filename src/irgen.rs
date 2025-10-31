@@ -10,10 +10,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{Crate, NodeId},
     impossible,
-    ir::{
-        LLVMBuilder, LLVMContext, LLVMModule, attribute::Attribute, ir_type::TypePtr,
-        ir_value::ConstantPtr,
-    },
+    ir::{LLVMBuilder, LLVMContext, LLVMModule, attribute::Attribute, ir_value::ConstantPtr},
     irgen::value::ValuePtrContainer,
     semantics::{
         analyzer::SemanticAnalyzer,

@@ -1,7 +1,6 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    impossible,
     ir::{ir_type::TypePtr, ir_value::ValuePtr},
     irgen::IRGenerator,
     semantics::{
