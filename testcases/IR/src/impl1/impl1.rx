@@ -1,0 +1,15 @@
+struct Struct {
+    a: i32
+}
+
+impl Struct {
+    fn foo(&self) -> i32 {
+        self.a
+    }
+}
+
+fn main() {
+    let s: Struct = Struct {a: 213};
+    printlnInt(Struct::foo(&s));
+    exit(0);
+}

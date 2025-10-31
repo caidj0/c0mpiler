@@ -10,7 +10,7 @@ use crate::{
         error::SemanticError,
         item::AssociatedInfo,
         resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, TypeKey},
-        value::{PlaceValue, Value, ValueKind},
+        value::{MethodKind, PlaceValue, Value, ValueKind},
     },
 };
 
@@ -55,7 +55,7 @@ impl SemanticAnalyzer {
                         value: Value {
                             ty: len_ty.into(),
                             kind: ValueKind::Fn {
-                                is_method: true,
+                                method_kind: MethodKind::ByRef,
                                 is_placeholder: false,
                             },
                         },
@@ -110,6 +110,19 @@ impl SemanticAnalyzer {
         } else {
             Ok(info.values.get_mut(name).unwrap())
         }
+    }
+
+    pub fn get_impl_value(
+        &self,
+        AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
+        name: &Symbol,
+    ) -> Option<&PlaceValue> {
+        let info = if let Some(t) = for_trait {
+            self.get_impl_for_trait(ty, t)?
+        } else {
+            &self.get_impls(ty)?.inherent
+        };
+        info.values.get(name)
     }
 
     pub fn get_impl_value_mut(

@@ -14,13 +14,13 @@ use crate::{
     2. FirstClassNoUnit：never type, unit type -> void type，简单类型原样转换，复合类型 -> ptr type
         函数返回值使用 FirstClassNoUnit 转换
 */
-pub(crate) enum TransfromTypeConfig {
+pub(crate) enum TransformTypeConfig {
     Faithful,
     FirstClass,
     FirstClassNoUnit,
 }
 
-impl TransfromTypeConfig {
+impl TransformTypeConfig {
     fn no_aggregate_type(&self) -> bool {
         matches!(self, Self::FirstClass | Self::FirstClassNoUnit)
     }
@@ -45,28 +45,22 @@ impl<'analyzer> IRGenerator<'analyzer> {
         }
     }
 
-    pub(crate) fn wraped_ptr_type(&self) -> StructTypePtr {
-        self.context.struct_type(
-            vec![
-                self.context.i32_type().into(),
-                self.context.ptr_type().into(),
-            ],
-            false,
-        )
+    pub(crate) fn fat_ptr_type(&self) -> StructTypePtr {
+        self.context.get_named_struct_type("fat_ptr").unwrap()
     }
 
     pub(crate) fn transform_interned_ty_faithfully(&self, intern: TypeIntern) -> TypePtr {
-        self.transform_interned_ty_impl(intern, TransfromTypeConfig::Faithful)
+        self.transform_interned_ty_impl(intern, TransformTypeConfig::Faithful)
     }
 
     pub(crate) fn transform_ty_faithfully(&self, ty: &ResolvedTy) -> TypePtr {
-        self.transform_ty_impl(ty, TransfromTypeConfig::Faithful)
+        self.transform_ty_impl(ty, TransformTypeConfig::Faithful)
     }
 
     pub(crate) fn transform_interned_ty_impl(
         &self,
         intern: TypeIntern,
-        cfg: TransfromTypeConfig,
+        cfg: TransformTypeConfig,
     ) -> TypePtr {
         let Some(ty) = self.analyzer.probe_type(intern) else {
             return self.context.void_type().into();
@@ -75,7 +69,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
     }
 
     // 空长度类型怎么办？
-    pub(crate) fn transform_ty_impl(&self, ty: &ResolvedTy, cfg: TransfromTypeConfig) -> TypePtr {
+    pub(crate) fn transform_ty_impl(&self, ty: &ResolvedTy, cfg: TransformTypeConfig) -> TypePtr {
         if cfg.no_unit() && self.is_zero_length_type(ty) {
             return self.context.void_type().into();
         }
@@ -107,8 +101,8 @@ impl<'analyzer> IRGenerator<'analyzer> {
             },
             Ref(inner, _) => {
                 let inner_ty = self.analyzer.probe_type(*inner).unwrap();
-                if inner_ty.is_str_type() {
-                    self.wraped_ptr_type().into()
+                if inner_ty.is_unsized_type() {
+                    self.fat_ptr_type().into()
                 } else {
                     self.context.ptr_type().into()
                 }
@@ -129,7 +123,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
                                 .map(|x| {
                                     self.transform_interned_ty_impl(
                                         *x,
-                                        TransfromTypeConfig::Faithful,
+                                        TransformTypeConfig::Faithful,
                                     )
                                 })
                                 .collect(),
@@ -143,22 +137,11 @@ impl<'analyzer> IRGenerator<'analyzer> {
             Array(inner, len) => self
                 .context
                 .array_type(
-                    self.transform_interned_ty_impl(*inner, TransfromTypeConfig::Faithful),
+                    self.transform_interned_ty_impl(*inner, TransformTypeConfig::Faithful),
                     len.unwrap(),
                 )
                 .into(),
-            Fn(ret_ty, items) => self
-                .context
-                .function_type(
-                    self.transform_interned_ty_impl(*ret_ty, TransfromTypeConfig::FirstClassNoUnit),
-                    items
-                        .iter()
-                        .map(|x| {
-                            self.transform_interned_ty_impl(*x, TransfromTypeConfig::FirstClass)
-                        })
-                        .collect(),
-                )
-                .into(),
+            Fn(..) => self.context.ptr_type().into(), // 即使在数组或结构体中，function 也是个指针
             Any(AnyTyKind::Any) => impossible!(),
             Any(AnyTyKind::AnyInt) | Any(AnyTyKind::AnySignedInt) => self.context.i32_type().into(),
             ImplicitSelf(_) => impossible!(),

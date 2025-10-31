@@ -10,10 +10,7 @@ use std::collections::HashMap;
 use crate::{
     ast::{Crate, NodeId},
     impossible,
-    ir::{
-        LLVMBuilder, LLVMContext, LLVMModule, attribute::Attribute, ir_type::TypePtr,
-        ir_value::ConstantPtr,
-    },
+    ir::{LLVMBuilder, LLVMContext, LLVMModule, attribute::Attribute, ir_value::ConstantPtr},
     irgen::value::ValuePtrContainer,
     semantics::{
         analyzer::SemanticAnalyzer,
@@ -32,20 +29,58 @@ pub struct IRGenerator<'analyzer> {
     pub(crate) analyzer: &'analyzer SemanticAnalyzer,
 
     pub(crate) value_indexes: HashMap<ValueIndex, ValuePtrContainer>,
-
-    pub(crate) functions: HashMap<String, (TypePtr, Vec<TypePtr>)>,
 }
 
 impl<'analyzer> IRGenerator<'analyzer> {
     pub fn new(analyzer: &'analyzer SemanticAnalyzer) -> Self {
         let mut context = LLVMContext::default();
-        let builder = context.create_builder();
-        let module = context.create_module("crate");
+        let mut builder = context.create_builder();
+        let mut module = context.create_module("crate");
+        let mut value_indexes = HashMap::default();
 
         let string_type = context.create_opaque_struct_type("String");
         string_type.set_body(
-            vec![context.i32_type().into(), context.ptr_type().into()],
+            vec![context.ptr_type().into(), context.i32_type().into()],
             false,
+        );
+        let fat_ptr_type = context.create_opaque_struct_type("fat_ptr");
+        fat_ptr_type.set_body(
+            vec![context.ptr_type().into(), context.i32_type().into()],
+            false,
+        );
+        let str_len_type = context.function_type(
+            context.i32_type().into(),
+            vec![context.ptr_type().into(), context.i32_type().into()],
+        );
+        let str_len_fn = module.add_function(str_len_type.clone(), "str.len", None);
+        let bb = context.append_basic_block(&str_len_fn, "entry");
+        builder.locate(str_len_fn.clone(), bb);
+        builder.build_return(Some(
+            str_len_fn
+                .as_function()
+                .get_nth_argument(1)
+                .unwrap()
+                .clone()
+                .into(),
+        ));
+
+        value_indexes.insert(
+            ValueIndex::Place(PlaceValueIndex {
+                name: "len".into(),
+                kind: crate::semantics::value::ValueIndexKind::Impl {
+                    ty: ResolvedTy {
+                        names: None,
+                        kind: crate::semantics::resolved_ty::ResolvedTyKind::BuiltIn(
+                            crate::semantics::resolved_ty::BuiltInTyKind::Str,
+                        ),
+                    },
+                    for_trait: None,
+                },
+            }),
+            ValuePtrContainer {
+                value_ptr: str_len_fn.into(),
+                kind: value::ContainerKind::Ptr(str_len_type.into()),
+            },
         );
 
         let mut generator = Self {
@@ -53,8 +88,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
             builder,
             module,
             analyzer,
-            value_indexes: HashMap::default(),
-            functions: HashMap::default(),
+            value_indexes,
         };
 
         generator.add_struct_type();
@@ -185,45 +219,58 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 }
             }
             Fn { .. } => {
-                let mut fn_resloved_ty = self.analyzer.probe_type(value.ty).unwrap();
+                let mut fn_resolved_ty = self.analyzer.probe_type(value.ty).unwrap();
 
                 if is_main_function {
-                    *fn_resloved_ty.kind.as_fn_mut().unwrap().0 = self.analyzer.i32_type();
+                    *fn_resolved_ty.kind.as_fn_mut().unwrap().0 = self.analyzer.i32_type();
                 }
 
-                let function = {
-                    let (r, a) = fn_resloved_ty.kind.as_fn().unwrap();
-                    (
-                        self.transform_interned_ty_faithfully(*r),
-                        a.iter()
-                            .map(|x| self.transform_interned_ty_faithfully(*x))
-                            .collect(),
-                    )
-                };
+                let (ret_intern, arg_interns) = fn_resolved_ty.kind.as_fn_mut().unwrap();
 
-                let is_ret_aggregate_type =
-                    !function.0.is_zero_length_type() && function.0.is_aggregate_type();
-                if is_ret_aggregate_type {
-                    let (r, a) = fn_resloved_ty.kind.as_fn_mut().unwrap();
-                    a.insert(0, *r);
-                    *r = self.analyzer.unit_type();
+                let mut ret_ty = self.transform_interned_ty_faithfully(*ret_intern);
+                let mut arg_tys = Vec::new();
+
+                let i32_type = self.context.i32_type();
+                let ptr_type = self.context.ptr_type();
+
+                for arg_intern in arg_interns {
+                    let arg_ty = self.transform_interned_ty_impl(
+                        *arg_intern,
+                        ty::TransformTypeConfig::FirstClass,
+                    );
+                    if let Some(s) = arg_ty.as_struct()
+                        && let Some(name) = s.get_name()
+                        && name == "fat_ptr"
+                    {
+                        arg_tys.push(ptr_type.clone().into());
+                        arg_tys.push(i32_type.clone().into());
+                    } else {
+                        arg_tys.push(arg_ty);
+                    }
                 }
 
-                let fn_ty = self.transform_ty_faithfully(&fn_resloved_ty);
-                let fn_ptr =
-                    self.module
-                        .add_function(fn_ty.clone().into(), &full_name.to_string(), None);
+                let mut aggregate_type = None;
+                if ret_ty.is_zero_length_type() {
+                    ret_ty = self.context.void_type().into();
+                } else if ret_ty.is_aggregate_type() {
+                    arg_tys.insert(0, self.context.ptr_type().into());
+                    aggregate_type = Some(ret_ty);
+                    ret_ty = self.context.void_type().into();
+                }
 
-                if is_ret_aggregate_type {
+                let fn_ty = self.context.function_type(ret_ty.clone(), arg_tys);
+                let fn_ptr = self
+                    .module
+                    .add_function(fn_ty.clone(), &full_name.to_string(), None);
+                if let Some(aggregate_type) = aggregate_type {
                     fn_ptr
                         .as_function()
-                        .add_param_attr(0, Attribute::StructReturn(function.0.clone()));
+                        .add_param_attr(0, Attribute::StructReturn(aggregate_type));
                 }
 
-                self.functions.insert(full_name.to_string(), function);
                 ValuePtrContainer {
                     value_ptr: fn_ptr.into(),
-                    kind: value::ContainerKind::Ptr(fn_ty),
+                    kind: value::ContainerKind::Ptr(fn_ty.into()),
                 }
             }
             _ => impossible!(),

@@ -20,7 +20,8 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 binding_id: self_id,
             },
         });
-        let ty = right_ptr.get_type().clone();
+
+        let ty = self.get_value_type(&right_ptr);
         let value = if matches!(by_ref, ByRef::Yes(_)) {
             let ptr = self
                 .builder
@@ -34,6 +35,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         } else {
             let ptr = self.builder.build_alloca(ty.clone(), Some(&ident.symbol.0));
             self.store_to_ptr(ptr.clone().into(), right_ptr);
+
             ValuePtrContainer {
                 value_ptr: ptr.into(),
                 kind: crate::irgen::value::ContainerKind::Ptr(ty.clone()),

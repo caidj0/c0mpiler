@@ -400,7 +400,7 @@ impl LLVMContextImpl {
             ret.clone()
         } else {
             let i8_type = self.i8_type();
-            let array_ty = self.array_type(i8_type.into(), (string.len() + 1) as u32);
+            let array_ty = self.array_type(i8_type.into(), string.len() as u32);
 
             let ret = ConstantStringPtr(ConstantPtr(
                 Value {
@@ -655,7 +655,7 @@ impl LLVMBuilder {
                         .zip(args.iter())
                         .all(|(x, y)| x == y.get_type())
             },
-            "func:{:#?}\nargs:{:#?}",
+            "Call argument mismatch!\nfunc:{:#?}\nargs:{:#?}",
             func,
             args
         );

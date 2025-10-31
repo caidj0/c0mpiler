@@ -1,10 +1,13 @@
 use enum_as_inner::EnumAsInner;
 
 use crate::{
-    impossible,
     ir::{ir_type::TypePtr, ir_value::ValuePtr},
     irgen::IRGenerator,
-    semantics::{impls::DerefLevel, value::ValueIndex},
+    semantics::{
+        impls::DerefLevel,
+        resolved_ty::{ResolvedTy, ResolvedTyKind},
+        value::{PlaceValueIndex, ValueIndex, ValueIndexKind},
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -14,26 +17,38 @@ pub(crate) struct ValuePtrContainer {
 }
 
 impl ValuePtrContainer {
-    pub(crate) fn get_type(&self) -> &TypePtr {
-        match &self.kind {
-            ContainerKind::Raw => self.value_ptr.get_type(),
-            ContainerKind::Ptr(ty) => ty,
-            ContainerKind::ToUnsizedPtr => todo!(),
+    pub(crate) fn flatten(self) -> Vec<ValuePtr> {
+        match self.kind {
+            ContainerKind::Raw { fat: Some(fat) } => vec![self.value_ptr, fat],
+            _ => vec![self.value_ptr],
         }
     }
 }
 
-#[derive(Debug, PartialEq, Eq, EnumAsInner, Clone)]
+#[derive(Debug, EnumAsInner, Clone)]
 pub(crate) enum ContainerKind {
-    Raw,
+    Raw { fat: Option<ValuePtr> },
     Ptr(TypePtr),
-    ToUnsizedPtr,
+}
+
+#[derive(Debug, EnumAsInner)]
+pub(crate) enum ValueKind {
+    Normal(ValuePtrContainer),
+    LenMethod(u32),
 }
 
 impl<'analyzer> IRGenerator<'analyzer> {
+    pub(crate) fn get_value_type(&self, value: &ValuePtrContainer) -> TypePtr {
+        match &value.kind {
+            ContainerKind::Raw { fat: Some(..) } => self.fat_ptr_type().into(),
+            ContainerKind::Raw { fat: None } => value.value_ptr.get_type().clone(),
+            ContainerKind::Ptr(ty) => ty.clone(),
+        }
+    }
+
     pub(crate) fn get_value_presentation(&self, value: ValuePtrContainer) -> ValuePtrContainer {
         match &value.kind {
-            ContainerKind::Raw => {
+            ContainerKind::Raw { .. } => {
                 if value.value_ptr.get_type().is_aggregate_type() {
                     self.get_value_ptr(value)
                 } else {
@@ -41,44 +56,97 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 }
             }
             ContainerKind::Ptr(ty) => {
-                if ty.is_aggregate_type() {
+                if ty.is_fat_ptr() {
+                    ValuePtrContainer {
+                        value_ptr: self
+                            .builder
+                            .build_load(
+                                self.context.ptr_type().into(),
+                                value.value_ptr.clone(),
+                                None,
+                            )
+                            .into(),
+                        kind: ContainerKind::Raw {
+                            fat: Some({
+                                let p = self.builder.build_getelementptr(
+                                    self.fat_ptr_type().into(),
+                                    value.value_ptr.clone(),
+                                    vec![
+                                        self.context.get_i32(0).into(),
+                                        self.context.get_i32(1).into(),
+                                    ],
+                                    None,
+                                );
+                                self.builder
+                                    .build_load(self.context.i32_type().into(), p.into(), None)
+                                    .into()
+                            }),
+                        },
+                    }
+                } else if ty.is_aggregate_type() {
                     value
                 } else {
                     ValuePtrContainer {
                         value_ptr: self.get_raw_value(value),
-                        kind: ContainerKind::Raw,
+                        kind: ContainerKind::Raw { fat: None },
                     }
                 }
             }
-            ContainerKind::ToUnsizedPtr => todo!(),
         }
     }
 
     pub(crate) fn raw_value_to_ptr(&self, raw: ValuePtrContainer) -> ValuePtrContainer {
-        let allocaed = self
-            .builder
-            .build_alloca(raw.value_ptr.get_type().clone(), None);
-        let inner_type = raw.value_ptr.get_type().clone();
-        self.builder
-            .build_store(raw.value_ptr, allocaed.clone().into());
-        ValuePtrContainer {
-            value_ptr: allocaed.into(),
-            kind: ContainerKind::Ptr(inner_type),
+        let raw_type = raw.value_ptr.get_type();
+        if let Some(fat) = raw.kind.as_raw().unwrap() {
+            debug_assert!(
+                raw_type.is_ptr() && fat.is_int_type(),
+                "raw: {:?}\nfat: {:?}",
+                raw_type,
+                fat
+            );
+
+            let fat_ptr_type = self.fat_ptr_type();
+            let allocated = self.builder.build_alloca(fat_ptr_type.clone().into(), None);
+            self.builder
+                .build_store(raw.value_ptr, allocated.clone().into());
+            let second = self.builder.build_getelementptr(
+                fat_ptr_type.clone().into(),
+                allocated.clone().into(),
+                vec![
+                    self.context.get_i32(0).into(),
+                    self.context.get_i32(1).into(),
+                ],
+                None,
+            );
+            self.builder.build_store(fat.clone(), second.into());
+
+            ValuePtrContainer {
+                value_ptr: allocated.into(),
+                kind: ContainerKind::Ptr(fat_ptr_type.into()),
+            }
+        } else {
+            let allocated = self.builder.build_alloca(raw_type.clone(), None);
+            let inner_type = raw_type.clone();
+            self.builder
+                .build_store(raw.value_ptr, allocated.clone().into());
+            ValuePtrContainer {
+                value_ptr: allocated.into(),
+                kind: ContainerKind::Ptr(inner_type),
+            }
         }
     }
 
     pub(crate) fn get_value_ptr(&self, value: ValuePtrContainer) -> ValuePtrContainer {
         match value.kind {
-            ContainerKind::Raw => self.raw_value_to_ptr(value),
-            ContainerKind::Ptr(..) | ContainerKind::ToUnsizedPtr => value,
+            ContainerKind::Raw { .. } => self.raw_value_to_ptr(value),
+            ContainerKind::Ptr(..) => value,
         }
     }
 
     pub(crate) fn get_raw_value(&self, value: ValuePtrContainer) -> ValuePtr {
         match value.kind {
-            ContainerKind::Raw => value.value_ptr,
+            ContainerKind::Raw { .. } => value.value_ptr,
             ContainerKind::Ptr(ty) => self.builder.build_load(ty, value.value_ptr, None).into(),
-            ContainerKind::ToUnsizedPtr => impossible!(),
         }
     }
 
@@ -87,18 +155,48 @@ impl<'analyzer> IRGenerator<'analyzer> {
         debug_assert!(replacer.is_none());
     }
 
-    pub(crate) fn get_value_by_index(&mut self, index: &ValueIndex) -> Option<&ValuePtrContainer> {
-        self.value_indexes.get(index)
+    pub(crate) fn get_value_by_index(&mut self, index: &ValueIndex) -> ValueKind {
+        if let ValueIndex::Place(PlaceValueIndex {
+            name,
+            kind:
+                ValueIndexKind::Impl {
+                    ty:
+                        ResolvedTy {
+                            names: _,
+                            kind: ResolvedTyKind::Array(_, len),
+                        },
+                    for_trait: None,
+                },
+        }) = index
+            && name.0 == "len"
+        {
+            ValueKind::LenMethod(len.unwrap())
+        } else {
+            ValueKind::Normal(self.value_indexes.get(index).unwrap().clone())
+        }
     }
 
     pub(crate) fn store_to_ptr(&mut self, dest: ValuePtr, src: ValuePtrContainer) {
         match src.kind {
-            ContainerKind::Raw => self.builder.build_store(src.value_ptr, dest),
+            ContainerKind::Raw { fat } => {
+                self.builder.build_store(src.value_ptr, dest.clone());
+                if let Some(fat) = fat {
+                    let second = self.builder.build_getelementptr(
+                        self.fat_ptr_type().into(),
+                        dest,
+                        vec![
+                            self.context.get_i32(0).into(),
+                            self.context.get_i32(1).into(),
+                        ],
+                        None,
+                    );
+                    self.builder.build_store(fat, second.into());
+                }
+            }
             ContainerKind::Ptr(ty) => {
                 self.builder
-                    .build_memcpy(&mut self.module, dest, src.value_ptr, ty)
+                    .build_memcpy(&mut self.module, dest, src.value_ptr, ty);
             }
-            ContainerKind::ToUnsizedPtr => impossible!(),
         };
     }
 
@@ -108,15 +206,23 @@ impl<'analyzer> IRGenerator<'analyzer> {
     // (&a).i32;       PtrType, Ptr(i32)
     // let b = &a;     PtrType, Ptr(Ptr)
     // b.i32;
-    pub(crate) fn deref(
+    pub(crate) fn deref_impl(
         &mut self,
         value: ValuePtrContainer,
         level: &DerefLevel,
         ty: &TypePtr,
+        self_by_ref: bool,
     ) -> ValuePtrContainer {
         match level {
-            DerefLevel::Not => value,
+            DerefLevel::Not => {
+                debug_assert!(!self_by_ref);
+                value
+            }
             DerefLevel::Deref(deref_level, ..) => {
+                if self_by_ref {
+                    return self.deref(value, deref_level, ty);
+                }
+
                 let value = self.get_raw_value(value);
 
                 if deref_level.is_not() {
@@ -139,5 +245,14 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 }
             }
         }
+    }
+
+    pub(crate) fn deref(
+        &mut self,
+        value: ValuePtrContainer,
+        level: &DerefLevel,
+        ty: &TypePtr,
+    ) -> ValuePtrContainer {
+        self.deref_impl(value, level, ty, false)
     }
 }

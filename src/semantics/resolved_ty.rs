@@ -328,6 +328,10 @@ impl ResolvedTy {
             kind: ResolvedTyKind::Fn(ret_ty, args),
         }
     }
+
+    pub fn is_unsized_type(&self) -> bool {
+        matches!(self.kind, ResolvedTyKind::BuiltIn(BuiltInTyKind::Str))
+    }
 }
 
 impl SemanticAnalyzer {

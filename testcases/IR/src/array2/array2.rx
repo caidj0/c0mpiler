@@ -1,0 +1,11 @@
+fn main() {
+    let a: [i32; 3] = [1,2,3];
+    foo(a);
+    exit(0)
+}
+
+fn foo(a: [i32; 3]){
+    printlnInt(a[0]);
+    printlnInt(a[1]);
+    printlnInt(a[2]);
+}

@@ -1,0 +1,12 @@
+fn main() {
+    let a: [&str; 2] = ["Hello", " world!"];
+    foo(a);
+    exit(0);
+}
+
+fn foo(a: [&str; 2]) {
+    println(a[0]);
+    printlnInt(a[0].len() as i32);
+    println(a[1]);
+    printlnInt(a[1].len() as i32);
+}

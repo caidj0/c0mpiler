@@ -11,6 +11,8 @@ path expression 怎么找到对应的变量？method expression 怎么找到对�
 
 💀💀💀对于返回聚合类型的函数，翻译为 ir 时它的实际返回值为 void，并且需要添加一个指针类型的参数，调用时调用函数先在栈上开出空间，将指针传给被调用函数，被调用函数直接往指针里写。💀💀💀
 
+对于 Unsized Type（如 str），它们只有 &xxx 形式，且指向它的指针是普通指针的两倍大小用于存储其他信息（比如长度）。
+
 Let Stmt 直接翻译为 alloca + store.
 
 `if cond {block}` 可以翻译为
