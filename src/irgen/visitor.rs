@@ -655,15 +655,9 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
             _ => impossible!(),
         };
 
-        let kind = if matches!(kind, LitKind::Str | LitKind::StrRaw(..)) {
-            ContainerKind::ToUnsizedPtr
-        } else {
-            ContainerKind::Raw
-        };
-
         Some(ValuePtrContainer {
             value_ptr: value,
-            kind,
+            kind: ContainerKind::Raw,
         })
     }
 

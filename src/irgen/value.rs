@@ -18,7 +18,6 @@ impl ValuePtrContainer {
         match &self.kind {
             ContainerKind::Raw => self.value_ptr.get_type(),
             ContainerKind::Ptr(ty) => ty,
-            ContainerKind::ToUnsizedPtr => todo!(),
         }
     }
 }
@@ -27,7 +26,6 @@ impl ValuePtrContainer {
 pub(crate) enum ContainerKind {
     Raw,
     Ptr(TypePtr),
-    ToUnsizedPtr,
 }
 
 impl<'analyzer> IRGenerator<'analyzer> {
@@ -50,7 +48,6 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     }
                 }
             }
-            ContainerKind::ToUnsizedPtr => todo!(),
         }
     }
 
@@ -70,7 +67,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
     pub(crate) fn get_value_ptr(&self, value: ValuePtrContainer) -> ValuePtrContainer {
         match value.kind {
             ContainerKind::Raw => self.raw_value_to_ptr(value),
-            ContainerKind::Ptr(..) | ContainerKind::ToUnsizedPtr => value,
+            ContainerKind::Ptr(..) => value,
         }
     }
 
@@ -78,7 +75,6 @@ impl<'analyzer> IRGenerator<'analyzer> {
         match value.kind {
             ContainerKind::Raw => value.value_ptr,
             ContainerKind::Ptr(ty) => self.builder.build_load(ty, value.value_ptr, None).into(),
-            ContainerKind::ToUnsizedPtr => impossible!(),
         }
     }
 
@@ -98,7 +94,6 @@ impl<'analyzer> IRGenerator<'analyzer> {
                 self.builder
                     .build_memcpy(&mut self.module, dest, src.value_ptr, ty)
             }
-            ContainerKind::ToUnsizedPtr => impossible!(),
         };
     }
 
