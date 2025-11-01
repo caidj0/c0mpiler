@@ -334,7 +334,7 @@ impl ResolvedTy {
     }
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     // 比较 Dirty 的实现
     pub fn set_type_kind(&mut self, key: TypeKey, kind: ResolvedTyKind<TypeIntern>) {
         let mut ut = self.ut.borrow_mut();
@@ -428,7 +428,7 @@ impl SemanticAnalyzer {
 
     pub fn resolve_type(
         &mut self,
-        Ty { kind, id: _, span }: &Ty,
+        Ty { kind, id: _, span }: &'ast Ty,
         current_scope: Option<NodeId>,
     ) -> Result<TypeIntern, SemanticError> {
         use crate::ast::ty::TyKind::*;
@@ -564,7 +564,7 @@ impl SemanticAnalyzer {
 
     pub fn auto_deref<
         T,
-        F: Fn(&mut SemanticAnalyzer, TypeIntern) -> Result<Option<T>, SemanticError>,
+        F: Fn(&mut SemanticAnalyzer<'ast>, TypeIntern) -> Result<Option<T>, SemanticError>,
     >(
         &mut self,
         intern: TypeIntern,

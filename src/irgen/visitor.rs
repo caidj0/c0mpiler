@@ -23,7 +23,7 @@ use crate::{
     },
 };
 
-impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
     type DefaultRes<'res>
         = ()
     where

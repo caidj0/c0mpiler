@@ -37,7 +37,7 @@ pub(crate) enum ValueKind {
     LenMethod(u32),
 }
 
-impl<'analyzer> IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     pub(crate) fn get_value_type(&self, value: &ValuePtrContainer) -> TypePtr {
         match &value.kind {
             ContainerKind::Raw { fat: Some(..) } => self.fat_ptr_type().into(),

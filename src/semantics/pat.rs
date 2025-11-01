@@ -9,14 +9,14 @@ use crate::{
 };
 
 #[derive(Debug)]
-pub struct PatResult {
-    pub bindings: Vec<Binding>,
+pub struct PatResult<'ast> {
+    pub bindings: Vec<Binding<'ast>>,
 }
 
 #[derive(Debug)]
-pub struct Binding(
+pub struct Binding<'ast>(
     pub(crate) Symbol,
-    pub(crate) Value,
+    pub(crate) Value<'ast>,
     pub(crate) Mutability,
     pub(crate) NodeId,
 );
@@ -27,13 +27,13 @@ pub struct PatExtra {
     pub(crate) ty: TypeIntern,
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub(crate) fn visit_ident_pat_impl(
         &mut self,
         BindingMode(by_ref, mutbl): &crate::ast::BindingMode,
         ident: &crate::ast::Ident,
         extra: PatExtra,
-    ) -> Result<PatResult, SemanticError> {
+    ) -> Result<PatResult<'ast>, SemanticError> {
         let ty = match *by_ref {
             crate::ast::ByRef::Yes(mutability) => {
                 self.intern_type(ResolvedTy::ref_type(extra.ty, mutability.into()))

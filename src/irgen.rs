@@ -21,18 +21,18 @@ use crate::{
     },
 };
 
-pub struct IRGenerator<'analyzer> {
+pub struct IRGenerator<'ast, 'analyzer> {
     pub(crate) context: LLVMContext,
     pub(crate) builder: LLVMBuilder,
     pub(crate) module: LLVMModule,
 
-    pub(crate) analyzer: &'analyzer SemanticAnalyzer,
+    pub(crate) analyzer: &'analyzer SemanticAnalyzer<'ast>,
 
     pub(crate) value_indexes: HashMap<ValueIndex, ValuePtrContainer>,
 }
 
-impl<'analyzer> IRGenerator<'analyzer> {
-    pub fn new(analyzer: &'analyzer SemanticAnalyzer) -> Self {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
+    pub fn new(analyzer: &'analyzer SemanticAnalyzer<'ast>) -> Self {
         let mut context = LLVMContext::default();
         let mut builder = context.create_builder();
         let mut module = context.create_module("crate");
@@ -55,7 +55,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         generator
     }
 
-    pub fn visit(&mut self, krate: &Crate) {
+    pub fn visit(&mut self, krate: &'ast Crate) {
         self.visit_crate(krate, ());
     }
 
@@ -135,7 +135,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
     fn absorb_analyzer_global_value(
         &mut self,
-        value: &crate::semantics::value::Value,
+        value: &crate::semantics::value::Value<'ast>,
         is_main_function: bool,
         full_name: FullName,
     ) -> ValuePtrContainer {

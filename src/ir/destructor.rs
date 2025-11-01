@@ -5,10 +5,10 @@ use crate::irgen::extra::ExprExtra;
 use crate::irgen::value::{ContainerKind, ValuePtrContainer};
 use crate::{irgen::IRGenerator, semantics::visitor::Visitor};
 
-impl<'analyzer> IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     pub(crate) fn destructing_assign<'tmp>(
         &mut self,
-        expr: &Expr,
+    expr: &'ast Expr,
         extra: ExprExtra<'tmp>,
         right_value: ValuePtrContainer,
     ) -> Option<()> {

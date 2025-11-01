@@ -21,15 +21,15 @@ use crate::{
 // 如何区分 Value, Place, Assignee 表达式
 // Value 里不需要表明可变性
 #[derive(Debug, Clone)]
-pub struct Value {
+pub struct Value<'ast> {
     pub ty: TypeIntern,
-    pub kind: ValueKind,
+    pub kind: ValueKind<'ast>,
 }
 
 #[derive(Debug, EnumAsInner, Clone)]
-pub enum ValueKind {
+pub enum ValueKind<'ast> {
     Anon,
-    Constant(ConstantValue),
+    Constant(ConstantValue<'ast>),
     Fn {
         method_kind: MethodKind,
         is_placeholder: bool,
@@ -60,27 +60,27 @@ pub enum MethodKind {
 }
 
 #[derive(Debug, EnumAsInner, Clone)]
-pub enum ConstantValue {
+pub enum ConstantValue<'ast> {
     ConstantInt(u32),
     ConstantString(String),
-    ConstantArray(Vec<ConstantValue>),
+    ConstantArray(Vec<ConstantValue<'ast>>),
     Unit,
     UnitStruct,
 
-    UnEval(UnEvalConstant),
+    UnEval(UnEvalConstant<'ast>),
     Placeholder, // Only for Trait
 }
 
 #[derive(Debug, Clone)]
-pub struct UnEvalConstant(NodeId, *const Expr);
+pub struct UnEvalConstant<'ast>(NodeId, &'ast Expr);
 
-impl UnEvalConstant {
-    pub fn new(scope: NodeId, expr: &Expr) -> Self {
-        Self(scope, &raw const *expr)
+impl<'ast> UnEvalConstant<'ast> {
+    pub fn new(scope: NodeId, expr: &'ast Expr) -> Self {
+        Self(scope, expr)
     }
 
-    pub fn to_ref(&self) -> (NodeId, &Expr) {
-        unsafe { (self.0, &*self.1) }
+    pub fn to_ref(&self) -> (NodeId, &'ast Expr) {
+        (self.0, self.1)
     }
 }
 
@@ -123,12 +123,12 @@ pub enum ValueIndexKind {
 }
 
 #[derive(Debug, Clone)]
-pub struct PlaceValue {
-    pub(crate) value: Value,
+pub struct PlaceValue<'ast> {
+    pub(crate) value: Value<'ast>,
     pub(crate) mutbl: Mutability,
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     // Search 范围包括局部变量，常量，函数.
     // PathSegment 可以是 Scope 或者是 Type，实际上 Type::xxx 应该是 <Type>::xxx 的语法糖.
     // 别扭的地方在于 Value 可以在 Scope 或者 Type impl 里. 要么沿 scope 向上查，要么是 Type::xxx，先查 Type 再去 impl 里查.
@@ -204,7 +204,7 @@ impl SemanticAnalyzer {
         })
     }
 
-    pub fn get_place_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue {
+    pub fn get_place_value_by_index(&self, index: &PlaceValueIndex) -> &PlaceValue<'ast> {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => self.binding_value.get(binding_id).unwrap(),
             ValueIndexKind::Global { scope_id } => {
@@ -222,7 +222,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn get_place_value_by_index_mut(&mut self, index: &PlaceValueIndex) -> &mut PlaceValue {
+    pub fn get_place_value_by_index_mut(&mut self, index: &PlaceValueIndex) -> &mut PlaceValue<'ast> {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => {
                 self.binding_value.get_mut(binding_id).unwrap()
@@ -244,7 +244,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    pub fn get_value_by_index(&self, index: &ValueIndex) -> &Value {
+    pub fn get_value_by_index(&self, index: &ValueIndex) -> &Value<'ast> {
         match index {
             ValueIndex::Place(place_value_index) => {
                 &self.get_place_value_by_index(place_value_index).value
@@ -275,7 +275,7 @@ impl SemanticAnalyzer {
 
     pub fn add_bindings(
         &mut self,
-        bindings: Vec<Binding>,
+        bindings: Vec<Binding<'ast>>,
         scope_id: NodeId,
     ) -> Result<(), SemanticError> {
         let mut set = HashSet::new();
@@ -301,14 +301,14 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    pub fn unit_value(&self) -> Value {
+    pub fn unit_value(&self) -> Value<'ast> {
         Value {
             ty: self.unit_type(),
             kind: ValueKind::Anon,
         }
     }
 
-    pub fn never_value(&self) -> Value {
+    pub fn never_value(&self) -> Value<'ast> {
         Value {
             ty: self.never_type(),
             kind: ValueKind::Anon,
