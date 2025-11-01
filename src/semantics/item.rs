@@ -12,7 +12,7 @@ pub struct ItemExtra {
     pub(crate) associated_info: Option<AssociatedInfo>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct AssociatedInfo {
     pub(crate) is_trait: bool,
 

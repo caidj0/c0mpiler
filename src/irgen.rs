@@ -21,18 +21,18 @@ use crate::{
     },
 };
 
-pub struct IRGenerator<'analyzer> {
+pub struct IRGenerator<'ast, 'analyzer> {
     pub(crate) context: LLVMContext,
     pub(crate) builder: LLVMBuilder,
     pub(crate) module: LLVMModule,
 
-    pub(crate) analyzer: &'analyzer SemanticAnalyzer,
+    pub(crate) analyzer: &'analyzer SemanticAnalyzer<'ast>,
 
     pub(crate) value_indexes: HashMap<ValueIndex, ValuePtrContainer>,
 }
 
-impl<'analyzer> IRGenerator<'analyzer> {
-    pub fn new(analyzer: &'analyzer SemanticAnalyzer) -> Self {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
+    pub fn new(analyzer: &'analyzer SemanticAnalyzer<'ast>) -> Self {
         let mut context = LLVMContext::default();
         let mut builder = context.create_builder();
         let mut module = context.create_module("crate");
@@ -55,7 +55,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         generator
     }
 
-    pub fn visit(&mut self, krate: &Crate) {
+    pub fn visit(&mut self, krate: &'ast Crate) {
         self.visit_crate(krate, ());
     }
 
@@ -135,7 +135,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
 
     fn absorb_analyzer_global_value(
         &mut self,
-        value: &crate::semantics::value::Value,
+        value: &crate::semantics::value::Value<'ast>,
         is_main_function: bool,
         full_name: FullName,
     ) -> ValuePtrContainer {
@@ -259,6 +259,28 @@ impl<'analyzer> IRGenerator<'analyzer> {
                     }),
                     v,
                 );
+            }
+            for (trait_ty, impl_info) in &impls.traits {
+                let name = name
+                    .clone()
+                    .append(trait_ty.names.as_ref().unwrap().0.clone());
+                for (s, PlaceValue { value, .. }) in &impl_info.values {
+                    let v = self.absorb_analyzer_global_value(
+                        value,
+                        false,
+                        name.clone().concat(s.clone()),
+                    );
+                    self.value_indexes.insert(
+                        ValueIndex::Place(PlaceValueIndex {
+                            name: s.clone(),
+                            kind: crate::semantics::value::ValueIndexKind::Impl {
+                                ty: resolved_ty.clone(),
+                                for_trait: Some(trait_ty.clone()),
+                            },
+                        }),
+                        v,
+                    );
+                }
             }
         }
     }

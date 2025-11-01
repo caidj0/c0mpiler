@@ -18,12 +18,12 @@ use crate::{
     semantics::{
         item::AssociatedInfo,
         resolved_ty::ResolvedTy,
-        value::{PlaceValueIndex, ValueIndex},
+        value::{FnAstRefInfo, PlaceValueIndex, ValueIndex},
         visitor::Visitor,
     },
 };
 
-impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
     type DefaultRes<'res>
         = ()
     where
@@ -112,9 +112,15 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         let (fn_value, full_name) = match extra.associated_info {
             Some(info) => {
                 let instance = self.analyzer.probe_type(info.ty.into()).unwrap();
+                let mut full_name = instance.names.unwrap().0;
+                if let Some(trait_intern) = info.for_trait {
+                    let trait_ty = self.analyzer.probe_type(trait_intern.into()).unwrap();
+                    full_name = full_name.append(trait_ty.names.unwrap().0);
+                }
+                let full_name = full_name.concat(ident.symbol.clone());
                 (
                     self.analyzer.get_impl_value(&info, &ident.symbol).unwrap(),
-                    instance.names.unwrap().0.concat(ident.symbol.clone()),
+                    full_name,
                 )
             }
             None => (
@@ -127,7 +133,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
         };
 
         let name_string = full_name.to_string();
-        let fn_ptr = self.module.get_function(&name_string).unwrap();
+        let fn_ptr = self.module.get_function(&name_string).expect(&name_string);
         let fn_intern = fn_value.value.ty;
         let fn_resolved_ty = self.analyzer.probe_type(fn_intern).unwrap();
 
@@ -236,40 +242,50 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'analyzer> {
 
     fn visit_impl_item<'tmp>(
         &mut self,
-        ImplItem { items, .. }: &'ast ImplItem,
+        ImplItem { .. }: &'ast ImplItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
         let scope = self.analyzer.get_scope(extra.self_id);
         let (ty, for_trait) = scope.kind.as_impl().unwrap();
-        for item in items {
-            self.visit_associate_item(
-                item,
-                ItemExtra {
-                    scope_id: extra.scope_id,
-                    self_id: 0,
-                    associated_info: Some(AssociatedInfo {
-                        is_trait: false,
-                        ty: *ty,
-                        for_trait: *for_trait,
-                    }),
-                },
-            );
+        let impls = self.analyzer.get_impls(ty).unwrap();
+        let impl_info = if let Some(trait_intern) = for_trait {
+            let trait_instance = self
+                .analyzer
+                .probe_type_instance((*trait_intern).into())
+                .unwrap();
+            impls.traits.get(&trait_instance).unwrap()
+        } else {
+            &impls.inherent
+        };
+        let asso_info = AssociatedInfo {
+            is_trait: false,
+            ty: *ty,
+            for_trait: *for_trait,
+        };
+        for v in impl_info.values.values() {
+            if let Some((
+                _,
+                _,
+                FnAstRefInfo::Inherent(ast_fn, node_id) | FnAstRefInfo::Trait(ast_fn, node_id),
+            )) = v.value.kind.as_fn()
+            {
+                self.visit_fn_item(
+                    ast_fn,
+                    ItemExtra {
+                        scope_id: extra.scope_id,
+                        self_id: *node_id,
+                        associated_info: Some(asso_info),
+                    },
+                )
+            }
         }
     }
 
     fn visit_associate_item<'tmp>(
         &mut self,
-        Item { kind, id, span: _ }: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
-        extra: Self::ItemExtra<'tmp>,
+        _: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
+        _extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let new_extra = ItemExtra {
-            self_id: *id,
-            ..extra
-        };
-        match kind {
-            AssocItemKind::Const(const_item) => self.visit_const_item(const_item, new_extra),
-            AssocItemKind::Fn(fn_item) => self.visit_fn_item(fn_item, new_extra),
-        }
     }
 
     fn visit_stmt<'tmp>(

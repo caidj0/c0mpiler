@@ -13,12 +13,12 @@ use crate::{
     semantics::visitor::Visitor,
 };
 
-impl<'analyzer> IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     pub(crate) fn visit_binary(
         &mut self,
         bin_op: BinOp,
-        expr1: &Expr,
-        expr2: &Expr,
+        expr1: &'ast Expr,
+        expr2: &'ast Expr,
         extra: ExprExtra,
     ) -> Option<ValuePtrContainer> {
         let value1 = self.visit_expr(expr1, extra)?;
@@ -85,8 +85,8 @@ impl<'analyzer> IRGenerator<'analyzer> {
     pub(crate) fn visit_compare(
         &mut self,
         bin_op: BinOp,
-        expr1: &Expr,
-        expr2: &Expr,
+        expr1: &'ast Expr,
+        expr2: &'ast Expr,
         extra: ExprExtra,
     ) -> Option<ValuePtrContainer> {
         let value1 = self.visit_expr(expr1, extra)?;
@@ -146,8 +146,8 @@ impl<'analyzer> IRGenerator<'analyzer> {
     pub(crate) fn visit_logic(
         &mut self,
         bin_op: BinOp,
-        expr1: &Expr,
-        expr2: &Expr,
+        expr1: &'ast Expr,
+        expr2: &'ast Expr,
         extra: ExprExtra,
     ) -> Option<ValuePtrContainer> {
         let value1 = self.visit_expr(expr1, extra)?;
@@ -193,7 +193,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
         })
     }
 
-    pub(crate) fn visit_ret_expr_impl(&mut self, inner_expr: Option<&Expr>, extra: ExprExtra) {
+    pub(crate) fn visit_ret_expr_impl(&mut self, inner_expr: Option<&'ast Expr>, extra: ExprExtra) {
         if let Some(e) = inner_expr {
             let v = self.visit_expr(e, extra);
             if let Some(v) = v {

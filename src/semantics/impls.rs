@@ -10,38 +10,38 @@ use crate::{
         error::SemanticError,
         item::AssociatedInfo,
         resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, TypeKey},
-        value::{MethodKind, PlaceValue, Value, ValueKind},
+        value::{FnAstRefInfo, MethodKind, PlaceValue, Value, ValueKind},
     },
 };
 
 #[derive(Debug, Default)]
-pub struct Impls {
-    pub(crate) inherent: ImplInfo,
-    pub(crate) traits: HashMap<Rc<ResolvedTyInstance>, ImplInfo>,
+pub struct Impls<'ast> {
+    pub(crate) inherent: ImplInfo<'ast>,
+    pub(crate) traits: HashMap<Rc<ResolvedTyInstance>, ImplInfo<'ast>>,
 }
 
 // Constant 和 Function 共享一个命名空间
 #[derive(Debug, Default)]
-pub struct ImplInfo {
-    pub(crate) values: HashMap<Symbol, PlaceValue>,
+pub struct ImplInfo<'ast> {
+    pub(crate) values: HashMap<Symbol, PlaceValue<'ast>>,
 }
 
-impl SemanticAnalyzer {
-    pub fn get_impls(&self, ty: &TypeKey) -> Option<&Impls> {
+impl<'ast> SemanticAnalyzer<'ast> {
+    pub fn get_impls(&self, ty: &TypeKey) -> Option<&Impls<'ast>> {
         let instance = self.probe_type_instance((*ty).into()).unwrap();
         self.get_impls_by_instance(&instance)
     }
 
-    pub fn get_impls_by_instance(&self, instance: &ResolvedTyInstance) -> Option<&Impls> {
+    pub fn get_impls_by_instance(&self, instance: &ResolvedTyInstance) -> Option<&Impls<'ast>> {
         self.impls.get(instance)
     }
 
-    pub fn get_impls_mut(&mut self, ty: &TypeKey) -> &mut Impls {
+    pub fn get_impls_mut(&mut self, ty: &TypeKey) -> &mut Impls<'ast> {
         let instance = self.probe_type_instance((*ty).into()).unwrap();
         self.get_impls_by_instance_mut(&instance)
     }
 
-    pub fn get_impls_by_instance_mut(&mut self, instance: &ResolvedTyInstance) -> &mut Impls {
+    pub fn get_impls_by_instance_mut(&mut self, instance: &ResolvedTyInstance) -> &mut Impls<'ast> {
         if !self.impls.contains_key(instance) {
             let mut inherent = ImplInfo::default();
             if instance.kind.is_array() {
@@ -57,6 +57,7 @@ impl SemanticAnalyzer {
                             kind: ValueKind::Fn {
                                 method_kind: MethodKind::ByRef,
                                 is_placeholder: false,
+                                ast_node: FnAstRefInfo::None,
                             },
                         },
                         mutbl: Mutability::Not,
@@ -76,13 +77,17 @@ impl SemanticAnalyzer {
         self.impls.get_mut(instance).unwrap()
     }
 
-    pub fn get_impl_for_trait(&self, ty: &TypeKey, trait_ty: &TypeKey) -> Option<&ImplInfo> {
+    pub fn get_impl_for_trait(&self, ty: &TypeKey, trait_ty: &TypeKey) -> Option<&ImplInfo<'ast>> {
         let impls = self.get_impls(ty)?;
         let instance = self.probe_type_instance((*trait_ty).into()).unwrap();
         impls.traits.get(&instance)
     }
 
-    pub fn get_impl_for_trait_mut(&mut self, ty: &TypeKey, trait_ty: &TypeKey) -> &mut ImplInfo {
+    pub fn get_impl_for_trait_mut(
+        &mut self,
+        ty: &TypeKey,
+        trait_ty: &TypeKey,
+    ) -> &mut ImplInfo<'ast> {
         let instance = self.probe_type_instance((*trait_ty).into()).unwrap();
         let impls = self.get_impls_mut(ty);
         if !impls.traits.contains_key(&instance) {
@@ -97,8 +102,8 @@ impl SemanticAnalyzer {
         &mut self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
-        value: PlaceValue,
-    ) -> Result<&mut PlaceValue, SemanticError> {
+        value: PlaceValue<'ast>,
+    ) -> Result<&mut PlaceValue<'ast>, SemanticError> {
         let info = if let Some(t) = for_trait {
             self.get_impl_for_trait_mut(ty, t)
         } else {
@@ -116,7 +121,7 @@ impl SemanticAnalyzer {
         &self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
-    ) -> Option<&PlaceValue> {
+    ) -> Option<&PlaceValue<'ast>> {
         let info = if let Some(t) = for_trait {
             self.get_impl_for_trait(ty, t)?
         } else {
@@ -129,7 +134,7 @@ impl SemanticAnalyzer {
         &mut self,
         AssociatedInfo { ty, for_trait, .. }: &AssociatedInfo,
         name: &Symbol,
-    ) -> Option<&mut PlaceValue> {
+    ) -> Option<&mut PlaceValue<'ast>> {
         let info = if let Some(t) = for_trait {
             self.get_impl_for_trait_mut(ty, t)
         } else {

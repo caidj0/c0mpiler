@@ -27,20 +27,20 @@ use crate::{
         stmt::StmtResult,
         utils::{AnalyzeStage, FullName, STAGES, is_all_different},
         value::{
-            ConstantValue, MethodKind, PlaceValue, PlaceValueIndex, UnEvalConstant, Value,
-            ValueIndex, ValueIndexKind, ValueKind,
+            ConstantValue, FnAstRefInfo, MethodKind, PlaceValue, PlaceValueIndex, UnEvalConstant,
+            Value, ValueIndex, ValueIndexKind, ValueKind,
         },
         visitor::Visitor,
     },
 };
 
-pub struct SemanticAnalyzer {
-    pub(crate) scopes: HashMap<NodeId, Scope>,
-    pub(crate) impls: HashMap<ResolvedTyInstance, Impls>,
+pub struct SemanticAnalyzer<'ast> {
+    pub(crate) scopes: HashMap<NodeId, Scope<'ast>>,
+    pub(crate) impls: HashMap<ResolvedTyInstance, Impls<'ast>>,
     pub(crate) expr_results: HashMap<NodeId, ExprResult>,
-    pub(crate) expr_value: HashMap<NodeId, Value>,
+    pub(crate) expr_value: HashMap<NodeId, Value<'ast>>,
     pub(crate) stmt_results: HashMap<NodeId, StmtResult>,
-    pub(crate) binding_value: HashMap<NodeId, PlaceValue>,
+    pub(crate) binding_value: HashMap<NodeId, PlaceValue<'ast>>,
 
     pub(crate) ut: RefCell<UnificationTable<InPlace<TypeKey>>>,
     pub(crate) preludes: Preludes,
@@ -48,7 +48,7 @@ pub struct SemanticAnalyzer {
     pub(crate) stage: AnalyzeStage,
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     fn new() -> Self {
         let mut scopes = HashMap::default();
         scopes.insert(
@@ -84,7 +84,7 @@ impl SemanticAnalyzer {
         analyzer
     }
 
-    pub fn visit(krate: &Crate) -> (Self, Result<(), SemanticError>) {
+    pub fn visit(krate: &'ast Crate) -> (Self, Result<(), SemanticError>) {
         let mut analyzer = Self::new();
 
         for stage in STAGES {
@@ -115,11 +115,11 @@ impl SemanticAnalyzer {
         self.scopes.get_mut(&father).unwrap().children.insert(id);
     }
 
-    pub fn get_scope(&self, id: NodeId) -> &Scope {
+    pub fn get_scope(&self, id: NodeId) -> &Scope<'ast> {
         self.scopes.get(&id).unwrap()
     }
 
-    pub fn get_scope_mut(&mut self, id: NodeId) -> &mut Scope {
+    pub fn get_scope_mut(&mut self, id: NodeId) -> &mut Scope<'ast> {
         self.scopes.get_mut(&id).unwrap()
     }
 
@@ -173,8 +173,8 @@ impl SemanticAnalyzer {
         &mut self,
         scope: NodeId,
         name: &Symbol,
-        value: PlaceValue,
-    ) -> Result<&mut PlaceValue, SemanticError> {
+        value: PlaceValue<'ast>,
+    ) -> Result<&mut PlaceValue<'ast>, SemanticError> {
         let scope = self.get_scope_mut(scope);
         let replace = scope.values.insert(name.clone(), value);
 
@@ -185,11 +185,15 @@ impl SemanticAnalyzer {
         Ok(scope.values.get_mut(name).unwrap())
     }
 
-    pub fn get_scope_value(&self, scope: NodeId, name: &Symbol) -> Option<&PlaceValue> {
+    pub fn get_scope_value(&self, scope: NodeId, name: &Symbol) -> Option<&PlaceValue<'ast>> {
         self.get_scope(scope).values.get(name)
     }
 
-    pub fn get_scope_value_mut(&mut self, scope: NodeId, name: &Symbol) -> Option<&mut PlaceValue> {
+    pub fn get_scope_value_mut(
+        &mut self,
+        scope: NodeId,
+        name: &Symbol,
+    ) -> Option<&mut PlaceValue<'ast>> {
         self.get_scope_mut(scope).values.get_mut(name)
     }
 
@@ -206,7 +210,7 @@ impl SemanticAnalyzer {
     }
 }
 
-impl<'ast> Visitor<'ast> for SemanticAnalyzer {
+impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
     type DefaultRes<'res>
         = Result<(), SemanticError>
     where
@@ -219,7 +223,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Self: 'res;
 
     type PatRes<'res>
-        = Result<PatResult, SemanticError>
+        = Result<PatResult<'ast>, SemanticError>
     where
         Self: 'res;
 
@@ -353,12 +357,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
 
     fn visit_fn_item<'tmp>(
         &mut self,
-        FnItem {
-            ident,
-            generics: _,
-            sig,
-            body,
-        }: &'ast FnItem,
+        fn_item: &'ast FnItem,
         ItemExtra {
             father,
             self_id,
@@ -366,6 +365,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
             associated_info,
         }: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
+        let FnItem {
+            ident,
+            generics: _,
+            sig,
+            body,
+        } = fn_item;
         match self.stage {
             AnalyzeStage::SymbolCollect => {
                 let is_main_function = self.is_main_function(&ident.symbol, father);
@@ -446,6 +451,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         kind: ValueKind::Fn {
                             method_kind,
                             is_placeholder: body.is_none(),
+                            ast_node: FnAstRefInfo::Inherent(fn_item, self_id),
                         },
                     },
                     mutbl: Mutability::Not,
@@ -657,6 +663,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 self.set_type_kind(ptr, ResolvedTyKind::Trait);
 
                 self.add_scope(self_id, father, ScopeKind::Trait(ptr));
+
+                // 防止空 trait 导致异常
+                self.get_impls_mut(&ptr);
             }
             AnalyzeStage::Definition => {}
             AnalyzeStage::Body => {}
@@ -720,6 +729,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 } else {
                     None
                 };
+
+                // 防止空 impl 导致异常
+                if let Some(trait_ty) = for_trait {
+                    self.get_impl_for_trait_mut(&self_ty, &trait_ty);
+                } else {
+                    self.get_impls_mut(&self_ty);
+                }
+
                 self.get_scope_mut(self_id).kind = ScopeKind::Impl {
                     ty: self_ty,
                     for_trait,
@@ -735,9 +752,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                     let mut names: HashSet<&Symbol> = trait_info.values.keys().collect();
 
                     let self_impl = self.get_impl_for_trait(&ty, &trait_ty).unwrap();
+                    let self_ty = self.probe_type_instance(ty.into()).unwrap();
                     for (s, v) in &self_impl.values {
-                        let self_ty = self.probe_type_instance(ty.into()).unwrap();
-
                         let trait_v = self
                             .probe_type_instance_impl(
                                 trait_info
@@ -761,19 +777,50 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                         names.remove(s);
                     }
 
-                    if let Some(name) = names.into_iter().next() {
-                        let v = trait_info.values.get(name).unwrap();
-                        match &v.value.kind {
-                            ValueKind::Fn {
-                                method_kind: _,
-                                is_placeholder: true,
+                    let defaults = names
+                        .into_iter()
+                        .map(|x| {
+                            let v = trait_info.values.get(x).unwrap();
+                            match &v.value.kind {
+                                ValueKind::Fn {
+                                    method_kind: _,
+                                    is_placeholder: true,
+                                    ..
+                                }
+                                | ValueKind::Constant(ConstantValue::Placeholder) => {
+                                    Err(make_semantic_error!(NotCompleteImpl))
+                                }
+                                ValueKind::Fn {
+                                    ast_node: FnAstRefInfo::Inherent(node, node_id),
+                                    ..
+                                } => {
+                                    let mut f = v.clone();
+                                    let intern = f.value.ty;
+                                    let new_interen =
+                                        self.remove_self_type(intern, Some(ty.into()));
+                                    *f.value.kind.as_fn_mut().unwrap().2 =
+                                        FnAstRefInfo::Trait(node, *node_id);
+                                    f.value.ty = new_interen;
+                                    Ok((x.clone(), f))
+                                }
+                                ValueKind::Constant(..) => Ok((x.clone(), v.clone())),
+                                _ => impossible!(),
                             }
-                            | ValueKind::Constant(ConstantValue::Placeholder) => {
-                                return Err(make_semantic_error!(NotCompleteImpl));
-                            }
-                            _ => impossible!(),
-                        }
-                    }
+                        })
+                        .collect::<Result<Vec<_>, SemanticError>>()?;
+
+                    defaults.into_iter().for_each(|(name, value)| {
+                        self.add_impl_value(
+                            &AssociatedInfo {
+                                is_trait: false,
+                                ty,
+                                for_trait,
+                            },
+                            &name,
+                            value,
+                        )
+                        .unwrap();
+                    });
                 }
             }
         }
@@ -1739,7 +1786,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
                 .1
                 .borrow();
             let interrupt = if has_break {
-                self.get_expr_result(&body_expr.id).interrupt
+                self.get_expr_result(&body_expr.id).interrupt.out_of_cycle()
             } else {
                 ControlFlowInterruptKind::Return
             };

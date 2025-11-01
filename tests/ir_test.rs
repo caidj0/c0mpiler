@@ -14,7 +14,6 @@ use c0mpiler::{
     utils::test::TestCaseInfo,
 };
 
-#[ignore]
 #[test]
 fn my_semantic() {
     let escape_list = [
@@ -97,19 +96,37 @@ fn run_test_cases(
         let src = fs::read_to_string(&src_path).unwrap();
         let should_pass = x.compileexitcode == 0;
 
-        // Parse and semantic check
-        let semantic_result = panic::catch_unwind(|| -> Result<_, String> {
+        let parser_result = panic::catch_unwind(|| -> Result<Crate, String> {
             let lexer = Lexer::new(&src);
             let buffer = TokenBuffer::new(lexer).map_err(|e| format!("{:?}", e))?;
             let mut iter = buffer.iter();
             let krate = Crate::eat(&mut iter).map_err(|e| format!("{:?}", e))?;
+            Ok(krate)
+        })
+        .unwrap_or_else(|_| panic!("{name} caused panic during parsing!"));
+
+        let krate = match parser_result {
+            Ok(krate) => krate,
+            Err(e) => {
+                if should_pass {
+                    fault!("{name} parse failed, expect pass!\n{e}");
+                } else {
+                    println!("{name} passed (parse failed as expected)!");
+                    success += 1;
+                    continue;
+                }
+            }
+        };
+
+        // Parse and semantic check
+        let semantic_result = panic::catch_unwind(|| -> Result<_, String> {
             let (analyzer, result) = SemanticAnalyzer::visit(&krate);
             result.map_err(|e| format!("{:?}", e))?;
-            Ok((analyzer, krate))
+            Ok(analyzer)
         });
 
-        let (analyzer, krate) = match semantic_result {
-            Ok(Ok((analyzer, krate))) => (analyzer, krate),
+        let analyzer = match semantic_result {
+            Ok(Ok(analyzer)) => analyzer,
             Ok(Err(e)) => {
                 if should_pass {
                     fault!("{name} semantic check failed, expect pass!\n{e}");

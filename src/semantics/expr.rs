@@ -124,8 +124,8 @@ impl BitOr for ControlFlowInterruptKind {
     }
 }
 
-impl SemanticAnalyzer {
-    pub(crate) fn set_expr_value(&mut self, expr_id: NodeId, value: Value) {
+impl<'ast> SemanticAnalyzer<'ast> {
+    pub(crate) fn set_expr_value(&mut self, expr_id: NodeId, value: Value<'ast>) {
         let replace = self.expr_value.insert(expr_id, value);
         debug_assert!(replace.is_none());
     }
@@ -138,7 +138,7 @@ impl SemanticAnalyzer {
     pub(crate) fn set_expr_value_and_result(
         &mut self,
         expr_id: NodeId,
-        value: Value,
+        value: Value<'ast>,
         assignee: AssigneeKind,
         interrupt: ControlFlowInterruptKind,
     ) {
@@ -159,7 +159,7 @@ impl SemanticAnalyzer {
         self.expr_results.get(expr_id).unwrap()
     }
 
-    pub(crate) fn get_expr_value(&self, expr_id: &NodeId) -> &Value {
+    pub(crate) fn get_expr_value(&self, expr_id: &NodeId) -> &Value<'ast> {
         let index = &self.get_expr_result(expr_id).value_index;
         self.get_value_by_index(index)
     }

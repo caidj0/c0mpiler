@@ -7,7 +7,7 @@ use crate::{
     },
 };
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub(crate) fn check_sized(&self, ty: TypeIntern) -> Result<(), SemanticError> {
         let Some(probe) = self.probe_type(ty) else {
             return Err(make_semantic_error!(NotSizedType));

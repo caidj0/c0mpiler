@@ -15,11 +15,11 @@ use crate::{
 
 // TODO: Associated Item 如何处理？Impl 和 Trait 有 scope，但是它们的 item 不保存 scope 里
 #[derive(Debug)]
-pub struct Scope {
+pub struct Scope<'ast> {
     pub id: NodeId,
     pub kind: ScopeKind,
     pub types: HashMap<Symbol, TypeKey>,
-    pub values: HashMap<Symbol, PlaceValue>,
+    pub values: HashMap<Symbol, PlaceValue<'ast>>,
     pub bindings: HashMap<Symbol, NodeId>,
     pub children: HashSet<NodeId>,
     pub father: NodeId,
@@ -63,7 +63,7 @@ pub enum ScopeSearchResultKind {
     Type(TypeKey),
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub fn search_scope_or_type(
         &self,
         symbol: &Symbol,

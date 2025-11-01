@@ -37,7 +37,7 @@ pub(crate) enum ValueKind {
     LenMethod(u32),
 }
 
-impl<'analyzer> IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     pub(crate) fn get_value_type(&self, value: &ValuePtrContainer) -> TypePtr {
         match &value.kind {
             ContainerKind::Raw { fat: Some(..) } => self.fat_ptr_type().into(),
@@ -151,8 +151,7 @@ impl<'analyzer> IRGenerator<'analyzer> {
     }
 
     pub(crate) fn add_value_index(&mut self, index: ValueIndex, value: ValuePtrContainer) {
-        let replacer = self.value_indexes.insert(index, value);
-        debug_assert!(replacer.is_none());
+        self.value_indexes.insert(index, value);
     }
 
     pub(crate) fn get_value_by_index(&mut self, index: &ValueIndex) -> ValueKind {

@@ -12,6 +12,11 @@ impl FullName {
         self.0.push(s);
         self
     }
+
+    pub(crate) fn append(mut self, mut right: FullName) -> Self {
+        self.0.append(&mut right.0);
+        self
+    }
 }
 
 impl Display for FullName {
@@ -66,7 +71,7 @@ pub(crate) fn is_all_different<T: Eq + std::hash::Hash>(vec: &[T]) -> bool {
     true
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub fn is_body_stage(&self) -> bool {
         self.stage.is_body()
     }

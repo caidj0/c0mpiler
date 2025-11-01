@@ -30,7 +30,7 @@ impl TransformTypeConfig {
     }
 }
 
-impl<'analyzer> IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     pub(crate) fn is_aggregate_type(&self, x: &ResolvedTy) -> bool {
         matches!(
             x.kind,
