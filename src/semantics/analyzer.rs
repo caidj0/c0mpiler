@@ -34,13 +34,13 @@ use crate::{
     },
 };
 
-pub struct SemanticAnalyzer {
-    pub(crate) scopes: HashMap<NodeId, Scope>,
-    pub(crate) impls: HashMap<ResolvedTyInstance, Impls>,
+pub struct SemanticAnalyzer<'ast> {
+    pub(crate) scopes: HashMap<NodeId, Scope<'ast>>,
+    pub(crate) impls: HashMap<ResolvedTyInstance, Impls<'ast>>,
     pub(crate) expr_results: HashMap<NodeId, ExprResult>,
-    pub(crate) expr_value: HashMap<NodeId, Value>,
+    pub(crate) expr_value: HashMap<NodeId, Value<'ast>>,
     pub(crate) stmt_results: HashMap<NodeId, StmtResult>,
-    pub(crate) binding_value: HashMap<NodeId, PlaceValue>,
+    pub(crate) binding_value: HashMap<NodeId, PlaceValue<'ast>>,
 
     pub(crate) ut: RefCell<UnificationTable<InPlace<TypeKey>>>,
     pub(crate) preludes: Preludes,
@@ -48,7 +48,7 @@ pub struct SemanticAnalyzer {
     pub(crate) stage: AnalyzeStage,
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     fn new() -> Self {
         let mut scopes = HashMap::default();
         scopes.insert(
@@ -84,7 +84,7 @@ impl SemanticAnalyzer {
         analyzer
     }
 
-    pub fn visit(krate: &Crate) -> (Self, Result<(), SemanticError>) {
+    pub fn visit(krate: &'ast Crate) -> (Self, Result<(), SemanticError>) {
         let mut analyzer = Self::new();
 
         for stage in STAGES {
@@ -115,11 +115,11 @@ impl SemanticAnalyzer {
         self.scopes.get_mut(&father).unwrap().children.insert(id);
     }
 
-    pub fn get_scope(&self, id: NodeId) -> &Scope {
+    pub fn get_scope(&self, id: NodeId) -> &Scope<'ast> {
         self.scopes.get(&id).unwrap()
     }
 
-    pub fn get_scope_mut(&mut self, id: NodeId) -> &mut Scope {
+    pub fn get_scope_mut(&mut self, id: NodeId) -> &mut Scope<'ast> {
         self.scopes.get_mut(&id).unwrap()
     }
 
@@ -173,8 +173,8 @@ impl SemanticAnalyzer {
         &mut self,
         scope: NodeId,
         name: &Symbol,
-        value: PlaceValue,
-    ) -> Result<&mut PlaceValue, SemanticError> {
+        value: PlaceValue<'ast>,
+    ) -> Result<&mut PlaceValue<'ast>, SemanticError> {
         let scope = self.get_scope_mut(scope);
         let replace = scope.values.insert(name.clone(), value);
 
@@ -185,11 +185,15 @@ impl SemanticAnalyzer {
         Ok(scope.values.get_mut(name).unwrap())
     }
 
-    pub fn get_scope_value(&self, scope: NodeId, name: &Symbol) -> Option<&PlaceValue> {
+    pub fn get_scope_value(&self, scope: NodeId, name: &Symbol) -> Option<&PlaceValue<'ast>> {
         self.get_scope(scope).values.get(name)
     }
 
-    pub fn get_scope_value_mut(&mut self, scope: NodeId, name: &Symbol) -> Option<&mut PlaceValue> {
+    pub fn get_scope_value_mut(
+        &mut self,
+        scope: NodeId,
+        name: &Symbol,
+    ) -> Option<&mut PlaceValue<'ast>> {
         self.get_scope_mut(scope).values.get_mut(name)
     }
 
@@ -206,7 +210,7 @@ impl SemanticAnalyzer {
     }
 }
 
-impl<'ast> Visitor<'ast> for SemanticAnalyzer {
+impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
     type DefaultRes<'res>
         = Result<(), SemanticError>
     where
@@ -219,7 +223,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer {
         Self: 'res;
 
     type PatRes<'res>
-        = Result<PatResult, SemanticError>
+        = Result<PatResult<'ast>, SemanticError>
     where
         Self: 'res;
 

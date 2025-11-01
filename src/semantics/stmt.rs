@@ -11,7 +11,7 @@ pub enum StmtResult {
     Else { interrupt: ControlFlowInterruptKind },
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub(crate) fn set_stmt_result(&mut self, result: StmtResult, id: NodeId) {
         let replace = self.stmt_results.insert(id, result);
         debug_assert!(replace.is_none())

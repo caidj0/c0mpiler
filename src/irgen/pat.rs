@@ -4,7 +4,7 @@ use crate::{
     semantics::value::{PlaceValueIndex, ValueIndex, ValueIndexKind},
 };
 
-impl<'analyzer> IRGenerator<'analyzer> {
+impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     pub(crate) fn visit_ident_pat_impl(
         &mut self,
         BindingMode(by_ref, _): &BindingMode,

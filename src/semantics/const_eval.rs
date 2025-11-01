@@ -10,13 +10,13 @@ use crate::{
     },
 };
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub fn const_eval(
         &mut self,
-        expr: &Expr,
+        expr: &'ast Expr,
         target_type: TypeIntern,
         scope: Option<NodeId>,
-    ) -> Result<ConstantValue, SemanticError> {
+    ) -> Result<ConstantValue<'ast>, SemanticError> {
         let mut evaler = ConstEvaler {
             analyzer: self,
             scope_id: scope,
@@ -26,9 +26,9 @@ impl SemanticAnalyzer {
 
     pub fn eval_unevaling(
         &mut self,
-        uneval: &UnEvalConstant,
+        uneval: &UnEvalConstant<'ast>,
         target_type: TypeKey,
-    ) -> Result<ConstantValue, SemanticError> {
+    ) -> Result<ConstantValue<'ast>, SemanticError> {
         let (scope, e) = uneval.to_ref();
         self.const_eval(e, target_type.into(), Some(scope))
     }
@@ -48,19 +48,18 @@ impl From<TypeKey> for Extra {
     }
 }
 
-struct ConstEvaler<'analyzer> {
-    analyzer: &'analyzer mut SemanticAnalyzer,
+struct ConstEvaler<'ast, 'analyzer> {
+    analyzer: &'analyzer mut SemanticAnalyzer<'ast>,
     scope_id: Option<NodeId>,
 }
 
-impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
+impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'ast, 'analyzer> {
     type DefaultRes<'res>
         = Result<(), SemanticError>
     where
         Self: 'res;
-
     type ExprRes<'res>
-        = Result<ConstantValue, SemanticError>
+        = Result<ConstantValue<'ast>, SemanticError>
     where
         Self: 'res;
 
@@ -68,7 +67,6 @@ impl<'ast, 'analyzer> Visitor<'ast> for ConstEvaler<'analyzer> {
         = Result<(), SemanticError>
     where
         Self: 'res;
-
     type StmtRes<'res>
         = Result<(), SemanticError>
     where

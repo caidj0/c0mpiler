@@ -43,7 +43,7 @@ macro_rules! define_preludes {
             )*
         }
 
-        impl SemanticAnalyzer {
+    impl<'ast> SemanticAnalyzer<'ast> {
             $(
                 paste::paste!{
                     pub fn [<$name _type>](&self) -> TypeIntern {
@@ -75,7 +75,7 @@ define_preludes!(
     }
 );
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub fn new_any_type(&mut self) -> TypeIntern {
         self.intern_type(ResolvedTy::any_type()).into()
     }

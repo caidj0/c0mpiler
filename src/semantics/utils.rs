@@ -66,7 +66,7 @@ pub(crate) fn is_all_different<T: Eq + std::hash::Hash>(vec: &[T]) -> bool {
     true
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub fn is_body_stage(&self) -> bool {
         self.stage.is_body()
     }

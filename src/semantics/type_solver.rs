@@ -251,7 +251,7 @@ macro_rules! to_semantic_error {
     }};
 }
 
-impl SemanticAnalyzer {
+impl<'ast> SemanticAnalyzer<'ast> {
     pub fn create_type_solver(&self, downgrade: bool) -> TypeSolver<'_> {
         TypeSolver {
             ut: self.ut.borrow_mut(),
