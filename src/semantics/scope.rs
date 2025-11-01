@@ -9,10 +9,7 @@ use crate::{
     ast::{NodeId, Symbol},
     make_semantic_error,
     semantics::{
-        analyzer::SemanticAnalyzer,
-        error::SemanticError,
-        resolved_ty::TypeKey,
-        value::PlaceValue,
+        analyzer::SemanticAnalyzer, error::SemanticError, resolved_ty::TypeKey, value::PlaceValue,
     },
 };
 

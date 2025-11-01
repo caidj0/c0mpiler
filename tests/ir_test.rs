@@ -14,16 +14,6 @@ use c0mpiler::{
     utils::test::TestCaseInfo,
 };
 
-#[ignore]
-#[test]
-fn for_test() {
-    let escape_list = [];
-    let case_path = "testcases/test";
-
-    run_test_cases(&escape_list, case_path, true, true);
-}
-
-#[ignore]
 #[test]
 fn my_semantic() {
     let escape_list = [
@@ -113,7 +103,7 @@ fn run_test_cases(
             let krate = Crate::eat(&mut iter).map_err(|e| format!("{:?}", e))?;
             Ok(krate)
         })
-        .expect(&format!("{name} caused panic during parsing!"));
+        .unwrap_or_else(|_| panic!("{name} caused panic during parsing!"));
 
         let krate = match parser_result {
             Ok(krate) => krate,

@@ -242,7 +242,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
     fn visit_impl_item<'tmp>(
         &mut self,
-        ImplItem { items, .. }: &'ast ImplItem,
+        ImplItem { .. }: &'ast ImplItem,
         extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
         let scope = self.analyzer.get_scope(extra.self_id);
@@ -262,7 +262,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
             ty: *ty,
             for_trait: *for_trait,
         };
-        for (_, v) in &impl_info.values {
+        for v in impl_info.values.values() {
             if let Some((
                 _,
                 _,
@@ -283,17 +283,9 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
     fn visit_associate_item<'tmp>(
         &mut self,
-        Item { kind, id, span: _ }: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
-        extra: Self::ItemExtra<'tmp>,
+        _: &'ast crate::ast::item::Item<crate::ast::item::AssocItemKind>,
+        _extra: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
-        let new_extra = ItemExtra {
-            self_id: *id,
-            ..extra
-        };
-        match kind {
-            AssocItemKind::Const(const_item) => self.visit_const_item(const_item, new_extra),
-            AssocItemKind::Fn(fn_item) => self.visit_fn_item(fn_item, new_extra),
-        }
     }
 
     fn visit_stmt<'tmp>(

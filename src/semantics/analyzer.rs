@@ -788,7 +788,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                                     ..
                                 }
                                 | ValueKind::Constant(ConstantValue::Placeholder) => {
-                                    return Err(make_semantic_error!(NotCompleteImpl));
+                                    Err(make_semantic_error!(NotCompleteImpl))
                                 }
                                 ValueKind::Fn {
                                     ast_node: FnAstRefInfo::Inherent(node, node_id),
@@ -1786,7 +1786,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                 .1
                 .borrow();
             let interrupt = if has_break {
-                self.get_expr_result(&body_expr.id).interrupt
+                self.get_expr_result(&body_expr.id).interrupt.out_of_cycle()
             } else {
                 ControlFlowInterruptKind::Return
             };
