@@ -30,8 +30,8 @@ pub struct Value<'ast> {
 #[derive(Debug, Clone)]
 pub enum FnAstRefInfo<'ast> {
     None,
-    Trait(&'ast FnItem),
-    Inherent(&'ast FnItem),
+    Trait(&'ast FnItem, NodeId),
+    Inherent(&'ast FnItem, NodeId),
 }
 
 #[derive(Debug, EnumAsInner, Clone)]

@@ -1,4 +1,6 @@
-struct A;
+struct A {
+    a: i32,
+}
 
 trait Trait {
     fn foo() -> Self;
@@ -10,7 +12,7 @@ trait Trait {
 
 impl Trait for A {
     fn foo() -> Self {
-        A
+        A { a: 123 }
     }
 }
 

@@ -451,7 +451,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                         kind: ValueKind::Fn {
                             method_kind,
                             is_placeholder: body.is_none(),
-                            ast_node: FnAstRefInfo::Inherent(fn_item),
+                            ast_node: FnAstRefInfo::Inherent(fn_item, self_id),
                         },
                     },
                     mutbl: Mutability::Not,
@@ -791,7 +791,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                                     return Err(make_semantic_error!(NotCompleteImpl));
                                 }
                                 ValueKind::Fn {
-                                    ast_node: FnAstRefInfo::Inherent(node),
+                                    ast_node: FnAstRefInfo::Inherent(node, node_id),
                                     ..
                                 } => {
                                     let mut f = v.clone();
@@ -799,7 +799,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                                     let new_interen =
                                         self.remove_self_type(intern, Some(ty.into()));
                                     *f.value.kind.as_fn_mut().unwrap().2 =
-                                        FnAstRefInfo::Trait(node);
+                                        FnAstRefInfo::Trait(node, *node_id);
                                     f.value.ty = new_interen;
                                     Ok((x.clone(), f))
                                 }

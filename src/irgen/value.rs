@@ -151,8 +151,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     }
 
     pub(crate) fn add_value_index(&mut self, index: ValueIndex, value: ValuePtrContainer) {
-        let replacer = self.value_indexes.insert(index, value);
-        debug_assert!(replacer.is_none());
+        self.value_indexes.insert(index, value);
     }
 
     pub(crate) fn get_value_by_index(&mut self, index: &ValueIndex) -> ValueKind {

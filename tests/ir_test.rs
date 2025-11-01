@@ -16,6 +16,15 @@ use c0mpiler::{
 
 #[ignore]
 #[test]
+fn for_test() {
+    let escape_list = [];
+    let case_path = "testcases/test";
+
+    run_test_cases(&escape_list, case_path, true, true);
+}
+
+#[ignore]
+#[test]
 fn my_semantic() {
     let escape_list = [
         "copy_trait1",
