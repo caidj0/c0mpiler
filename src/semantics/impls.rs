@@ -10,7 +10,7 @@ use crate::{
         error::SemanticError,
         item::AssociatedInfo,
         resolved_ty::{RefMutability, ResolvedTy, ResolvedTyInstance, TypeKey},
-        value::{MethodKind, PlaceValue, Value, ValueKind},
+        value::{FnAstRefInfo, MethodKind, PlaceValue, Value, ValueKind},
     },
 };
 
@@ -57,6 +57,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                             kind: ValueKind::Fn {
                                 method_kind: MethodKind::ByRef,
                                 is_placeholder: false,
+                                ast_node: FnAstRefInfo::None,
                             },
                         },
                         mutbl: Mutability::Not,
@@ -82,7 +83,11 @@ impl<'ast> SemanticAnalyzer<'ast> {
         impls.traits.get(&instance)
     }
 
-    pub fn get_impl_for_trait_mut(&mut self, ty: &TypeKey, trait_ty: &TypeKey) -> &mut ImplInfo<'ast> {
+    pub fn get_impl_for_trait_mut(
+        &mut self,
+        ty: &TypeKey,
+        trait_ty: &TypeKey,
+    ) -> &mut ImplInfo<'ast> {
         let instance = self.probe_type_instance((*trait_ty).into()).unwrap();
         let impls = self.get_impls_mut(ty);
         if !impls.traits.contains_key(&instance) {

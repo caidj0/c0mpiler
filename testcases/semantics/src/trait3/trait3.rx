@@ -1,0 +1,16 @@
+trait Trait {
+    fn foo() -> i32 {
+        123
+    }
+}
+
+struct A {
+    a: i32,
+}
+
+impl Trait for A {}
+
+fn main() {
+    A::foo();
+    exit(0);
+}

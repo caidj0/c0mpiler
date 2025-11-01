@@ -104,6 +104,10 @@
         "compileexitcode": -1
     },
     {
+        "name": "trait3",
+        "compileexitcode": 0
+    },
+    {
         "name": "type1",
         "compileexitcode": 0
     },

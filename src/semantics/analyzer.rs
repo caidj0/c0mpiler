@@ -27,8 +27,8 @@ use crate::{
         stmt::StmtResult,
         utils::{AnalyzeStage, FullName, STAGES, is_all_different},
         value::{
-            ConstantValue, MethodKind, PlaceValue, PlaceValueIndex, UnEvalConstant, Value,
-            ValueIndex, ValueIndexKind, ValueKind,
+            ConstantValue, FnAstRefInfo, MethodKind, PlaceValue, PlaceValueIndex, UnEvalConstant,
+            Value, ValueIndex, ValueIndexKind, ValueKind,
         },
         visitor::Visitor,
     },
@@ -357,12 +357,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
 
     fn visit_fn_item<'tmp>(
         &mut self,
-        FnItem {
-            ident,
-            generics: _,
-            sig,
-            body,
-        }: &'ast FnItem,
+        fn_item: &'ast FnItem,
         ItemExtra {
             father,
             self_id,
@@ -370,6 +365,12 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
             associated_info,
         }: Self::ItemExtra<'tmp>,
     ) -> Self::DefaultRes<'_> {
+        let FnItem {
+            ident,
+            generics: _,
+            sig,
+            body,
+        } = fn_item;
         match self.stage {
             AnalyzeStage::SymbolCollect => {
                 let is_main_function = self.is_main_function(&ident.symbol, father);
@@ -450,6 +451,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                         kind: ValueKind::Fn {
                             method_kind,
                             is_placeholder: body.is_none(),
+                            ast_node: FnAstRefInfo::Inherent(fn_item),
                         },
                     },
                     mutbl: Mutability::Not,
@@ -661,6 +663,9 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                 self.set_type_kind(ptr, ResolvedTyKind::Trait);
 
                 self.add_scope(self_id, father, ScopeKind::Trait(ptr));
+
+                // 防止空 trait 导致异常
+                self.get_impls_mut(&ptr);
             }
             AnalyzeStage::Definition => {}
             AnalyzeStage::Body => {}
@@ -724,6 +729,14 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                 } else {
                     None
                 };
+
+                // 防止空 impl 导致异常
+                if let Some(trait_ty) = for_trait {
+                    self.get_impl_for_trait_mut(&self_ty, &trait_ty);
+                } else {
+                    self.get_impls_mut(&self_ty);
+                }
+
                 self.get_scope_mut(self_id).kind = ScopeKind::Impl {
                     ty: self_ty,
                     for_trait,
@@ -739,9 +752,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                     let mut names: HashSet<&Symbol> = trait_info.values.keys().collect();
 
                     let self_impl = self.get_impl_for_trait(&ty, &trait_ty).unwrap();
+                    let self_ty = self.probe_type_instance(ty.into()).unwrap();
                     for (s, v) in &self_impl.values {
-                        let self_ty = self.probe_type_instance(ty.into()).unwrap();
-
                         let trait_v = self
                             .probe_type_instance_impl(
                                 trait_info
@@ -765,19 +777,50 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                         names.remove(s);
                     }
 
-                    if let Some(name) = names.into_iter().next() {
-                        let v = trait_info.values.get(name).unwrap();
-                        match &v.value.kind {
-                            ValueKind::Fn {
-                                method_kind: _,
-                                is_placeholder: true,
+                    let defaults = names
+                        .into_iter()
+                        .map(|x| {
+                            let v = trait_info.values.get(x).unwrap();
+                            match &v.value.kind {
+                                ValueKind::Fn {
+                                    method_kind: _,
+                                    is_placeholder: true,
+                                    ..
+                                }
+                                | ValueKind::Constant(ConstantValue::Placeholder) => {
+                                    return Err(make_semantic_error!(NotCompleteImpl));
+                                }
+                                ValueKind::Fn {
+                                    ast_node: FnAstRefInfo::Inherent(node),
+                                    ..
+                                } => {
+                                    let mut f = v.clone();
+                                    let intern = f.value.ty;
+                                    let new_interen =
+                                        self.remove_self_type(intern, Some(ty.into()));
+                                    *f.value.kind.as_fn_mut().unwrap().2 =
+                                        FnAstRefInfo::Trait(node);
+                                    f.value.ty = new_interen;
+                                    Ok((x.clone(), f))
+                                }
+                                ValueKind::Constant(..) => Ok((x.clone(), v.clone())),
+                                _ => impossible!(),
                             }
-                            | ValueKind::Constant(ConstantValue::Placeholder) => {
-                                return Err(make_semantic_error!(NotCompleteImpl));
-                            }
-                            _ => impossible!(),
-                        }
-                    }
+                        })
+                        .collect::<Result<Vec<_>, SemanticError>>()?;
+
+                    defaults.into_iter().for_each(|(name, value)| {
+                        self.add_impl_value(
+                            &AssociatedInfo {
+                                is_trait: false,
+                                ty,
+                                for_trait,
+                            },
+                            &name,
+                            value,
+                        )
+                        .unwrap();
+                    });
                 }
             }
         }

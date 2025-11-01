@@ -592,4 +592,93 @@ impl<'ast> SemanticAnalyzer<'ast> {
 
         Ok(None)
     }
+
+    pub fn remove_self_type(
+        &self,
+        intern: TypeIntern,
+        target_type: Option<TypeIntern>,
+    ) -> TypeIntern {
+        if let Some(new) = self.remove_self_type_impl(intern, target_type) {
+            new
+        } else {
+            intern
+        }
+    }
+
+    fn remove_self_type_impl(
+        &self,
+        intern: TypeIntern,
+        target_type: Option<TypeIntern>,
+    ) -> Option<TypeIntern> {
+        let ty = self.probe_type(intern)?;
+        if ty.names.is_some() {
+            return None;
+        }
+        match ty.kind {
+            ResolvedTyKind::Placeholder
+            | ResolvedTyKind::BuiltIn(..)
+            | ResolvedTyKind::Any(..)
+            | ResolvedTyKind::Enum
+            | ResolvedTyKind::Trait => None,
+            ResolvedTyKind::Ref(inner, ref_mutability) => {
+                let new_inner = self.remove_self_type_impl(inner, target_type)?;
+                Some(
+                    self.intern_type(ResolvedTy::ref_type(new_inner, ref_mutability))
+                        .into(),
+                )
+            }
+            ResolvedTyKind::Tup(items) => {
+                let (is_removed, news): (Vec<_>, Vec<_>) = items
+                    .into_iter()
+                    .map(|x| {
+                        self.remove_self_type_impl(x, target_type)
+                            .map_or((false, x), |new| (true, new))
+                    })
+                    .unzip();
+
+                let any_removed = is_removed.into_iter().any(|x| x);
+
+                if any_removed {
+                    Some(self.intern_type(ResolvedTy::tup_type(news)).into())
+                } else {
+                    None
+                }
+            }
+            ResolvedTyKind::Array(inner, len) => {
+                let new_inner = self.remove_self_type_impl(inner, target_type)?;
+                Some(
+                    self.intern_type(ResolvedTy::array_type(new_inner, len))
+                        .into(),
+                )
+            }
+            ResolvedTyKind::Fn(ret, items) => {
+                let new_ret = self.remove_self_type_impl(ret, target_type);
+                let (is_removed, news): (Vec<_>, Vec<_>) = items
+                    .into_iter()
+                    .map(|x| {
+                        self.remove_self_type_impl(x, target_type)
+                            .map_or((false, x), |new| (true, new))
+                    })
+                    .unzip();
+
+                let any_removed = new_ret.is_some() || is_removed.into_iter().any(|x| x);
+
+                if any_removed {
+                    Some(
+                        self.intern_type(ResolvedTy::fn_type(new_ret.unwrap_or(ret), news))
+                            .into(),
+                    )
+                } else {
+                    None
+                }
+            }
+            ResolvedTyKind::ImplicitSelf(inner) => {
+                if let Some(target) = target_type {
+                    Some(target)
+                } else {
+                    Some(inner)
+                }
+            }
+        }
+    }
 }

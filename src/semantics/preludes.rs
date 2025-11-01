@@ -8,6 +8,7 @@ use crate::semantics::resolved_ty::ResolvedTyKind;
 use crate::semantics::resolved_ty::TypeIntern;
 use crate::semantics::resolved_ty::TypeKey;
 use crate::semantics::utils::FullName;
+use crate::semantics::value::FnAstRefInfo;
 use crate::semantics::value::MethodKind;
 use crate::semantics::value::PlaceValue;
 use crate::semantics::value::Value;
@@ -110,6 +111,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 kind: ValueKind::Fn {
                     method_kind,
                     is_placeholder: false,
+                    ast_node: FnAstRefInfo::None,
                 },
             },
             mutbl: Mutability::Not,

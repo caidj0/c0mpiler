@@ -6,6 +6,7 @@ use crate::{
     ast::{
         ByRef, Mutability, NodeId, Symbol,
         expr::Expr,
+        item::FnItem,
         path::{Path, QSelf},
     },
     impossible, make_semantic_error,
@@ -26,6 +27,13 @@ pub struct Value<'ast> {
     pub kind: ValueKind<'ast>,
 }
 
+#[derive(Debug, Clone)]
+pub enum FnAstRefInfo<'ast> {
+    None,
+    Trait(&'ast FnItem),
+    Inherent(&'ast FnItem),
+}
+
 #[derive(Debug, EnumAsInner, Clone)]
 pub enum ValueKind<'ast> {
     Anon,
@@ -33,6 +41,8 @@ pub enum ValueKind<'ast> {
     Fn {
         method_kind: MethodKind,
         is_placeholder: bool,
+
+        ast_node: FnAstRefInfo<'ast>,
     },
 
     Binding(ByRef),
@@ -222,7 +232,10 @@ impl<'ast> SemanticAnalyzer<'ast> {
         }
     }
 
-    pub fn get_place_value_by_index_mut(&mut self, index: &PlaceValueIndex) -> &mut PlaceValue<'ast> {
+    pub fn get_place_value_by_index_mut(
+        &mut self,
+        index: &PlaceValueIndex,
+    ) -> &mut PlaceValue<'ast> {
         match &index.kind {
             ValueIndexKind::Bindings { binding_id } => {
                 self.binding_value.get_mut(binding_id).unwrap()
