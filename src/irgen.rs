@@ -326,6 +326,20 @@ fn add_preludes(
         .as_function()
         .add_param_attr(0, Attribute::StructReturn(string_type.clone().into()));
 
+    let string_plus_type = context.function_type(
+        context.void_type().into(),
+        vec![
+            context.ptr_type().into(),
+            context.ptr_type().into(),
+            context.ptr_type().into(),
+            context.i32_type().into(),
+        ],
+    );
+    let string_plus_fn = module.add_function(string_plus_type.clone(), "string_plus", None);
+    string_plus_fn
+        .as_function()
+        .add_param_attr(0, Attribute::StructReturn(string_type.clone().into()));
+
     value_indexes.insert(
         ValueIndex::Place(PlaceValueIndex {
             name: "len".into(),

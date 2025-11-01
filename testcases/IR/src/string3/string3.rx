@@ -1,0 +1,8 @@
+fn main() {
+    let s1: String = 114514.to_string();
+    let s2: String = 1919810.to_string();
+    let s: String = s1 + s2.as_str();
+    println(s.as_str());
+    printlnInt(s.len() as i32);
+    exit(0);
+}

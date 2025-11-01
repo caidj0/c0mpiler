@@ -1,0 +1,7 @@
+fn main() {
+    let n: i32 = getInt();
+    let s: String = (n as u32).to_string();
+    println(s.as_str());
+    printlnInt(s.len() as i32);
+    exit(0);
+}

@@ -1,9 +1,15 @@
+#include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 struct String {
+  char *data;
+  uint32_t length;
+};
+
+struct FatPtr {
   char *data;
   uint32_t length;
 };
@@ -18,20 +24,24 @@ typedef struct String String;
 //     return ret;
 // }
 
-String to_string(uint32_t *self) {
-  char buffer[16];
-  uint32_t length = sprintf(buffer, "%d", *self) - 1;
-  String ret = {buffer, length};
-  return ret;
+void to_string(String *string, uint32_t *self) {
+  char *buffer = malloc(16);
+  uint32_t length = sprintf(buffer, "%d", *self);
+  string->length = length;
+  string->data = buffer;
 }
 
-String string_plus(String *self, char *right) {
-  uint32_t length = self->length + strlen(right);
-  char *data = malloc(length + 1);
-  strcpy(data, self->data);
-  strcpy(data + self->length, right);
-  String ret = {data, length};
-  return ret;
+void string_plus(String *ret, String *self, char *data, uint32_t length) {
+  uint32_t new_length = self->length + length;
+  char *new_data = malloc(new_length);
+  for (int i = 0; i < self->length; i++) {
+    new_data[i] = self->data[i];
+  }
+  for (int i = 0; i < length; i++) {
+    new_data[i + self->length] = data[i];
+  }
+  ret->data = new_data;
+  ret->length = new_length;
 }
 
 void print(char *text, uint32_t n) { printf("%.*s", n, text); }
@@ -42,17 +52,19 @@ void printInt(int32_t n) { printf("%d", n); }
 
 void printlnInt(int32_t n) { printf("%d\n", n); }
 
-String getString() {
-  char **buffer = NULL;
+void getString(String *string) {
+  char *buffer = NULL;
+  size_t n = 0;
 
-  uint32_t length = getline(buffer, NULL, stdin);
-  if (length > 0 && (*buffer)[length - 1] == '\n') {
-    (*buffer)[length - 1] = 0;
+  uint32_t length = getline(&buffer, &n, stdin);
+  assert(length != -1);
+  if (length > 0 && buffer[length - 1] == '\n') {
+    buffer[length - 1] = 0;
     length--;
   }
 
-  String ret = {*buffer, length};
-  return ret;
+  string->data = buffer;
+  string->length = length;
 }
 
 int32_t getInt() {

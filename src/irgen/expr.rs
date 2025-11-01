@@ -1,16 +1,21 @@
+use std::iter::once;
+
 use crate::{
     ast::{
         NodeId,
         expr::{BinOp, Expr},
     },
     impossible,
-    ir::ir_value::{BasicBlockPtr, BinaryOpcode, ICmpCode, ValuePtr},
+    ir::{
+        ir_type::TypePtr,
+        ir_value::{BasicBlockPtr, BinaryOpcode, ICmpCode, ValuePtr},
+    },
     irgen::{
         IRGenerator,
         extra::ExprExtra,
         value::{ContainerKind, ValueKind, ValuePtrContainer},
     },
-    semantics::visitor::Visitor,
+    semantics::{analyzer::SemanticAnalyzer, visitor::Visitor},
 };
 
 impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
@@ -21,14 +26,36 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
         expr2: &'ast Expr,
         extra: ExprExtra,
     ) -> Option<ValuePtrContainer> {
+        let self_intern = self.analyzer.get_expr_type(&extra.self_id);
+        let self_probe = self.analyzer.probe_type(self_intern).unwrap();
         let value1 = self.visit_expr(expr1, extra)?;
         let value2 = self.visit_expr(expr2, extra)?;
-        let raw1 = self.get_raw_value(value1);
-        let raw2 = self.get_raw_value(value2);
+        if SemanticAnalyzer::is_string_type(&self_probe) {
+            let string_ty: TypePtr = self.context.get_named_struct_type("String").unwrap().into();
+            let ret = self.builder.build_alloca(string_ty.clone(), None);
 
-        let intern = self.analyzer.get_expr_type(&extra.self_id);
+            let func = self.module.get_function("string_plus").unwrap();
+            let args = once(ret.clone().into())
+                .chain(
+                    vec![value1, value2]
+                        .into_iter()
+                        .flat_map(|x| self.get_value_presentation(x).flatten()),
+                )
+                .collect();
+            self.builder.build_call(func, args, None);
 
-        Some(self.visit_binary_impl(bin_op, raw1, raw2, intern))
+            Some(ValuePtrContainer {
+                value_ptr: ret.into(),
+                kind: ContainerKind::Ptr(string_ty),
+            })
+        } else {
+            let raw1 = self.get_raw_value(value1);
+            let raw2 = self.get_raw_value(value2);
+
+            let intern = self.analyzer.get_expr_type(&extra.self_id);
+
+            Some(self.visit_binary_impl(bin_op, raw1, raw2, intern))
+        }
     }
 
     pub(crate) fn visit_binary_impl(

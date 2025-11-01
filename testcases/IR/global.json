@@ -52,6 +52,18 @@
         "compileexitcode": 0
     },
     {
+        "name": "string1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "string2",
+        "compileexitcode": 0
+    },
+    {
+        "name": "string3",
+        "compileexitcode": 0
+    },
+    {
         "name": "reverse_restriction",
         "compileexitcode": 0
     }
