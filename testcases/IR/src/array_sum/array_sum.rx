@@ -1,0 +1,11 @@
+fn main() {
+    let values: [i32; 5] = [5, 4, 3, 2, 1];
+    let mut idx: i32 = 0;
+    let mut sum: i32 = 0;
+    while (idx < 5) {
+        sum += values[idx as usize];
+        idx += 1;
+    }
+    printlnInt(sum);
+    exit(0);
+}

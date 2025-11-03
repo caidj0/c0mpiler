@@ -28,6 +28,10 @@
         "compileexitcode": 0
     },
     {
+        "name": "array4",
+        "compileexitcode": 0
+    },
+    {
         "name": "impl1",
         "compileexitcode": 0
     },
@@ -65,6 +69,18 @@
     },
     {
         "name": "reverse_restriction",
+        "compileexitcode": 0
+    },
+    {
+        "name": "array_sum",
+        "compileexitcode": 0
+    },
+    {
+        "name": "loop_factorial",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_sum",
         "compileexitcode": 0
     }
 ]

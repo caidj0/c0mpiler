@@ -1,0 +1,31 @@
+struct Accumulator {
+    base: i32,
+}
+
+trait Summable {
+    fn base(&self) -> i32;
+
+    fn sum_to(&self, count: i32) -> i32 {
+        let mut total: i32 = 0;
+        let mut i: i32 = 0;
+        while (i < count) {
+            total += self.base() + i;
+            i += 1;
+        }
+        total
+    }
+}
+
+impl Summable for Accumulator {
+    fn base(&self) -> i32 {
+        self.base
+    }
+}
+
+fn main() {
+    let acc: Accumulator = Accumulator { base: 3 };
+    let total: i32 = acc.sum_to(4);
+    printlnInt(total);
+    printlnInt(acc.base());
+    exit(0);
+}

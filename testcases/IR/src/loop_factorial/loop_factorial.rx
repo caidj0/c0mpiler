@@ -1,0 +1,10 @@
+fn main() {
+    let mut n: i32 = 6;
+    let mut result: i32 = 1;
+    while (n > 1) {
+        result *= n;
+        n -= 1;
+    }
+    printlnInt(result);
+    exit(0);
+}
