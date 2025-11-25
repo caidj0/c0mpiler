@@ -8,7 +8,7 @@ pub mod visitor;
 use std::collections::HashMap;
 
 use crate::{
-    ast::{Crate, NodeId},
+    ast::{Crate, NodeId, Symbol},
     impossible,
     ir::{LLVMBuilder, LLVMContext, LLVMModule, attribute::Attribute, ir_value::ConstantPtr},
     irgen::value::ValuePtrContainer,
@@ -246,6 +246,9 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
             let Some((name, _)) = &resolved_ty.names else {
                 continue;
             };
+            if *name == FullName(vec!["String".into()]) {
+                continue;
+            }
             for (s, PlaceValue { value, .. }) in &impls.inherent.values {
                 let v =
                     self.absorb_analyzer_global_value(value, false, name.clone().concat(s.clone()));
@@ -302,6 +305,7 @@ fn add_preludes(
         vec![context.ptr_type().into(), context.i32_type().into()],
         false,
     );
+
     let str_len_type = context.function_type(
         context.i32_type().into(),
         vec![context.ptr_type().into(), context.i32_type().into()],
@@ -317,29 +321,6 @@ fn add_preludes(
             .clone()
             .into(),
     ));
-    let i32_to_string_type = context.function_type(
-        context.void_type().into(),
-        vec![context.ptr_type().into(), context.ptr_type().into()],
-    );
-    let u_to_string_fn = module.add_function(i32_to_string_type.clone(), "to_string", None);
-    u_to_string_fn
-        .as_function()
-        .add_param_attr(0, Attribute::StructReturn(string_type.clone().into()));
-
-    let string_plus_type = context.function_type(
-        context.void_type().into(),
-        vec![
-            context.ptr_type().into(),
-            context.ptr_type().into(),
-            context.ptr_type().into(),
-            context.i32_type().into(),
-        ],
-    );
-    let string_plus_fn = module.add_function(string_plus_type.clone(), "string_plus", None);
-    string_plus_fn
-        .as_function()
-        .add_param_attr(0, Attribute::StructReturn(string_type.clone().into()));
-
     value_indexes.insert(
         ValueIndex::Place(PlaceValueIndex {
             name: "len".into(),
@@ -359,6 +340,54 @@ fn add_preludes(
         },
     );
 
+    let string_as_str_type = context.function_type(
+        context.void_type().into(),
+        vec![context.ptr_type().into(), context.ptr_type().into()],
+    );
+    let string_as_str_fn = module.add_function(string_as_str_type.clone(), "string_as_str", None);
+    string_as_str_fn
+        .as_function()
+        .add_param_attr(0, Attribute::StructReturn(fat_ptr_type.clone().into()));
+    let string_index = crate::semantics::value::ValueIndexKind::Impl {
+        ty: ResolvedTy {
+            names: Some((FullName(vec![Symbol::from("String")]), None)),
+            kind: ResolvedTyKind::Placeholder,
+        },
+        for_trait: None,
+    };
+    value_indexes.insert(
+        ValueIndex::Place(PlaceValueIndex {
+            name: "as_str".into(),
+            kind: string_index.clone(),
+        }),
+        ValuePtrContainer {
+            value_ptr: string_as_str_fn.into(),
+            kind: value::ContainerKind::Ptr(string_as_str_type.into()),
+        },
+    );
+
+    let string_len_type =
+        context.function_type(context.i32_type().into(), vec![context.ptr_type().into()]);
+    let string_len_fn = module.add_function(string_len_type.clone(), "string_len", None);
+    value_indexes.insert(
+        ValueIndex::Place(PlaceValueIndex {
+            name: "len".into(),
+            kind: string_index,
+        }),
+        ValuePtrContainer {
+            value_ptr: string_len_fn.into(),
+            kind: value::ContainerKind::Ptr(string_len_type.into()),
+        },
+    );
+
+    let i32_to_string_type = context.function_type(
+        context.void_type().into(),
+        vec![context.ptr_type().into(), context.ptr_type().into()],
+    );
+    let u_to_string_fn = module.add_function(i32_to_string_type.clone(), "to_string", None);
+    u_to_string_fn
+        .as_function()
+        .add_param_attr(0, Attribute::StructReturn(string_type.clone().into()));
     value_indexes.insert(
         ValueIndex::Place(PlaceValueIndex {
             name: "to_string".into(),
@@ -377,7 +406,6 @@ fn add_preludes(
             kind: value::ContainerKind::Ptr(i32_to_string_type.clone().into()),
         },
     );
-
     value_indexes.insert(
         ValueIndex::Place(PlaceValueIndex {
             name: "to_string".into(),
@@ -396,4 +424,18 @@ fn add_preludes(
             kind: value::ContainerKind::Ptr(i32_to_string_type.clone().into()),
         },
     );
+
+    let string_plus_type = context.function_type(
+        context.void_type().into(),
+        vec![
+            context.ptr_type().into(),
+            context.ptr_type().into(),
+            context.ptr_type().into(),
+            context.i32_type().into(),
+        ],
+    );
+    let string_plus_fn = module.add_function(string_plus_type.clone(), "string_plus", None);
+    string_plus_fn
+        .as_function()
+        .add_param_attr(0, Attribute::StructReturn(string_type.clone().into()));
 }

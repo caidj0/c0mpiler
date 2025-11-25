@@ -16,14 +16,6 @@ struct FatPtr {
 
 typedef struct String String;
 
-// String to_string(char *raw) {
-//     uint32_t length = strlen(raw);
-//     char *data = malloc(length + 1);
-//     strcpy(data, raw);
-//     String ret = {length, data};
-//     return ret;
-// }
-
 void to_string(String *string, uint32_t *self) {
   char *buffer = malloc(16);
   uint32_t length = sprintf(buffer, "%d", *self);
@@ -72,3 +64,10 @@ int32_t getInt() {
   scanf("%d", &n);
   return n;
 }
+
+void string_as_str(struct FatPtr *ptr, String *self) {
+  ptr->data = self->data;
+  ptr->length = self->length;
+}
+
+uint32_t string_len(String *self) { return self->length; }
