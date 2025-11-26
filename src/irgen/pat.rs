@@ -23,9 +23,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
 
         let ty = self.get_value_type(&right_ptr);
         let value = if matches!(by_ref, ByRef::Yes(_)) {
-            let ptr = self
-                .builder
-                .build_alloca(self.context.ptr_type().into(), Some(&ident.symbol.0));
+            let ptr = self.build_alloca(self.context.ptr_type().into(), Some(&ident.symbol.0));
             self.builder
                 .build_store(self.get_value_ptr(right_ptr).value_ptr, ptr.clone().into());
             ValuePtrContainer {
@@ -33,7 +31,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
                 kind: crate::irgen::value::ContainerKind::Ptr(self.context.ptr_type().into()),
             }
         } else {
-            let ptr = self.builder.build_alloca(ty.clone(), Some(&ident.symbol.0));
+            let ptr = self.build_alloca(ty.clone(), Some(&ident.symbol.0));
             self.store_to_ptr(ptr.clone().into(), right_ptr);
 
             ValuePtrContainer {

@@ -159,7 +159,9 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         let bb = self.context.append_basic_block(&fn_ptr, "entry");
         let loc = self.builder.get_location();
-        self.builder.locate(fn_ptr.clone(), bb);
+        let alloca_loc = self.alloca_builder.get_location();
+        self.builder.locate_end(fn_ptr.clone(), bb.clone());
+        self.alloca_builder.locate_front(fn_ptr.clone(), bb);
 
         let mut args_iter = args.iter();
         for (arg_type, param) in zip(arg_types, &decl.inputs) {
@@ -209,6 +211,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         }
 
         self.builder.set_location(loc);
+        self.alloca_builder.set_location(alloca_loc);
     }
 
     fn visit_mod_item<'tmp>(
@@ -391,7 +394,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         let ty = self.transform_interned_ty_faithfully(intern);
 
         let inner_ty = ty.as_array().unwrap().0.clone();
-        let value = self.builder.build_alloca(ty.clone(), None);
+        let value = self.build_alloca(ty.clone(), None);
 
         for (i, expr) in exprs.iter().enumerate() {
             let v = self.visit_expr(expr, extra)?;
@@ -460,7 +463,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         if let Some(attr) = is_aggregate {
             let ty = attr.into_struct_return().unwrap();
-            let ptr = self.builder.build_alloca(ty.clone(), None);
+            let ptr = self.build_alloca(ty.clone(), None);
             self.builder.build_call(
                 func_ptr,
                 once(ptr.clone().into()).chain(calling_args).collect(),
@@ -539,7 +542,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         if let Some(attr) = is_aggregate {
             let ty = attr.into_struct_return().unwrap();
-            let ptr = self.builder.build_alloca(ty.clone(), None);
+            let ptr = self.build_alloca(ty.clone(), None);
             self.builder.build_call(
                 func_ptr,
                 once(ptr.clone().into()).chain(calling_args).collect(),
@@ -572,7 +575,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
             _ => {
                 let intern = self.analyzer.get_expr_type(&extra.self_id);
                 let ty = self.transform_interned_ty_faithfully(intern);
-                let p = self.builder.build_alloca(ty.clone(), None);
+                let p = self.build_alloca(ty.clone(), None);
                 for (i, expr) in exprs.iter().enumerate() {
                     let expr_value = self.visit_expr(expr, extra)?;
                     let gep = self.builder.build_getelementptr(
@@ -756,7 +759,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         let next_bb: BasicBlockPtr;
 
         self.builder
-            .locate(current_function.clone(), take_bb.clone());
+            .locate_end(current_function.clone(), take_bb.clone());
         let take_value = self
             .visit_block_expr(
                 body,
@@ -772,17 +775,18 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
             let else_bb = self.context.append_basic_block(&current_function, ".else");
             next_bb = self.context.append_basic_block(&current_function, ".next");
             self.try_build_branch(next_bb.clone(), &body.id);
-            self.builder.locate(current_function.clone(), current_bb);
+            self.builder
+                .locate_end(current_function.clone(), current_bb);
             self.try_build_conditional_branch(cond_raw, take_bb.clone(), else_bb.clone(), &cond.id);
             self.builder
-                .locate(current_function.clone(), else_bb.clone());
+                .locate_end(current_function.clone(), else_bb.clone());
             let else_value = self
                 .visit_expr(else_expr, extra)
                 .map(|x| self.get_value_presentation(x));
             let new_else_bb = self.builder.get_current_basic_block().clone();
             self.try_build_branch(next_bb.clone(), &else_expr.id);
             self.builder
-                .locate(current_function.clone(), next_bb.clone());
+                .locate_end(current_function.clone(), next_bb.clone());
             if !self
                 .analyzer
                 .get_expr_result(&extra.self_id)
@@ -817,10 +821,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         } else {
             next_bb = self.context.append_basic_block(&current_function, ".next");
             self.try_build_branch(next_bb.clone(), &body.id);
-            self.builder.locate(current_function.clone(), current_bb);
+            self.builder
+                .locate_end(current_function.clone(), current_bb);
             self.try_build_conditional_branch(cond_raw, take_bb, next_bb.clone(), &cond.id);
             self.builder
-                .locate(current_function.clone(), next_bb.clone());
+                .locate_end(current_function.clone(), next_bb.clone());
             None
         }
     }
@@ -838,7 +843,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         self.builder.build_branch(cond_bb.clone());
         self.builder
-            .locate(current_function.clone(), cond_bb.clone());
+            .locate_end(current_function.clone(), cond_bb.clone());
         let cond_value = self.visit_expr(cond, extra)?;
         self.try_build_conditional_branch(
             self.get_raw_value(cond_value),
@@ -847,7 +852,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
             &cond.id,
         );
 
-        self.builder.locate(current_function.clone(), body_bb);
+        self.builder.locate_end(current_function.clone(), body_bb);
         let body_value = self.visit_block_expr(
             body,
             ExprExtra {
@@ -863,7 +868,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         debug_assert!(body_value.is_none());
         self.try_build_branch(cond_bb.clone(), &body.id);
 
-        self.builder.locate(current_function, next_bb.clone());
+        self.builder.locate_end(current_function, next_bb.clone());
 
         None
     }
@@ -894,8 +899,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
             None
         } else {
             Some(
-                self.builder
-                    .build_alloca(self.context.ptr_type().into(), None)
+                self.build_alloca(self.context.ptr_type().into(), None)
                     .into(),
             )
         };
@@ -903,7 +907,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         self.builder.build_branch(loop_bb.clone());
 
         self.builder
-            .locate(current_function.clone(), loop_bb.clone());
+            .locate_end(current_function.clone(), loop_bb.clone());
         self.visit_block_expr(
             body,
             ExprExtra {
@@ -920,7 +924,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         self.try_build_branch(loop_bb.clone(), &body.id);
 
         self.builder
-            .locate(current_function.clone(), next_bb.clone());
+            .locate_end(current_function.clone(), next_bb.clone());
 
         match loop_value {
             Some(loop_value) => {
@@ -1195,7 +1199,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         let intern = self.analyzer.get_expr_type(&extra.self_id);
         let ty = self.transform_interned_ty_faithfully(intern);
 
-        let value = self.builder.build_alloca(ty.clone(), None);
+        let value = self.build_alloca(ty.clone(), None);
         let indexes = self
             .analyzer
             .get_expr_value(&extra.self_id)
@@ -1233,7 +1237,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         let intern = self.analyzer.get_expr_type(&extra.self_id);
         let ty = self.transform_interned_ty_faithfully(intern);
         let ArrayType(inner_ty, repeat_num) = ty.as_array().unwrap().clone();
-        let value = self.builder.build_alloca(ty.clone(), None);
+        let value = self.build_alloca(ty.clone(), None);
 
         let current_function = self.builder.get_current_function().clone();
         let repeat_loop_header_bb = self
@@ -1245,9 +1249,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         let repeat_loop_next_bb = self
             .context
             .append_basic_block(&current_function, ".repeat_loop_next");
-        let repeat_counter = self
-            .builder
-            .build_alloca(self.context.i32_type().into(), Some(".repeat_counter"));
+        let repeat_counter =
+            self.build_alloca(self.context.i32_type().into(), Some(".repeat_counter"));
         self.builder.build_store(
             self.context.get_i32(0).into(),
             repeat_counter.clone().into(),
@@ -1256,7 +1259,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         // header
         self.builder
-            .locate(current_function.clone(), repeat_loop_header_bb.clone());
+            .locate_end(current_function.clone(), repeat_loop_header_bb.clone());
         let repeat_counter_v = self.builder.build_load(
             self.context.i32_type().into(),
             repeat_counter.clone().into(),
@@ -1276,7 +1279,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         // body
         self.builder
-            .locate(current_function.clone(), repeat_loop_body_bb.clone());
+            .locate_end(current_function.clone(), repeat_loop_body_bb.clone());
         let ith_ptr = self.builder.build_getelementptr(
             inner_ty,
             value.clone().into(),
@@ -1296,7 +1299,8 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         self.builder.build_branch(repeat_loop_header_bb.clone());
 
         // next
-        self.builder.locate(current_function, repeat_loop_next_bb);
+        self.builder
+            .locate_end(current_function, repeat_loop_next_bb);
 
         Some(ValuePtrContainer {
             value_ptr: value.into(),

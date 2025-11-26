@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::hash::Hash;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
@@ -243,7 +244,7 @@ impl ICmpCode {
 
 #[derive(Debug)]
 pub struct BasicBlock {
-    pub instructions: RefCell<Vec<InstructionPtr>>,
+    pub instructions: RefCell<VecDeque<InstructionPtr>>,
 }
 
 impl Hash for BasicBlock {

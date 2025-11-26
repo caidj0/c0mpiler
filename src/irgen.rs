@@ -10,7 +10,12 @@ use std::collections::HashMap;
 use crate::{
     ast::{Crate, NodeId, Symbol},
     impossible,
-    ir::{LLVMBuilder, LLVMContext, LLVMModule, attribute::Attribute, ir_value::ConstantPtr},
+    ir::{
+        LLVMBuilder, LLVMContext, LLVMModule,
+        attribute::Attribute,
+        ir_type::TypePtr,
+        ir_value::{ConstantPtr, InstructionPtr},
+    },
     irgen::value::ValuePtrContainer,
     semantics::{
         analyzer::SemanticAnalyzer,
@@ -24,6 +29,7 @@ use crate::{
 pub struct IRGenerator<'ast, 'analyzer> {
     pub(crate) context: LLVMContext,
     pub(crate) builder: LLVMBuilder,
+    pub(crate) alloca_builder: LLVMBuilder,
     pub(crate) module: LLVMModule,
 
     pub(crate) analyzer: &'analyzer SemanticAnalyzer<'ast>,
@@ -35,6 +41,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
     pub fn new(analyzer: &'analyzer SemanticAnalyzer<'ast>) -> Self {
         let mut context = LLVMContext::default();
         let mut builder = context.create_builder();
+        let alloca_builder = context.create_builder();
         let mut module = context.create_module("crate");
         let mut value_indexes = HashMap::default();
 
@@ -43,6 +50,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
         let mut generator = Self {
             context,
             builder,
+            alloca_builder,
             module,
             analyzer,
             value_indexes,
@@ -287,6 +295,10 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
             }
         }
     }
+
+    pub fn build_alloca(&self, ty: TypePtr, name: Option<&str>) -> InstructionPtr {
+        self.alloca_builder.build_alloca(ty, name)
+    }
 }
 
 fn add_preludes(
@@ -312,7 +324,7 @@ fn add_preludes(
     );
     let str_len_fn = module.add_function(str_len_type.clone(), "str.len", None);
     let bb = context.append_basic_block(&str_len_fn, "entry");
-    builder.locate(str_len_fn.clone(), bb);
+    builder.locate_end(str_len_fn.clone(), bb);
     builder.build_return(Some(
         str_len_fn
             .as_function()

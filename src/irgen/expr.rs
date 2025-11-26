@@ -32,7 +32,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
         let value2 = self.visit_expr(expr2, extra)?;
         if SemanticAnalyzer::is_string_type(&self_probe) {
             let string_ty: TypePtr = self.context.get_named_struct_type("String").unwrap().into();
-            let ret = self.builder.build_alloca(string_ty.clone(), None);
+            let ret = self.build_alloca(string_ty.clone(), None);
 
             let func = self.module.get_function("string_plus").unwrap();
             let args = once(ret.clone().into())
@@ -201,13 +201,14 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
             _ => impossible!(),
         };
 
-        self.builder.locate(current_fn.clone(), right_bb.clone());
+        self.builder
+            .locate_end(current_fn.clone(), right_bb.clone());
         let value2 = self.visit_expr(expr2, extra)?;
         let raw2 = self.get_raw_value(value2);
         let new_right_bb = self.builder.get_current_basic_block().clone();
         self.try_build_branch(next_bb.clone(), &expr2.id);
 
-        self.builder.locate(current_fn.clone(), next_bb.clone());
+        self.builder.locate_end(current_fn.clone(), next_bb.clone());
         let value = self.builder.build_phi(
             self.context.i1_type().into(),
             vec![(raw1, current_bb), (raw2, new_right_bb)],

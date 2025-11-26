@@ -106,7 +106,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
             );
 
             let fat_ptr_type = self.fat_ptr_type();
-            let allocated = self.builder.build_alloca(fat_ptr_type.clone().into(), None);
+            let allocated = self.build_alloca(fat_ptr_type.clone().into(), None);
             self.builder
                 .build_store(raw.value_ptr, allocated.clone().into());
             let second = self.builder.build_getelementptr(
@@ -125,7 +125,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
                 kind: ContainerKind::Ptr(fat_ptr_type.into()),
             }
         } else {
-            let allocated = self.builder.build_alloca(raw_type.clone(), None);
+            let allocated = self.build_alloca(raw_type.clone(), None);
             let inner_type = raw_type.clone();
             self.builder
                 .build_store(raw.value_ptr, allocated.clone().into());

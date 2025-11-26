@@ -419,44 +419,80 @@ impl LLVMContextImpl {
     }
 }
 
-pub struct BuilderLocation(Option<(FunctionPtr, BasicBlockPtr)>);
+#[derive(Debug, Clone, Copy)]
+pub enum BuilderInsertPlace {
+    FRONT,
+    END,
+}
+
+#[derive(Debug, Clone)]
+pub struct BuilderLocation {
+    fn_ptr: FunctionPtr,
+    bb_ptr: BasicBlockPtr,
+    insert_place: BuilderInsertPlace,
+}
 
 #[derive(Debug)]
 pub struct LLVMBuilder {
     ctx_impl: Rc<RefCell<LLVMContextImpl>>,
-    target_block: Option<(FunctionPtr, BasicBlockPtr)>,
+    target_block: Option<BuilderLocation>,
 }
 
 impl LLVMBuilder {
-    pub fn get_location(&self) -> BuilderLocation {
-        BuilderLocation(self.target_block.clone())
+    pub fn get_location(&self) -> Option<BuilderLocation> {
+        self.target_block.clone()
     }
 
-    pub fn set_location(&mut self, location: BuilderLocation) {
-        self.target_block = location.0;
+    pub fn set_location(&mut self, location: Option<BuilderLocation>) {
+        self.target_block = location;
     }
 
     pub fn get_current_function(&self) -> &FunctionPtr {
-        &self.target_block.as_ref().unwrap().0
+        &self.target_block.as_ref().unwrap().fn_ptr
     }
 
     pub fn get_current_basic_block(&self) -> &BasicBlockPtr {
-        &self.target_block.as_ref().unwrap().1
+        &self.target_block.as_ref().unwrap().bb_ptr
     }
 
-    pub fn locate(&mut self, target_function: FunctionPtr, target_block: BasicBlockPtr) {
-        self.target_block = Some((target_function, target_block))
+    pub fn locate_end(&mut self, target_function: FunctionPtr, target_block: BasicBlockPtr) {
+        self.target_block = Some(BuilderLocation {
+            fn_ptr: target_function,
+            bb_ptr: target_block,
+            insert_place: BuilderInsertPlace::END,
+        });
+    }
+
+    pub fn locate_front(&mut self, target_function: FunctionPtr, target_block: BasicBlockPtr) {
+        self.target_block = Some(BuilderLocation {
+            fn_ptr: target_function,
+            bb_ptr: target_block,
+            insert_place: BuilderInsertPlace::FRONT,
+        });
     }
 
     fn insert(&self, ins: InstructionPtr) -> InstructionPtr {
-        let bb = self.target_block.as_ref().unwrap().1.as_basic_block();
+        let builder_location = self.target_block.as_ref().unwrap();
+        let bb = builder_location.bb_ptr.as_basic_block();
         let mut borrow_mut = bb.instructions.borrow_mut();
-        if let Some(last) = borrow_mut.last()
-            && last.as_instruction().is_terminate()
-        {
-            panic!("The basic block has been terminated!");
+
+        match builder_location.insert_place {
+            BuilderInsertPlace::FRONT => {
+                if !borrow_mut.is_empty() && ins.as_instruction().is_terminate() {
+                    panic!("Can't insert terminator at the front of basic block!");
+                }
+                borrow_mut.push_front(ins.clone())
+            }
+            BuilderInsertPlace::END => {
+                if let Some(last) = borrow_mut.back()
+                    && last.as_instruction().is_terminate()
+                {
+                    panic!("The basic block has been terminated!");
+                }
+                borrow_mut.push_back(ins.clone())
+            }
         }
-        borrow_mut.push(ins.clone());
+
         for x in &ins.as_instruction().operands {
             x.add_user(&ins);
         }
@@ -1023,7 +1059,7 @@ fn foo() {
 
     let bb = context.append_basic_block(&func, "entry");
 
-    builder.locate(func.clone(), bb);
+    builder.locate_end(func.clone(), bb);
 
     let addee_ptr = builder.build_getelementptr(
         struct_type.clone().into(),

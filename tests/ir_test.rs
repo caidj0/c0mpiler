@@ -168,8 +168,6 @@ fn run_test_cases(
             .args([
                 &ir_file,
                 "tests/prelude.c",
-                // "tests/prelude.ll",
-                "-O2",
                 "-o",
                 &format!("target/tmp/{name}"),
             ])
