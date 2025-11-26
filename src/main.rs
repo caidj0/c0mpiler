@@ -1,4 +1,4 @@
-use std::fs;
+use std::io::{Read, stdin};
 
 use c0mpiler::{
     ast::{Crate, Eatable},
@@ -7,18 +7,24 @@ use c0mpiler::{
     semantics::analyzer::SemanticAnalyzer,
 };
 
-fn main() {
-    let test_str = fs::read_to_string("testcases/IR/src/array1/array1.rx").unwrap();
+const PRELUDE: &str = include_str!("../tests/prelude.c");
 
-    let lexer = Lexer::new(&test_str);
+fn main() {
+    let mut program = String::new();
+    stdin().read_to_string(&mut program).unwrap();
+
+    let lexer = Lexer::new(&program);
     let buffer = TokenBuffer::new(lexer).unwrap();
     let mut iter = buffer.iter();
     let krate = Crate::eat(&mut iter).unwrap();
-    let (analyzer, result) = SemanticAnalyzer::visit(&krate);
-    result.unwrap();
 
-    let mut generator = IRGenerator::new(&analyzer);
-    generator.visit(&krate);
-    let ir = generator.print();
-    println!("{ir}");
+    let (analyzer, semantic_result) = SemanticAnalyzer::visit(&krate);
+    semantic_result.unwrap();
+
+    let mut ir_gen = IRGenerator::new(&analyzer);
+    ir_gen.visit(&krate);
+    let ir = ir_gen.print();
+
+    print!("{}", ir);
+    eprintln!("{}", PRELUDE);
 }

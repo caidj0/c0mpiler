@@ -1,8 +1,14 @@
-#include <assert.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+typedef unsigned int uint32_t;
+typedef int int32_t;
+typedef unsigned long size_t;
+
+// External function declarations
+extern int sprintf(char *str, const char *format, ...);
+extern int printf(const char *format, ...);
+extern void *malloc(size_t size);
+extern void *realloc(void *ptr, size_t size);
+extern int scanf(const char *format, ...);
+extern int getchar(void);
 
 struct String {
   char *data;
@@ -45,14 +51,17 @@ void printInt(int32_t n) { printf("%d", n); }
 void printlnInt(int32_t n) { printf("%d\n", n); }
 
 void getString(String *string) {
-  char *buffer = NULL;
-  size_t n = 0;
+  size_t capacity = 16;
+  char *buffer = malloc(capacity);
+  uint32_t length = 0;
+  int c;
 
-  uint32_t length = getline(&buffer, &n, stdin);
-  assert(length != -1);
-  if (length > 0 && buffer[length - 1] == '\n') {
-    buffer[length - 1] = 0;
-    length--;
+  while ((c = getchar()) != '\n' && c != -1) {
+    if (length >= capacity) {
+      capacity *= 2;
+      char *new_buffer = realloc(buffer, capacity);
+    }
+    buffer[length++] = (char)c;
   }
 
   string->data = buffer;
