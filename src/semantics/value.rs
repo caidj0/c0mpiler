@@ -173,7 +173,8 @@ impl<'ast> SemanticAnalyzer<'ast> {
         symbol: &Symbol,
     ) -> Result<Option<PlaceValueIndex>, SemanticError> {
         let instance = self.probe_type_instance(*ty).unwrap();
-        let impls = self.get_impls_by_instance_mut(&instance);
+        let remove_self_instance = instance.remove_implicit_self(None);
+        let impls = self.get_impls_by_instance_mut(&remove_self_instance);
         if impls.inherent.values.contains_key(symbol) {
             return Ok(Some(PlaceValueIndex {
                 kind: ValueIndexKind::Impl {
@@ -221,7 +222,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
                 self.get_scope(*scope_id).values.get(&index.name).unwrap()
             }
             ValueIndexKind::Impl { ty, for_trait } => {
-                let impls = self.get_impls_by_instance(ty).unwrap();
+                let impls = self
+                    .get_impls_by_instance(&ty.remove_implicit_self(None))
+                    .unwrap();
                 let impl_info = if let Some(i) = for_trait {
                     impls.traits.get(i).unwrap()
                 } else {

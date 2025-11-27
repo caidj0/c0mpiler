@@ -18,7 +18,7 @@ use crate::{
     semantics::{
         item::AssociatedInfo,
         resolved_ty::ResolvedTy,
-        value::{FnAstRefInfo, PlaceValueIndex, ValueIndex},
+        value::{FnAstRefInfo, PlaceValueIndex, ValueIndex, ValueIndexKind},
         visitor::Visitor,
     },
 };
@@ -189,6 +189,9 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
             );
         }
 
+        let self_ty = extra
+            .associated_info
+            .map(|info| self.analyzer.probe_type_instance(info.ty.into()).unwrap());
         let value = self.visit_block_expr(
             body.as_ref().unwrap(),
             ExprExtra {
@@ -196,6 +199,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
                 self_id: body.as_ref().unwrap().id,
                 cycle_info: None,
                 ret_ptr,
+                self_ty: self_ty.as_ref(),
             },
         );
 
@@ -498,6 +502,15 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         let analyzer_value = self.analyzer.get_expr_value(&extra.self_id);
         let (level, derefed_ty, index, self_by_ref) = analyzer_value.kind.as_method_call().unwrap();
+        let mut remove_self_index = index.clone();
+        if let PlaceValueIndex {
+            name: _,
+            kind: ValueIndexKind::Impl { ty, for_trait: _ },
+        } = &mut remove_self_index
+        {
+            *ty = ty.remove_implicit_self(extra.self_ty);
+        }
+
         let mut self_by_ref = *self_by_ref;
         let receiver_ty = if self_by_ref {
             self.transform_ty_faithfully(&ResolvedTy::ref_type(
@@ -517,7 +530,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
 
         let derefed_value = self.deref_impl(receiver_value, level, &receiver_ty, self_by_ref);
 
-        let query_result = self.get_value_by_index(&ValueIndex::Place(index.clone()));
+        let query_result = self.get_value_by_index(&ValueIndex::Place(remove_self_index));
 
         let ValueKind::Normal(fn_value) = query_result else {
             return Some(self.special_method_call(query_result));

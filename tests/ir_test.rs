@@ -41,7 +41,7 @@ fn semantic_1() {
 
 #[test]
 fn my_ir() {
-    let escape_list = ["trait_sum"];
+    let escape_list = [];
     let case_path = "testcases/IR";
 
     run_test_cases(&escape_list, case_path, true, false);

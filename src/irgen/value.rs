@@ -174,7 +174,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
             ValueKind::Normal(
                 self.value_indexes
                     .get(index)
-                    .unwrap_or_else(|| panic!("{:?}", index))
+                    .unwrap_or_else(|| panic!("Can't get value by index: {:?}", index))
                     .clone(),
             )
         }

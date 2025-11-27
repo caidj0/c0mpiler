@@ -1,0 +1,54 @@
+// trait 与循环结合
+struct ArrayWrapper {
+    data: [i32; 5],
+    len: i32,
+}
+
+trait Iterable {
+    fn length(&self) -> i32;
+    fn get(&self, idx: i32) -> i32;
+    
+    fn sum(&self) -> i32 {
+        let mut total: i32 = 0;
+        let mut i: i32 = 0;
+        while (i < self.length()) {
+            total += self.get(i);
+            i += 1;
+        }
+        total
+    }
+    
+    fn max(&self) -> i32 {
+        let mut m: i32 = self.get(0);
+        let mut i: i32 = 1;
+        while (i < self.length()) {
+            let cur: i32 = self.get(i);
+            if (cur > m) {
+                m = cur;
+            }
+            i += 1;
+        }
+        m
+    }
+}
+
+impl Iterable for ArrayWrapper {
+    fn length(&self) -> i32 {
+        self.len
+    }
+    
+    fn get(&self, idx: i32) -> i32 {
+        self.data[idx as usize]
+    }
+}
+
+fn main() {
+    let arr: ArrayWrapper = ArrayWrapper {
+        data: [3, 1, 4, 1, 5],
+        len: 5,
+    };
+    printlnInt(arr.sum());
+    printlnInt(arr.max());
+    printlnInt(arr.length());
+    exit(0);
+}

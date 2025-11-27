@@ -1,0 +1,57 @@
+// trait 默认方法中调用另一个 trait 方法
+struct Rect {
+    w: i32,
+    h: i32,
+}
+
+trait Shape {
+    fn width(&self) -> i32;
+    fn height(&self) -> i32;
+    
+    fn perimeter(&self) -> i32 {
+        (self.width() + self.height()) * 2
+    }
+    
+    fn area(&self) -> i32 {
+        self.width() * self.height()
+    }
+    
+    fn is_square(&self) -> bool {
+        self.width() == self.height()
+    }
+}
+
+impl Shape for Rect {
+    fn width(&self) -> i32 {
+        self.w
+    }
+    
+    fn height(&self) -> i32 {
+        self.h
+    }
+}
+
+fn main() {
+    let r1: Rect = Rect { w: 3, h: 4 };
+    let r2: Rect = Rect { w: 5, h: 5 };
+    
+    printlnInt(r1.perimeter());
+    printlnInt(r1.area());
+    
+    printlnInt(r2.perimeter());
+    printlnInt(r2.area());
+    
+    if (r1.is_square()) {
+        printlnInt(1);
+    } else {
+        printlnInt(0);
+    }
+    
+    if (r2.is_square()) {
+        printlnInt(1);
+    } else {
+        printlnInt(0);
+    }
+    
+    exit(0);
+}

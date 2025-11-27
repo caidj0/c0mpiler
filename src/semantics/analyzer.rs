@@ -682,7 +682,7 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                     associated_info: Some(AssociatedInfo {
                         is_trait: true,
                         ty,
-                        for_trait: None,
+                        for_trait: Some(ty),
                     }),
                 },
             )?;
@@ -746,9 +746,8 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
                 let (&ty, &for_trait) = self.get_scope(self_id).kind.as_impl().unwrap();
                 if let Some(trait_ty) = for_trait {
                     let trait_info = &self
-                        .get_impls(&trait_ty)
-                        .ok_or(make_semantic_error!(UnknownAssociateItem).set_span(&span))?
-                        .inherent;
+                        .get_impl_for_trait(&trait_ty, &trait_ty)
+                        .ok_or(make_semantic_error!(UnknownAssociateItem).set_span(&span))?;
                     let mut names: HashSet<&Symbol> = trait_info.values.keys().collect();
 
                     let self_impl = self.get_impl_for_trait(&ty, &trait_ty).unwrap();

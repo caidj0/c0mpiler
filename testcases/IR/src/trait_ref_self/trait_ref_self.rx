@@ -1,0 +1,38 @@
+// trait 方法返回 &self
+struct Data {
+    a: i32,
+    b: i32,
+}
+
+trait Chainable {
+    fn first(&self) -> &Self;
+    fn second(&self) -> &Self;
+    fn get_a(&self) -> i32;
+    fn get_b(&self) -> i32;
+}
+
+impl Chainable for Data {
+    fn first(&self) -> &Self {
+        self
+    }
+    
+    fn second(&self) -> &Self {
+        self
+    }
+    
+    fn get_a(&self) -> i32 {
+        self.a
+    }
+    
+    fn get_b(&self) -> i32 {
+        self.b
+    }
+}
+
+fn main() {
+    let d: Data = Data { a: 100, b: 200 };
+    let r: &Data = d.first();
+    printlnInt(r.get_a());
+    printlnInt(r.second().get_b());
+    exit(0);
+}

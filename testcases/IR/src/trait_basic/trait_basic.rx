@@ -1,0 +1,22 @@
+// 基本 trait 方法调用
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+trait Printable {
+    fn print_value(&self);
+}
+
+impl Printable for Point {
+    fn print_value(&self) {
+        printlnInt(self.x);
+        printlnInt(self.y);
+    }
+}
+
+fn main() {
+    let p: Point = Point { x: 10, y: 20 };
+    p.print_value();
+    exit(0);
+}

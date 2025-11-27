@@ -1,0 +1,29 @@
+// trait 默认方法被覆盖
+struct Box {
+    val: i32,
+}
+
+trait Container {
+    fn value(&self) -> i32;
+    
+    fn doubled(&self) -> i32 {
+        self.value() * 2
+    }
+}
+
+impl Container for Box {
+    fn value(&self) -> i32 {
+        self.val
+    }
+    
+    fn doubled(&self) -> i32 {
+        self.val * 10
+    }
+}
+
+fn main() {
+    let b: Box = Box { val: 5 };
+    printlnInt(b.value());
+    printlnInt(b.doubled());
+    exit(0);
+}

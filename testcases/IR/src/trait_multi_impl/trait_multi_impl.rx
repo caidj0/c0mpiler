@@ -1,0 +1,32 @@
+// 多个 struct 实现同一个 trait
+struct Circle {
+    radius: i32,
+}
+
+struct Square {
+    side: i32,
+}
+
+trait Area {
+    fn area(&self) -> i32;
+}
+
+impl Area for Circle {
+    fn area(&self) -> i32 {
+        self.radius * self.radius * 3
+    }
+}
+
+impl Area for Square {
+    fn area(&self) -> i32 {
+        self.side * self.side
+    }
+}
+
+fn main() {
+    let c: Circle = Circle { radius: 4 };
+    let s: Square = Square { side: 5 };
+    printlnInt(c.area());
+    printlnInt(s.area());
+    exit(0);
+}

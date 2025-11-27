@@ -77,6 +77,44 @@ pub struct ResolvedTy<F: TypePtrFamily = InternFamily> {
     pub kind: ResolvedTyKind<F::Ptr<ResolvedTy<F>>>,
 }
 
+impl ResolvedTyInstance {
+    pub(crate) fn remove_implicit_self(&self, alter: Option<&ResolvedTyInstance>) -> Self {
+        ResolvedTyInstance {
+            names: self.names.clone(),
+            kind: match &self.kind {
+                ResolvedTyKind::Ref(inner, ref_mutability) => ResolvedTyKind::Ref(
+                    Box::new(inner.remove_implicit_self(alter)),
+                    *ref_mutability,
+                ),
+                ResolvedTyKind::Tup(items) => ResolvedTyKind::Tup(
+                    items
+                        .iter()
+                        .map(|x| Box::new(x.remove_implicit_self(alter)))
+                        .collect(),
+                ),
+                ResolvedTyKind::Array(inner, len) => {
+                    ResolvedTyKind::Array(Box::new(inner.remove_implicit_self(alter)), *len)
+                }
+                ResolvedTyKind::Fn(ret_ty, items) => ResolvedTyKind::Fn(
+                    Box::new(ret_ty.remove_implicit_self(alter)),
+                    items
+                        .iter()
+                        .map(|x| Box::new(x.remove_implicit_self(alter)))
+                        .collect(),
+                ),
+                ResolvedTyKind::ImplicitSelf(inner) => {
+                    if let Some(alter) = alter {
+                        return alter.clone();
+                    } else {
+                        return inner.as_ref().clone();
+                    }
+                }
+                _ => self.kind.clone(),
+            },
+        }
+    }
+}
+
 ////////// Rust 已经 Derive 不出来以下 Trait 了
 impl Debug for ResolvedTy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -82,5 +82,37 @@
     {
         "name": "trait_sum",
         "compileexitcode": 0
+    },
+    {
+        "name": "trait_basic",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_default",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_override",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_multi_impl",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_multi_trait",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_ref_self",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_chain",
+        "compileexitcode": 0
+    },
+    {
+        "name": "trait_loop",
+        "compileexitcode": 0
     }
 ]

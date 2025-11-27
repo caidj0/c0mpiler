@@ -1,0 +1,42 @@
+// 一个 struct 实现多个 trait
+struct Number {
+    val: i32,
+}
+
+trait Add {
+    fn add(&self, other: i32) -> i32;
+}
+
+trait Mul {
+    fn mul(&self, other: i32) -> i32;
+}
+
+trait Sub {
+    fn sub(&self, other: i32) -> i32;
+}
+
+impl Add for Number {
+    fn add(&self, other: i32) -> i32 {
+        self.val + other
+    }
+}
+
+impl Mul for Number {
+    fn mul(&self, other: i32) -> i32 {
+        self.val * other
+    }
+}
+
+impl Sub for Number {
+    fn sub(&self, other: i32) -> i32 {
+        self.val - other
+    }
+}
+
+fn main() {
+    let n: Number = Number { val: 10 };
+    printlnInt(n.add(5));
+    printlnInt(n.mul(3));
+    printlnInt(n.sub(2));
+    exit(0);
+}

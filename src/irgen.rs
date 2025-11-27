@@ -281,16 +281,14 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
                         false,
                         name.clone().concat(s.clone()),
                     );
-                    self.value_indexes.insert(
-                        ValueIndex::Place(PlaceValueIndex {
-                            name: s.clone(),
-                            kind: crate::semantics::value::ValueIndexKind::Impl {
-                                ty: resolved_ty.clone(),
-                                for_trait: Some(trait_ty.clone()),
-                            },
-                        }),
-                        v,
-                    );
+                    let index = ValueIndex::Place(PlaceValueIndex {
+                        name: s.clone(),
+                        kind: crate::semantics::value::ValueIndexKind::Impl {
+                            ty: resolved_ty.clone(),
+                            for_trait: Some(trait_ty.clone()),
+                        },
+                    });
+                    self.value_indexes.insert(index, v);
                 }
             }
         }
