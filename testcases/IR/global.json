@@ -1,5 +1,13 @@
 [
     {
+        "name": "assignee1",
+        "compileexitcode": 0
+    },
+    {
+        "name": "const1",
+        "compileexitcode": 0
+    },
+    {
         "name": "print1",
         "compileexitcode": 0
     },

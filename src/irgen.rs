@@ -151,32 +151,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
 
         match &value.kind {
             Constant(inner) => {
-                let probe = self.analyzer.probe_type(value.ty).unwrap();
-                use crate::semantics::value::ConstantValue::*;
-                let init: ConstantPtr = match inner {
-                    ConstantInt(i) => {
-                        use crate::semantics::resolved_ty::BuiltInTyKind::*;
-
-                        match probe.kind {
-                            ResolvedTyKind::BuiltIn(builtin) => match builtin {
-                                Bool => self.context.get_i1(*i != 0),
-                                Char => self.context.get_i8(*i as u8),
-                                I32 | ISize | U32 | USize => self.context.get_i32(*i),
-                                Str => impossible!(),
-                            }
-                            .into(),
-                            ResolvedTyKind::Enum => self.context.get_i32(*i).into(),
-                            _ => impossible!(),
-                        }
-                    }
-                    ConstantString(string) => self.context.get_string(string).into(),
-                    ConstantArray(..) => todo!(),
-                    Unit | UnitStruct => self
-                        .context
-                        .get_struct(self.context.struct_type(vec![], false), vec![])
-                        .into(),
-                    UnEval(_) | Placeholder => impossible!(),
-                };
+                let init = self.create_constant_initialization(inner, value.ty);
                 let ty = init.get_type().clone();
                 let var_ptr = self
                     .module
@@ -244,6 +219,49 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
             }
             _ => impossible!(),
         }
+    }
+
+    fn create_constant_initialization(
+        &mut self,
+        value: &crate::semantics::value::ConstantValue<'_>,
+        intern: crate::semantics::resolved_ty::TypeIntern,
+    ) -> ConstantPtr {
+        let probe = self.analyzer.probe_type(intern).unwrap();
+        use crate::semantics::value::ConstantValue::*;
+        let init: ConstantPtr = match value {
+            ConstantInt(i) => {
+                use crate::semantics::resolved_ty::BuiltInTyKind::*;
+
+                match probe.kind {
+                    ResolvedTyKind::BuiltIn(builtin) => match builtin {
+                        Bool => self.context.get_i1(*i != 0),
+                        Char => self.context.get_i8(*i as u8),
+                        I32 | ISize | U32 | USize => self.context.get_i32(*i),
+                        Str => impossible!(),
+                    }
+                    .into(),
+                    ResolvedTyKind::Enum => self.context.get_i32(*i).into(),
+                    _ => impossible!(),
+                }
+            }
+            ConstantString(string) => self.context.get_string(string).into(),
+            ConstantArray(inners) => {
+                let inner_ty = probe.kind.as_array().unwrap().0;
+                let values = inners
+                    .iter()
+                    .map(|x| self.create_constant_initialization(x, *inner_ty))
+                    .collect();
+                self.context
+                    .get_array(self.transform_interned_ty_faithfully(*inner_ty), values)
+                    .into()
+            }
+            Unit | UnitStruct => self
+                .context
+                .get_struct(self.context.struct_type(vec![], false), vec![])
+                .into(),
+            UnEval(_) | Placeholder => impossible!(),
+        };
+        init
     }
 
     fn absorb_analyzer_methods(&mut self) {

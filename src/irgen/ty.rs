@@ -88,7 +88,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
         }
         match &ty.kind {
             Placeholder => {
-                todo!()
+                impossible!()
             }
             BuiltIn(built_in_ty_kind) => match built_in_ty_kind {
                 BuiltInTyKind::Bool => self.context.i1_type().into(),

@@ -13,7 +13,6 @@ use crate::{
     },
 };
 
-// TODO: Associated Item 如何处理？Impl 和 Trait 有 scope，但是它们的 item 不保存 scope 里
 #[derive(Debug)]
 pub struct Scope<'ast> {
     pub id: NodeId,

@@ -154,7 +154,6 @@ impl<'ast> SemanticAnalyzer<'ast> {
         let ref_u32_ty = self.intern_type(ResolvedTy::ref_type(u32_ty, RefMutability::Not));
         let ref_usize_ty = self.intern_type(ResolvedTy::ref_type(usize_ty, RefMutability::Not));
 
-        // TODO: 把 any int type 转发到这两个
         let u32_to_string_ty = self.intern_type(ResolvedTy::fn_type(
             string_ty.into(),
             vec![ref_u32_ty.into()],

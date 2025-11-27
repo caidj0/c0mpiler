@@ -466,16 +466,18 @@ impl IRPrint for Constant {
             Constant::ConstantInt(constant_int) => helper.append(&format!("{}", constant_int.0)),
             Constant::ConstantArray(constant_array) => {
                 helper.append("[");
+                let value_with_type = helper.value_with_type;
                 helper.value_with_type = true;
                 constant_array.0.ir_print(helper);
-                helper.value_with_type = false;
+                helper.value_with_type = value_with_type;
                 helper.append("]");
             }
             Constant::ConstantStruct(constant_struct) => {
                 helper.append("{");
+                let value_with_type = helper.value_with_type;
                 helper.value_with_type = true;
                 constant_struct.0.ir_print(helper);
-                helper.value_with_type = false;
+                helper.value_with_type = value_with_type;
                 helper.append("}");
             }
             Constant::ConstantString(constant_string) => {

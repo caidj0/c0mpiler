@@ -1,0 +1,29 @@
+const ARRAY: [[[i32; 3]; 3]; 3] = [
+    [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+    [[10, 11, 12], [13, 14, 15], [16, 17, 18]],
+    [[19, 20, 21], [22, 23, 24], [25, 26, 27]],
+];
+
+fn main() {
+    let mut sum: i32 = 0;
+    let mut i: usize = 0;
+    let mut j: usize = 0;
+    let mut k: usize = 0;
+    while (i < 3) {
+        while (j < 3) {
+            while (k < 3) {
+                sum += ARRAY[i][j][k];
+                k += 1;
+            }
+            j += 1;
+            k = 0;
+        }
+        i += 1;
+        j = 0;
+    }
+
+
+    printlnInt(sum);
+
+    exit(0);
+}
