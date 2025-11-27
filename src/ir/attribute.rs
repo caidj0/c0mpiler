@@ -12,7 +12,7 @@ pub enum Attribute {
 
 #[derive(Debug, Default)]
 pub struct AttributeList {
-    defined: [Option<Attribute>; Attribute::COUNT],
+    pub(crate) defined: [Option<Attribute>; Attribute::COUNT],
 }
 
 impl AttributeList {

@@ -5,11 +5,10 @@ use std::{
 
 use crate::ir::{
     LLVMModule,
+    attribute::{Attribute, AttributeList},
     globalxxx::{FunctionPtr, GlobalVariablePtr},
     ir_type::{Type, TypePtr},
-    ir_value::{
-        ArgumentPtr, BasicBlockPtr, Constant, ConstantPtr, InstructionPtr, Value, ValuePtr,
-    },
+    ir_value::{BasicBlockPtr, Constant, ConstantPtr, InstructionPtr, Value, ValuePtr},
 };
 
 const IR_INDENT_NUM: usize = 4;
@@ -194,6 +193,7 @@ impl IRPrint for FunctionPtr {
     fn ir_print(&self, helper: &mut PrintHelper) {
         let func = self.as_function();
         let args = func.args();
+        let attr = func.attr.borrow();
         let blocks = func.blocks.borrow();
         let is_declare = blocks.is_empty();
 
@@ -205,15 +205,22 @@ impl IRPrint for FunctionPtr {
             .as_function()
             .unwrap();
         let ret_type = &func_type.0;
-        ret_type.ir_print(helper);
+        (&attr.ret_attr, ret_type.as_ref()).ir_print(helper);
         helper.append_white("");
 
         self.0.ir_print(helper);
         helper.append_white("");
 
         helper.append("(");
-        args.ir_print(helper);
+        let arg_outs: Vec<_> = args
+            .iter()
+            .zip(attr.params_attr.iter())
+            .map(|(a, b)| (a.get_type().as_ref(), " ", b, &a.0))
+            .collect();
+        arg_outs.ir_print(helper);
         helper.append_white(")");
+
+        attr.fn_attr.ir_print(helper);
 
         if !is_declare {
             helper.increase_indent();
@@ -242,14 +249,6 @@ impl IRPrint for GlobalVariablePtr {
         helper.value_with_type = true;
         self.as_global_variable().initializer.ir_print(helper);
         helper.value_with_type = false;
-    }
-}
-
-impl IRPrint for ArgumentPtr {
-    fn ir_print(&self, helper: &mut PrintHelper) {
-        self.get_type().ir_print(helper);
-        helper.append(" ");
-        self.0.ir_print(helper);
     }
 }
 
@@ -302,14 +301,26 @@ impl IRPrint for InstructionPtr {
                 helper.append_white("");
 
                 let operands = &operands;
-                let (func_ptr, args_ptr) = operands.split_at(1);
+                let (func_ptr, args_ptr) = operands.split_first().unwrap();
+                let attr = func_ptr
+                    .kind
+                    .as_global_object()
+                    .unwrap()
+                    .kind
+                    .as_function()
+                    .unwrap()
+                    .attr
+                    .borrow();
 
                 func_ptr.ir_print(helper);
 
                 helper.append("(");
-                helper.value_with_type = true;
-                args_ptr.ir_print(helper);
-                helper.value_with_type = false;
+                let args: Vec<_> = args_ptr
+                    .iter()
+                    .zip(attr.params_attr.iter())
+                    .map(|(a, b)| (a.get_type().as_ref(), " ", b, a))
+                    .collect();
+                args.ir_print(helper);
                 helper.append(")");
             }
             Branch { has_cond } => {
@@ -460,6 +471,30 @@ where
     }
 }
 
+macro_rules! ir_print_for_tuple {
+    ( $head:ident, ) => {};
+    ( $head:ident, $( $tail:ident, )+ ) => {
+        impl<$head, $( $tail ),+> IRPrint for (&$head, $( &$tail ),+)
+        where
+            $head: IRPrint + ?Sized,
+            $( $tail: IRPrint + ?Sized ),*
+        {
+            #[allow(non_snake_case)]
+            fn ir_print(&self, helper: &mut PrintHelper) {
+                let (head, $( $tail ),+) = self;
+                head.ir_print(helper);
+                ($(*$tail),+).ir_print(helper);
+            }
+        }
+
+        ir_print_for_tuple!($( $tail, )+);
+    };
+
+    () => {};
+}
+
+ir_print_for_tuple!(A, B, C, D, E, F, G, H, I, J,);
+
 impl IRPrint for Constant {
     fn ir_print(&self, helper: &mut PrintHelper) {
         match self {
@@ -499,4 +534,32 @@ fn bytes_escape(input: &str) -> String {
         }
     }
     ret
+}
+
+impl IRPrint for AttributeList {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        for x in self.defined.iter().flatten() {
+            x.ir_print(helper);
+            " ".ir_print(helper);
+        }
+    }
+}
+
+impl IRPrint for Attribute {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        match self {
+            Attribute::StructReturn(type_ptr) => {
+                helper.append("sret");
+                helper.append("(");
+                type_ptr.ir_print(helper);
+                helper.append(")");
+            }
+        }
+    }
+}
+
+impl IRPrint for str {
+    fn ir_print(&self, helper: &mut PrintHelper) {
+        helper.append(self);
+    }
 }
