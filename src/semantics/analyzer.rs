@@ -46,6 +46,8 @@ pub struct SemanticAnalyzer<'ast> {
     pub(crate) preludes: Preludes,
 
     pub(crate) stage: AnalyzeStage,
+
+    pub(crate) evaled_const: HashSet<NodeId>,
 }
 
 impl<'ast> SemanticAnalyzer<'ast> {
@@ -77,6 +79,7 @@ impl<'ast> SemanticAnalyzer<'ast> {
             stage: AnalyzeStage::SymbolCollect,
             ut: RefCell::new(ut),
             preludes,
+            evaled_const: HashSet::default(),
         };
 
         analyzer.add_prelude_functions();

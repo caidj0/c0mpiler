@@ -75,6 +75,7 @@ pub enum SemanticErrorKind {
     MainFunctionWithWrongType,
     ExprAfterExit,
     NotSizedType,
+    CyclicEvaluation,
 
     GeneralError,
 }

@@ -30,6 +30,9 @@ impl<'ast> SemanticAnalyzer<'ast> {
         target_type: TypeKey,
     ) -> Result<ConstantValue<'ast>, SemanticError> {
         let (scope, e) = uneval.to_ref();
+        if !self.evaled_const.insert(e.id) {
+            return Err(make_semantic_error!(CyclicEvaluation).set_span(&e.span));
+        }
         self.const_eval(e, target_type.into(), Some(scope))
     }
 }

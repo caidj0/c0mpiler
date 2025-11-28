@@ -28,6 +28,10 @@
         "compileexitcode": -1
     },
     {
+        "name": "const_eval2",
+        "compileexitcode": -1
+    },
+    {
         "name": "copy_trait1",
         "compileexitcode": -1
     },
