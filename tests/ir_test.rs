@@ -62,6 +62,7 @@ fn run_test_cases(
     dry_run: bool,
 ) {
     let path = PathBuf::from_str(case_path).unwrap();
+    let case_name = path.file_name().unwrap();
     let infos_path = path.join("global.json");
     let infos: Vec<TestCaseInfo> =
         serde_json::from_str(fs::read_to_string(infos_path).unwrap().as_str()).unwrap();
@@ -159,8 +160,9 @@ fn run_test_cases(
         };
 
         // Write IR to temporary file
-        let ir_file = format!("target/tmp/{name}.ll");
-        fs::create_dir_all("target/tmp").unwrap();
+        let temp_target_path = format!("target/tmp/{}", case_name.display());
+        let ir_file = format!("{temp_target_path}/{name}.ll");
+        fs::create_dir_all(&temp_target_path).unwrap();
         fs::write(&ir_file, &ir).unwrap();
 
         // Compile with clang
@@ -169,7 +171,7 @@ fn run_test_cases(
                 &ir_file,
                 "tests/prelude.c",
                 "-o",
-                &format!("target/tmp/{name}"),
+                &format!("{temp_target_path}/{name}"),
             ])
             .output();
 
@@ -193,9 +195,7 @@ fn run_test_cases(
                 Vec::new()
             };
 
-            let run_result = Command::new("sh")
-                .arg("-c")
-                .arg(format!("exec target/tmp/{name}",))
+            let run_result = Command::new(format!("{temp_target_path}/{name}"))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
