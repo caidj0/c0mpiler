@@ -122,5 +122,17 @@
     {
         "name": "trait_loop",
         "compileexitcode": 0
+    },
+    {
+        "name": "let_infer",
+        "compileexitcode": 0
+    },
+    {
+        "name": "let_infer_complex",
+        "compileexitcode": 0
+    },
+    {
+        "name": "let_infer_struct",
+        "compileexitcode": 0
     }
 ]

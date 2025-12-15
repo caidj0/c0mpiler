@@ -1,0 +1,21 @@
+fn get_val() -> i32 {
+    return 100;
+}
+
+fn main() {
+    let a = get_val(); // Infer i32
+    let b = a + 50;    // Infer i32
+    let c = b > 100;   // Infer bool
+    
+    if (c) {
+        let d = b * 2; // Infer i32
+        printlnInt(d);
+    } else {
+        printlnInt(0);
+    }
+    
+    let e = 10;
+    let f = e; // Infer from variable
+    printlnInt(f);
+    exit(0);
+}

@@ -1,0 +1,16 @@
+struct Point {
+    x: i32,
+    y: i32
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }; // Infer Point
+    let x_val = p.x; // Infer i32
+    printlnInt(x_val);
+    
+    let p_ref = &p; // Infer &Point
+    let y_val = p_ref.y; // Auto-deref access
+    printlnInt(y_val);
+    
+    exit(0);
+}
