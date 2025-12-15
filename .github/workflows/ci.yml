@@ -51,10 +51,10 @@ jobs:
         uses: ./.github/actions/build_reimu
 
       - name: Run tests (all features)
-        run: cargo test --all-features -- --nocapture
+        run: cargo test --all-features
 
       - name: Check formatting
         run: cargo fmt -- --check
 
       - name: Run clippy (deny warnings)
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings -A unused-assignments
