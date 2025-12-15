@@ -18,7 +18,7 @@ runs:
       working-directory: REIMU
       shell: bash
       run: |
-        xmake f -m release
+        xmake f -m release -y
         xmake
         xmake install -o ../reimu_install
 
