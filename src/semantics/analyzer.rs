@@ -962,13 +962,11 @@ impl<'ast> Visitor<'ast> for SemanticAnalyzer<'ast> {
         extra: Self::StmtExtra<'tmp>,
     ) -> Self::StmtRes<'_> {
         let target_type = if self.stage.is_body() {
-            Some(
-                self.resolve_type(
-                    ty.as_ref()
-                        .ok_or(make_semantic_error!(NoImplementation).set_span(span))?,
-                    Some(extra.scope_id),
-                )?,
-            )
+            Some(if let Some(ty) = ty.as_ref() {
+                self.resolve_type(ty, Some(extra.scope_id))?
+            } else {
+                self.new_any_type()
+            })
         } else {
             None
         };
