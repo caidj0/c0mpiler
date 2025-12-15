@@ -47,8 +47,11 @@ jobs:
           rustc -Vv
           cargo -V
 
+      - name: Build and Setup Reimu
+        uses: ./.github/actions/build_reimu
+
       - name: Run tests (all features)
-        run: cargo test --all-features
+        run: cargo test --all-features -- --nocapture
 
       - name: Check formatting
         run: cargo fmt -- --check

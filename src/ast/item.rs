@@ -144,16 +144,11 @@ impl Eatable for FnDecl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum FnRetTy {
+    #[default]
     Default,
     Ty(Box<Ty>),
-}
-
-impl Default for FnRetTy {
-    fn default() -> Self {
-        Self::Default
-    }
 }
 
 impl OptionEatable for FnRetTy {

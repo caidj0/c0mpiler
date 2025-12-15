@@ -1,0 +1,29 @@
+name: 'Build Reimu'
+description: 'Builds Reimu from source'
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout REIMU
+      uses: actions/checkout@v4
+      with:
+        repository: DarkSharpness/REIMU
+        path: REIMU
+
+    - name: Setup xmake
+      uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: latest
+
+    - name: Build REIMU
+      working-directory: REIMU
+      shell: bash
+      run: |
+        xmake f -m release
+        xmake
+        xmake install -o ../reimu_install
+
+    - name: Add to PATH
+      shell: bash
+      run: |
+        echo "REIMU_PATH=$GITHUB_WORKSPACE/reimu_install/bin/reimu" >> $GITHUB_ENV
+        echo "$GITHUB_WORKSPACE/reimu_install/bin" >> $GITHUB_PATH
