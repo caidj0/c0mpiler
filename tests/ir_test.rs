@@ -44,7 +44,12 @@ fn my_ir() {
     let escape_list = [];
     let case_path = "testcases/IR";
 
-    run_test_cases(&escape_list, case_path, true, false);
+    if let Some(reimu_path) = option_env!("REIMU_PATH") {
+        println!("Using reimu at path: {}", reimu_path);
+        run_test_cases_with_reimu(reimu_path, &escape_list, case_path, true);
+    } else {
+        run_test_cases(&escape_list, case_path, true, false);
+    }
 }
 
 #[test]
@@ -52,7 +57,12 @@ fn ir_1() {
     let escape_list = [];
     let case_path = "RCompiler-Testcases/IR-1";
 
-    run_test_cases(&escape_list, case_path, true, false);
+    if let Some(reimu_path) = option_env!("REIMU_PATH") {
+        println!("Using reimu at path: {}", reimu_path);
+        run_test_cases_with_reimu(reimu_path, &escape_list, case_path, true);
+    } else {
+        run_test_cases(&escape_list, case_path, true, false);
+    }
 }
 
 fn run_test_cases(
@@ -248,6 +258,211 @@ fn run_test_cases(
                     actual_str
                 );
             }
+        }
+
+        println!("{name} passed!");
+        success += 1;
+    }
+
+    println!("Test Result: {}/{}", success, total);
+    if success < total {
+        panic!();
+    }
+}
+
+fn run_test_cases_with_reimu(
+    reimu_path: &'static str,
+    escape_list: &[&'static str],
+    case_path: &'static str,
+    stop_at_fault: bool,
+) {
+    let path = PathBuf::from_str(case_path).unwrap();
+    let case_name = path.file_name().unwrap();
+    let infos_path = path.join("global.json");
+    let infos: Vec<TestCaseInfo> =
+        serde_json::from_str(fs::read_to_string(infos_path).unwrap().as_str()).unwrap();
+
+    let mut total: usize = 0;
+    let mut success: usize = 0;
+
+    macro_rules! fault {
+        ($($t:tt)*) => {
+            if stop_at_fault {
+                panic!($($t)*);
+            } else {
+                println!($($t)*);
+                println!();
+                continue;
+            }
+        };
+    }
+
+    // Compile prelude.c to riscv32 assembly once
+    let temp_target_path = format!("target/tmp/{}", case_name.display());
+    fs::create_dir_all(&temp_target_path).unwrap();
+    let prelude_asm = format!("{temp_target_path}/prelude.s");
+
+    let prelude_compile = Command::new("clang")
+        .args([
+            "--target=riscv32-unknown-elf",
+            "-S",
+            "tests/prelude.c",
+            "-O2",
+            "-o",
+            &prelude_asm,
+        ])
+        .output()
+        .expect("Failed to compile prelude.c");
+
+    if !prelude_compile.status.success() {
+        let stderr = String::from_utf8_lossy(&prelude_compile.stderr);
+        panic!("Failed to compile prelude.c to riscv32 assembly:\n{stderr}");
+    }
+
+    for x in infos {
+        let name = x.name;
+        if escape_list.contains(&name.as_str()) {
+            println!("{name} skiped!");
+            continue;
+        }
+        total += 1;
+
+        let src_path = path.join(format!("src/{name}/{name}.rx"));
+        let in_path = path.join(format!("src/{name}/{name}.in"));
+        let out_path = path.join(format!("src/{name}/{name}.out"));
+
+        let src = fs::read_to_string(&src_path).unwrap();
+        let should_pass = x.compileexitcode == 0;
+
+        let parser_result = panic::catch_unwind(|| -> Result<Crate, String> {
+            let lexer = Lexer::new(&src);
+            let buffer = TokenBuffer::new(lexer).map_err(|e| format!("{:?}", e))?;
+            let mut iter = buffer.iter();
+            let krate = Crate::eat(&mut iter).map_err(|e| format!("{:?}", e))?;
+            Ok(krate)
+        })
+        .unwrap_or_else(|_| panic!("{name} caused panic during parsing!"));
+
+        let krate = match parser_result {
+            Ok(krate) => krate,
+            Err(e) => {
+                if should_pass {
+                    fault!("{name} parse failed, expect pass!\n{e}");
+                } else {
+                    println!("{name} passed (parse failed as expected)!");
+                    success += 1;
+                    continue;
+                }
+            }
+        };
+
+        // Parse and semantic check
+        let semantic_result = panic::catch_unwind(|| -> Result<_, String> {
+            let (analyzer, result) = SemanticAnalyzer::visit(&krate);
+            result.map_err(|e| format!("{:?}", e))?;
+            Ok(analyzer)
+        });
+
+        let analyzer = match semantic_result {
+            Ok(Ok(analyzer)) => analyzer,
+            Ok(Err(e)) => {
+                if should_pass {
+                    fault!("{name} semantic check failed, expect pass!\n{e}");
+                } else {
+                    println!("{name} passed (semantic check failed as expected)!");
+                    success += 1;
+                    continue;
+                }
+            }
+            Err(_) => {
+                fault!("{name} caused panic during semantic check!");
+            }
+        };
+
+        // If semantic check passed but should fail
+        if !should_pass {
+            fault!("{name} semantic check passed, expect fail!");
+        }
+
+        // Generate IR
+        let ir = match panic::catch_unwind(AssertUnwindSafe(|| {
+            let mut generator = IRGenerator::new(&analyzer);
+            generator.visit(&krate);
+            generator.print()
+        })) {
+            Ok(ir) => ir,
+            Err(_) => {
+                fault!("{name} caused panic during IR generation!");
+            }
+        };
+
+        // Write IR to temporary file
+        let ir_file = format!("{temp_target_path}/{name}.ll");
+        fs::write(&ir_file, &ir).unwrap();
+
+        // Compile IR to riscv32 assembly
+        let ir_asm = format!("{temp_target_path}/{name}.s");
+        let ir_compile = Command::new("clang")
+            .args([
+                "--target=riscv32-unknown-elf",
+                "-S",
+                &ir_file,
+                "-o",
+                &ir_asm,
+            ])
+            .output();
+
+        let ir_compile_output = match ir_compile {
+            Ok(output) => output,
+            Err(e) => {
+                fault!("{name} failed to execute clang for IR: {e}");
+            }
+        };
+
+        if !ir_compile_output.status.success() {
+            let stderr = String::from_utf8_lossy(&ir_compile_output.stderr);
+            fault!("{name} IR compilation to riscv32 failed:\n{stderr}");
+        }
+
+        // Build reimu arguments
+        let in_arg = if in_path.exists() {
+            format!("-i={}", in_path.display())
+        } else {
+            String::new()
+        };
+
+        let out_arg = if out_path.exists() {
+            format!("-a={}", out_path.display())
+        } else {
+            String::new()
+        };
+
+        let mut reimu_args = vec![
+            format!("-f={},{}", prelude_asm, ir_asm),
+            "--oj-mode".to_string(),
+            "-s=8M".to_string(),
+        ];
+
+        if !in_arg.is_empty() {
+            reimu_args.push(in_arg);
+        }
+        if !out_arg.is_empty() {
+            reimu_args.push(out_arg);
+        }
+
+        let reimu_result = Command::new(reimu_path).args(&reimu_args).output();
+
+        let reimu_output = match reimu_result {
+            Ok(output) => output,
+            Err(e) => {
+                fault!("{name} failed to execute reimu: {e}");
+            }
+        };
+
+        if !reimu_output.status.success() {
+            let stderr = String::from_utf8_lossy(&reimu_output.stderr);
+            let stdout = String::from_utf8_lossy(&reimu_output.stdout);
+            fault!("{name} reimu execution failed:\nstdout:\n{stdout}\nstderr:\n{stderr}");
         }
 
         println!("{name} passed!");

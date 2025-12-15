@@ -9,6 +9,8 @@ extern void *malloc(size_t size);
 extern void *realloc(void *ptr, size_t size);
 extern int scanf(const char *format, ...);
 extern int getchar(void);
+extern int putchar(int c);
+extern size_t strlen(const char *s);
 
 struct String {
   char *data;
@@ -24,7 +26,8 @@ typedef struct String String;
 
 void to_string(String *string, uint32_t *self) {
   char *buffer = malloc(16);
-  uint32_t length = sprintf(buffer, "%d", *self);
+  sprintf(buffer, "%u", *self);
+  uint32_t length = strlen(buffer); // For the return value of sprintf is not correctly implemented.
   string->length = length;
   string->data = buffer;
 }
@@ -42,9 +45,18 @@ void string_plus(String *ret, String *self, char *data, uint32_t length) {
   ret->length = new_length;
 }
 
-void print(char *text, uint32_t n) { printf("%.*s", n, text); }
+void print(char *text, uint32_t n) {
+  for (uint32_t i = 0; i < n; i++) {
+    putchar(text[i]);
+  }
+}
 
-void println(char *text, uint32_t n) { printf("%.*s\n", n, text); }
+void println(char *text, uint32_t n) {
+  for (uint32_t i = 0; i < n; i++) {
+    putchar(text[i]);
+  }
+  putchar('\n');
+}
 
 void printInt(int32_t n) { printf("%d", n); }
 
