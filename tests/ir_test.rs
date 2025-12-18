@@ -440,7 +440,7 @@ fn run_test_cases_with_reimu(
         let mut reimu_args = vec![
             format!("-f={},{}", prelude_asm, ir_asm),
             "--oj-mode".to_string(),
-            "-s=8M".to_string(),
+            "-s=1M".to_string(),
         ];
 
         if !in_arg.is_empty() {

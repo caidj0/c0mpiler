@@ -34,4 +34,5 @@ pub(crate) struct ItemExtra {
 pub(crate) struct PatExtra {
     pub(crate) value: ValuePtrContainer,
     pub(crate) self_id: NodeId,
+    pub(crate) is_temp_value: bool,
 }

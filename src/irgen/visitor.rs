@@ -185,6 +185,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
                         kind,
                     },
                     self_id: 0,
+                    is_temp_value: false,
                 },
             );
         }
@@ -337,12 +338,25 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
         }: &'ast LocalStmt,
         extra: Self::StmtExtra<'tmp>,
     ) -> Self::StmtRes<'_> {
-        let value = match kind {
+        let (value, is_temp_value) = match kind {
             LocalKind::Decl => impossible!(),
-            LocalKind::Init(expr) => self.visit_expr(expr, extra)?,
+            LocalKind::Init(expr) => (
+                self.visit_expr(expr, extra)?,
+                matches!(
+                    self.analyzer.get_expr_result(&expr.id).assignee,
+                    crate::semantics::expr::AssigneeKind::Value
+                ),
+            ),
         };
 
-        self.visit_pat(pat, PatExtra { value, self_id: 0 });
+        self.visit_pat(
+            pat,
+            PatExtra {
+                value,
+                self_id: 0,
+                is_temp_value,
+            },
+        );
 
         None
     }
@@ -1398,7 +1412,11 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
     fn visit_ref_pat<'tmp>(
         &mut self,
         RefPat(pat, _): &'ast RefPat,
-        PatExtra { value, self_id: _ }: Self::PatExtra<'tmp>,
+        PatExtra {
+            value,
+            self_id: _,
+            is_temp_value,
+        }: Self::PatExtra<'tmp>,
     ) -> Self::PatRes<'_> {
         let new_value = self.get_value_ptr(value);
         self.visit_pat(
@@ -1406,6 +1424,7 @@ impl<'ast, 'analyzer> Visitor<'ast> for IRGenerator<'ast, 'analyzer> {
             PatExtra {
                 value: new_value,
                 self_id: 0,
+                is_temp_value,
             },
         )
     }

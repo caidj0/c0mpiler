@@ -12,6 +12,7 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
         PatExtra {
             value: right_ptr,
             self_id,
+            is_temp_value,
         }: PatExtra,
     ) {
         let index = ValueIndex::Place(PlaceValueIndex {
@@ -30,6 +31,11 @@ impl<'ast, 'analyzer> IRGenerator<'ast, 'analyzer> {
                 value_ptr: ptr.into(),
                 kind: crate::irgen::value::ContainerKind::Ptr(self.context.ptr_type().into()),
             }
+        } else if is_temp_value {
+            if right_ptr.value_ptr.get_name().is_none() {
+                right_ptr.value_ptr.set_name(ident.symbol.0.clone());
+            }
+            self.get_value_ptr(right_ptr)
         } else {
             let ptr = self.build_alloca(ty.clone(), Some(&ident.symbol.0));
             self.store_to_ptr(ptr.clone().into(), right_ptr);
